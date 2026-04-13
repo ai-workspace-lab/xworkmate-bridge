@@ -74,8 +74,8 @@ func Serve(args []string) error {
 
 	server := NewServer()
 	httpServer := &http.Server{
-		Addr: strings.TrimSpace(*listen),
-		Handler: server.Handler(),
+		Addr:         strings.TrimSpace(*listen),
+		Handler:      server.Handler(),
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 5 * time.Minute,
 		IdleTimeout:  2 * time.Minute,
@@ -119,8 +119,6 @@ func (s *Server) Handler() http.Handler {
 			})
 		case "/bridge/bootstrap/health":
 			s.HandleBridgeBootstrapHealth(w, r)
-		case "/bridge/bootstrap/consume":
-			s.HandleBridgeBootstrapConsume(w, r)
 		case "/acp/rpc":
 			s.HandleRPC(w, r)
 		case "/acp":
