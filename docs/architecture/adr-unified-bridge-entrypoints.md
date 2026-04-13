@@ -8,37 +8,51 @@ Accepted
 
 2026-04-11
 
+## Last Reviewed
+
+2026-04-13
+
 ## Context
 
-`xworkmate-bridge` currently proxies app traffic to four independent upstream
-production services:
+`xworkmate-bridge` 代理 app 流量到独立 upstream ACP / gateway 服务，但如果把这些 upstream 直接暴露成 app-facing entrypoint，会带来几个问题：
 
-- `codex` -> `https://acp-server.svc.plus/codex/acp/rpc`
-- `opencode` -> `https://acp-server.svc.plus/opencode/acp/rpc`
-- `gemini` -> `https://acp-server.svc.plus/gemini/acp/rpc`
-- `gateway` -> `wss://openclaw.svc.plus`
+- app 必须知道 provider-specific 或 gateway-specific hostname
+- routing truth 会在 URL 形状与 bridge 逻辑之间分裂
+- auth contract 更难保持统一
+- upstream implementation detail 会泄漏到 app shell / module 心智
 
-These upstream services exist independently, but exposing them directly as
-APP-facing endpoints creates several problems:
-
-- the APP would need to know provider-specific or gateway-specific hostnames
-- routing truth would be split between URL shape and bridge-side routing logic
-- auth handling would be harder to keep consistent
-- upstream implementation details would leak into client contracts
-
-The bridge already acts as the single public integration surface for ACP
-discovery, task execution, and gateway runtime operations.
+当前 app 主链已经收敛到 `assistant + settings` 两个 surface，因此 bridge 入口也必须保持同一口径：统一公共入口，bridge 内部负责 provider / gateway 路由细节。
 
 ## Decision
 
-For APP traffic, the canonical public entry point is the bridge origin:
+For APP traffic, the canonical public entry point remains:
 
 - `https://xworkmate-bridge.svc.plus`
 
-The canonical APP-facing ACP paths are:
+Canonical app-facing contract families are:
 
-- `POST /acp/rpc`
-- `GET /acp` for WebSocket ACP
+1. ACP control-plane
+   - `POST /acp/rpc`
+   - `GET /acp`
+2. Gateway runtime methods
+   - `xworkmate.gateway.connect`
+   - `xworkmate.gateway.request`
+   - `xworkmate.gateway.disconnect`
+
+Bridge-owned metadata may still include:
+
+- `providerCatalog`
+- `gatewayProviders`
+- `resolvedExecutionTarget`
+- `resolvedProviderId`
+- `resolvedGatewayProviderId`
+
+这些字段属于 bridge 返回给 app 的 routing/capability metadata，不属于 app shell taxonomy。
+
+换句话说：
+
+- app 可以消费这些字段来展示当前可用能力或执行结果
+- app 不应该把 provider/gateway 矩阵抬升成新的顶层模块、别名页面、或直接 URL 合同
 
 The APP should not depend on provider-specific public URLs such as:
 
@@ -47,76 +61,37 @@ The APP should not depend on provider-specific public URLs such as:
 - `/gemini/acp/rpc`
 - `/openclaw/`
 
-Provider choice remains bridge-owned routing, not URL-owned routing.
+If the bridge reports execution-target metadata such as `single-agent`,
+`multi-agent`, or `gateway`, the app should treat those values as routing
+results, not as shell-level surface categories.
 
-APP-facing routing should be modeled in three layers:
-
-- `executionTarget`
-  - `single-agent`
-  - `multi-agent`
-  - `gateway`
-- `singleAgentProviders`
-  - `codex`
-  - `opencode`
-  - `gemini`
-- `gatewayProviders`
-  - `local`
-  - `openclaw`
-
-For APP integration, `gatewayProviders` is the stable gateway-facing concept.
-
-APP and UI code should consume bridge state in two phases:
-
-1. `acp.capabilities`
-   - discover `singleAgentProviders`
-   - discover `gatewayProviders`
-2. `xworkmate.routing.resolve`
-   - determine `resolvedExecutionTarget`
-   - determine `resolvedProviderId` or `resolvedGatewayProviderId`
-   - determine unavailable state
-
-The APP should treat `resolvedProviderId` and `resolvedGatewayProviderId` as
-mutually exclusive routing outputs depending on `resolvedExecutionTarget`.
-
-Gateway access remains bridge-owned via JSON-RPC methods:
-
-- `xworkmate.gateway.connect`
-- `xworkmate.gateway.request`
-- `xworkmate.gateway.disconnect`
-
-Upstream authentication is unified for both ACP and gateway routes:
-
-- `Authorization: Bearer $INTERNAL_SERVICE_TOKEN`
+If the bridge reports gateway provider IDs such as `local` or `openclaw`, the
+app should treat them as bridge-owned gateway backend identifiers, not as
+independent app entrypoints.
 
 ## Consequences
 
 ### Positive
 
 - APP integration stays stable behind one public origin
-- provider and gateway topology remain internal bridge concerns
-- auth contract is consistent across all upstream forwarding
-- bridge can change upstream mappings without changing APP contracts
+- provider and gateway topology remain bridge concerns
+- auth handling remains consistent across ACP and gateway forwarding
+- app architecture docs can stay focused on `assistant + settings` instead of a fake module matrix
 
 ### Trade-offs
 
-- direct provider-specific bridge URLs, if exposed at all, must be treated as
-  aliases or operator/debug paths, not primary client contracts
-- documentation must clearly distinguish canonical APP paths from independent
-  upstream targets
+- docs must clearly separate canonical app contracts from independent upstream services
+- optional bridge metadata must be documented as metadata, not as surface taxonomy
 
 ## Path Naming Guidance
 
-Use these terms consistently in docs:
+Use these terms consistently:
 
-- `canonical APP-facing path`: `/acp/rpc` and `/acp`
-- `independent upstream service`: `acp-server.svc.plus/*` and
-  `wss://openclaw.svc.plus`
-- `bridge-owned routing`: bridge logic that selects and proxies to upstreams
-- `gatewayProvider`: the APP-facing identifier for a gateway backend such as
-  `local` or `openclaw`
+- `canonical app-facing path`: `/acp/rpc` and `/acp`
+- `gateway runtime method family`: `xworkmate.gateway.*`
+- `independent upstream service`: `acp-server.svc.plus/*`, `wss://openclaw.svc.plus`
+- `bridge-owned routing`: provider / gateway selection performed inside bridge
+- `routing metadata`: execution target and resolved provider/gateway identifiers returned to the app
 
-Avoid describing upstream URLs as if the APP should call them directly.
-
-If provider-specific public bridge paths are ever introduced, they should be
-documented as optional aliases only. They should not replace `/acp/rpc` as the
-canonical APP-facing contract.
+Avoid describing upstream URLs, provider IDs, or gateway mode IDs as if they
+were independent app modules or alternate primary entrypoints.
