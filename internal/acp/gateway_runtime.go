@@ -54,7 +54,7 @@ func handleGatewayConnect(
 		},
 	}
 	if request.Mode == "" {
-		request.Mode = "local"
+		request.Mode = "openclaw"
 	}
 	request = applyProductionGatewayRouting(request)
 	request.ReportedRemoteAddress = resolveGatewayReportedRemoteAddress(server, request)

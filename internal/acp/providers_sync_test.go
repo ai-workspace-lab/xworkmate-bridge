@@ -45,8 +45,8 @@ func TestCapabilitiesExposeBuiltInProductionProviderCatalog(t *testing.T) {
 	if len(providerCatalog) != 3 {
 		t.Fatalf("expected 3 built-in providers, got %#v", providerCatalog)
 	}
-	if len(gatewayProviders) != 2 {
-		t.Fatalf("expected 2 built-in gateway providers, got %#v", gatewayProviders)
+	if len(gatewayProviders) != 1 {
+		t.Fatalf("expected 1 built-in gateway provider, got %#v", gatewayProviders)
 	}
 	wantOrder := []string{"codex", "opencode", "gemini"}
 	wantLabels := []string{"Codex", "OpenCode", "Gemini"}
@@ -58,8 +58,8 @@ func TestCapabilitiesExposeBuiltInProductionProviderCatalog(t *testing.T) {
 			t.Fatalf("expected label %q at index %d, got %#v", wantLabels[index], index, providerCatalog)
 		}
 	}
-	wantGatewayOrder := []string{"local", "openclaw"}
-	wantGatewayLabels := []string{"Local", "OpenClaw"}
+	wantGatewayOrder := []string{"openclaw"}
+	wantGatewayLabels := []string{"OpenClaw"}
 	for index, want := range wantGatewayOrder {
 		if got := gatewayProviders[index]["providerId"]; got != want {
 			t.Fatalf("expected gateway provider %q at index %d, got %#v", want, index, gatewayProviders)
@@ -67,6 +67,51 @@ func TestCapabilitiesExposeBuiltInProductionProviderCatalog(t *testing.T) {
 		if got := gatewayProviders[index]["label"]; got != wantGatewayLabels[index] {
 			t.Fatalf("expected gateway label %q at index %d, got %#v", wantGatewayLabels[index], index, gatewayProviders)
 		}
+	}
+}
+
+func TestBuiltInProviderReusesInboundBridgeBearerWhenUpstreamAuthUnset(t *testing.T) {
+	externalServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer bridge-token" {
+			t.Fatalf("expected inbound bridge bearer header, got %q", got)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      "run-auth-fallback",
+			"result": map[string]any{
+				"success": true,
+				"output":  "forwarded-auth-fallback-ok",
+			},
+		})
+	}))
+	defer externalServer.Close()
+
+	t.Setenv("INTERNAL_SERVICE_TOKEN", "")
+	t.Setenv("BRIDGE_AUTH_TOKEN", "")
+	server := NewServer()
+	setTestBridgeProvider(server, syncedProvider{
+		ProviderID: "codex",
+		Label:      "Codex",
+		Endpoint:   externalServer.URL,
+		Enabled:    true,
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"http://127.0.0.1/acp/rpc",
+		strings.NewReader(`{"jsonrpc":"2.0","id":"run-auth-fallback","method":"session.start","params":{"sessionId":"s1","threadId":"t1","taskPrompt":"hello","workingDirectory":"`+t.TempDir()+`","routing":{"routingMode":"explicit","explicitExecutionTarget":"singleAgent","explicitProviderId":"codex"}}}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer bridge-token")
+
+	server.HandleRPC(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", recorder.Code)
+	}
+	if !strings.Contains(recorder.Body.String(), "forwarded-auth-fallback-ok") {
+		t.Fatalf("expected forwarded provider response, got %q", recorder.Body.String())
 	}
 }
 

@@ -122,10 +122,6 @@ func providerLabel(provider syncedProvider) string {
 func availableGatewayProviderCatalog() []map[string]any {
 	return []map[string]any{
 		{
-			"providerId": router.GatewayProviderLocal,
-			"label":      "Local",
-		},
-		{
 			"providerId": router.GatewayProviderOpenClaw,
 			"label":      "OpenClaw",
 		},

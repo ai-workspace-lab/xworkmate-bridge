@@ -16,7 +16,7 @@
 - `acp.capabilities` 返回动态 provider 列表。
 - 至少覆盖：
   - `singleAgentProviders`: `opencode / codex / gemini`
-  - `gatewayProviders`: `local / openclaw`
+  - `gatewayProviders`: `openclaw`
 - `xworkmate.routing.resolve` 根据 `taskPrompt`、`executionTarget`、`selectedSkills` 返回正确的：
   - `resolvedExecutionTarget`
   - `resolvedProviderId`
@@ -101,7 +101,7 @@ flutter test test/runtime/app_controller_single_agent_workspace_binding_regressi
 
 - `acp.capabilities` 的 provider 列表来自 bridge 当前环境，而不是本地写死。
 - bridge 内建生产 catalog 包含 `codex / opencode / gemini`，且不依赖 app 侧预同步。
-- bridge 还会暴露 `gatewayProviders = local / openclaw`。
+- bridge 还会暴露 `gatewayProviders = openclaw`。
 - `xworkmate.routing.resolve` 在 skill / prompt / target 组合下，返回合理的
   `resolvedProviderId` 或 `resolvedGatewayProviderId`。
 

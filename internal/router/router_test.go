@@ -84,14 +84,14 @@ func TestResolveAutoOnlineTaskToGateway(t *testing.T) {
 
 	result := resolver.Resolve(Request{
 		Prompt:                     "跨浏览器执行并搜索最新资讯",
-		PreferredGatewayProviderID: GatewayProviderLocal,
+		PreferredGatewayProviderID: GatewayProviderOpenClaw,
 	})
 
 	if result.ResolvedExecutionTarget != ExecutionTargetGateway {
 		t.Fatalf("expected gateway route, got %#v", result)
 	}
-	if result.ResolvedGatewayProviderID != GatewayProviderLocal {
-		t.Fatalf("expected local gateway provider, got %#v", result)
+	if result.ResolvedGatewayProviderID != GatewayProviderOpenClaw {
+		t.Fatalf("expected openclaw gateway provider, got %#v", result)
 	}
 }
 
@@ -121,14 +121,14 @@ func TestResolveUsesClassifierForBoundarySamples(t *testing.T) {
 
 	result := resolver.Resolve(Request{
 		Prompt:                     "help me handle this ambiguous request",
-		PreferredGatewayProviderID: GatewayProviderLocal,
+		PreferredGatewayProviderID: GatewayProviderOpenClaw,
 	})
 
 	if result.ResolvedExecutionTarget != ExecutionTargetGateway {
 		t.Fatalf("expected classifier to resolve gateway route, got %#v", result)
 	}
-	if result.ResolvedGatewayProviderID != GatewayProviderLocal {
-		t.Fatalf("expected local gateway provider, got %#v", result)
+	if result.ResolvedGatewayProviderID != GatewayProviderOpenClaw {
+		t.Fatalf("expected openclaw gateway provider, got %#v", result)
 	}
 }
 

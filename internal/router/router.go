@@ -17,7 +17,6 @@ const (
 	ExecutionTargetGateway     = "gateway"
 	ExecutionTargetGatewayChat = "gateway-chat"
 
-	GatewayProviderLocal    = "local"
 	GatewayProviderOpenClaw = "openclaw"
 )
 
@@ -223,15 +222,13 @@ func mapExplicitTarget(
 func resolveGatewayProvider(preferredGatewayProviderID string) string {
 	providerID := normalizeGatewayProvider(preferredGatewayProviderID)
 	if providerID == "" {
-		providerID = GatewayProviderLocal
+		providerID = GatewayProviderOpenClaw
 	}
 	return providerID
 }
 
 func normalizeGatewayProvider(value string) string {
 	switch normalize(value) {
-	case GatewayProviderLocal:
-		return GatewayProviderLocal
 	case GatewayProviderOpenClaw:
 		return GatewayProviderOpenClaw
 	default:

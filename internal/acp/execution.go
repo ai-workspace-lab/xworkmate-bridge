@@ -82,7 +82,7 @@ func (s *Server) runGateway(
 	_ = ctx
 	gatewayProvider := strings.TrimSpace(shared.StringArg(params, "gatewayProvider", ""))
 	if gatewayProvider == "" {
-		gatewayProvider = router.GatewayProviderLocal
+		gatewayProvider = router.GatewayProviderOpenClaw
 	}
 	result := s.gateway.RequestByMode(
 		gatewayProvider,
@@ -145,10 +145,14 @@ func (s *Server) runSingleAgentViaExternalProvider(
 			notify(message)
 		}
 	}
+	authorization := firstNonEmptyString(
+		strings.TrimSpace(provider.AuthorizationHeader),
+		strings.TrimSpace(shared.StringArg(params, inboundAuthorizationHeaderKey, "")),
+	)
 	response, err := requestExternalACP(
 		ctx,
 		endpoint,
-		provider.AuthorizationHeader,
+		authorization,
 		method,
 		forwardParams,
 		combinedNotify,

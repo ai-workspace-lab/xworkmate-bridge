@@ -134,7 +134,6 @@ Response shape:
       { "providerId": "gemini", "label": "Gemini" }
     ],
     "gatewayProviders": [
-      { "providerId": "local", "label": "Local" },
       { "providerId": "openclaw", "label": "OpenClaw" }
     ],
     "capabilities": {
@@ -146,7 +145,6 @@ Response shape:
         { "providerId": "gemini", "label": "Gemini" }
       ],
       "gatewayProviders": [
-        { "providerId": "local", "label": "Local" },
         { "providerId": "openclaw", "label": "OpenClaw" }
       ]
     }
@@ -164,7 +162,8 @@ Notes:
   - `gemini` -> `https://acp-server.svc.plus/gemini/acp/rpc`
 - APP traffic reaches those upstreams through the bridge's canonical public
   ACP path, not by depending on upstream URLs directly
-- upstream ACP auth uses `Authorization: Bearer $INTERNAL_SERVICE_TOKEN`
+- upstream ACP auth prefers bridge-owned service auth and otherwise reuses the
+  inbound bridge bearer header
 - `multiAgent` is controlled by `ACP_MULTI_AGENT_ENABLED`, default `true`
 
 ### 3.2 `session.start`
@@ -405,7 +404,7 @@ Suggested APP-side view model:
 {
   "executionTargets": ["single-agent", "multi-agent", "gateway"],
   "singleAgentProviders": ["codex", "opencode", "gemini"],
-  "gatewayProviders": ["local", "openclaw"]
+  "gatewayProviders": ["openclaw"]
 }
 ```
 
@@ -426,7 +425,8 @@ UI binding guidance:
 - provider picker for single-agent mode should be populated from
   `providerCatalog`
 - gateway picker should be populated from `gatewayProviders`
-- gateway UI should display `local` and `openclaw` as selectable providers
+- gateway UI should display the bridge-owned `openclaw` provider from
+  `gatewayProviders`
 - disabled or unavailable states should come from `xworkmate.routing.resolve`
   response fields such as:
   - `unavailable`
@@ -509,10 +509,10 @@ Response fields:
 
 Notes:
 
+- empty or unsupported `gatewayProviderId` values are normalized to
+  `openclaw`
 - for `gatewayProviderId=openclaw`, the bridge overrides runtime endpoint
   selection to `wss://openclaw.svc.plus`
-- for `gatewayProviderId=local`, the bridge keeps the caller-provided local
-  gateway endpoint configuration
 - upstream gateway auth uses `Authorization: Bearer $INTERNAL_SERVICE_TOKEN`
 - the app does not provide production openclaw endpoint truth
 

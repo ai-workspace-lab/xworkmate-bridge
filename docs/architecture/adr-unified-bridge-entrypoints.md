@@ -65,7 +65,7 @@ If the bridge reports execution-target metadata such as `single-agent`,
 `multi-agent`, or `gateway`, the app should treat those values as routing
 results, not as shell-level surface categories.
 
-If the bridge reports gateway provider IDs such as `local` or `openclaw`, the
+If the bridge reports gateway provider IDs such as `openclaw`, the
 app should treat them as bridge-owned gateway backend identifiers, not as
 independent app entrypoints.
 
