@@ -128,24 +128,36 @@ Response shape:
   "result": {
     "singleAgent": true,
     "multiAgent": true,
+    "availableExecutionTargets": ["agent", "gateway"],
     "providerCatalog": [
-      { "providerId": "codex", "label": "Codex" },
-      { "providerId": "opencode", "label": "OpenCode" },
-      { "providerId": "gemini", "label": "Gemini" }
+      { "providerId": "codex", "label": "Codex", "targets": ["agent"] },
+      { "providerId": "opencode", "label": "OpenCode", "targets": ["agent"] },
+      { "providerId": "gemini", "label": "Gemini", "targets": ["agent"] }
     ],
     "gatewayProviders": [
-      { "providerId": "openclaw", "label": "OpenClaw" }
+      {
+        "providerId": "openclaw",
+        "label": "OpenClaw",
+        "targets": ["gateway"],
+        "providerDisplay": { "logoEmoji": "🦞" }
+      }
     ],
     "capabilities": {
       "single_agent": true,
       "multi_agent": true,
+      "availableExecutionTargets": ["agent", "gateway"],
       "providerCatalog": [
-        { "providerId": "codex", "label": "Codex" },
-        { "providerId": "opencode", "label": "OpenCode" },
-        { "providerId": "gemini", "label": "Gemini" }
+        { "providerId": "codex", "label": "Codex", "targets": ["agent"] },
+        { "providerId": "opencode", "label": "OpenCode", "targets": ["agent"] },
+        { "providerId": "gemini", "label": "Gemini", "targets": ["agent"] }
       ],
       "gatewayProviders": [
-        { "providerId": "openclaw", "label": "OpenClaw" }
+        {
+          "providerId": "openclaw",
+          "label": "OpenClaw",
+          "targets": ["gateway"],
+          "providerDisplay": { "logoEmoji": "🦞" }
+        }
       ]
     }
   }
@@ -154,8 +166,10 @@ Response shape:
 
 Notes:
 
-- `providerCatalog` is bridge-owned and built in at startup
+- `availableExecutionTargets` is the APP-facing task dialog mode list
+- `providerCatalog` is the APP-facing agent provider catalog
 - `gatewayProviders` is the APP-facing gateway provider catalog
+- provider entries may include target metadata and optional display metadata such as `providerDisplay.logoEmoji`
 - production upstream routing map is fixed to:
   - `codex` -> `https://acp-server.svc.plus/codex/acp/rpc`
   - `opencode` -> `https://acp-server.svc.plus/opencode/acp/rpc`
@@ -391,7 +405,8 @@ Recommended APP-side flow:
 
 1. Call `acp.capabilities` at startup or refresh time.
 2. Read:
-   - `providerCatalog` as `singleAgentProviders`
+   - `availableExecutionTargets`
+   - `providerCatalog` as the `agent` provider catalog
    - `gatewayProviders` as `gatewayProviders`
 3. Before execution, call `xworkmate.routing.resolve`.
 4. Use the resolved fields, not local heuristics, to decide which UI state and
@@ -402,8 +417,8 @@ Suggested APP-side view model:
 
 ```json
 {
-  "executionTargets": ["single-agent", "multi-agent", "gateway"],
-  "singleAgentProviders": ["codex", "opencode", "gemini"],
+  "executionTargets": ["agent", "gateway"],
+  "agentProviders": ["codex", "opencode", "gemini"],
   "gatewayProviders": ["openclaw"]
 }
 ```
@@ -422,10 +437,11 @@ Recommended interpretation rules:
 
 UI binding guidance:
 
-- provider picker for single-agent mode should be populated from
-  `providerCatalog`
+- provider picker for `agent` mode should be populated from `providerCatalog`
 - gateway picker should be populated from `gatewayProviders`
-- gateway UI should display the bridge-owned `openclaw` provider from
+- task dialog mode visibility should be populated from
+  `availableExecutionTargets`
+- gateway UI should display the bridge-owned providers from
   `gatewayProviders`
 - disabled or unavailable states should come from `xworkmate.routing.resolve`
   response fields such as:

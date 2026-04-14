@@ -69,7 +69,76 @@ flowchart TD
   B8 --> C3
   B9 --> C4
 ```
+## Three-Layer View
 
+This view separates what the app sees, what the bridge owns, and what the
+real upstream production targets are. The upstream ACP and gateway services
+exist independently, but for the app they are all accessed through the single
+public bridge origin: `https://xworkmate-bridge.svc.plus`.
+
+```mermaid
+flowchart LR
+    subgraph L1["APP 视角"]
+        APP["xworkmate-app"]
+        APPENTRY["https://xworkmate-bridge.svc.plus<br/>统一代理入口"]
+        APPMETHODS["bridge methods<br/>acp.capabilities / session.* / xworkmate.gateway.*"]
+        APP --> APPENTRY
+        APPENTRY --> APPMETHODS
+    end
+
+    subgraph L2["Bridge 视角"]
+        BRIDGE["xworkmate-bridge<br/>唯一上游发现真源"]
+
+        CAP["Bridge-owned target-scoped provider catalog"]
+        CAP1["codex"]
+        CAP2["opencode"]
+        CAP3["gemini"]
+
+        GW["Bridge-owned gateway routing"]
+        GW1["gatewayProviderId=openclaw"]
+
+        BRIDGE --> CAP
+        CAP --> CAP1
+        CAP --> CAP2
+        CAP --> CAP3
+
+        BRIDGE --> GW
+        GW --> GW1
+    end
+
+    subgraph L3["上游视角"]
+        U1["https://acp-server.svc.plus/codex/acp/rpc"]
+        U2["https://acp-server.svc.plus/opencode/acp/rpc"]
+        U3["https://acp-server.svc.plus/gemini/acp/rpc"]
+        U4["wss://openclaw.svc.plus<br/>reported as openclaw.svc.plus:443"]
+    end
+
+    APPMETHODS --> BRIDGE
+
+    CAP1 --> U1
+    CAP2 --> U2
+    CAP3 --> U3
+    GW1 --> U4
+```
+
+Important distinction:
+
+- the upstream services are independent production services, not embedded
+  inside the bridge
+- for the app, ACP discovery, session execution, and gateway runtime traffic
+  are all proxied through `https://xworkmate-bridge.svc.plus`
+- upstream authentication is unified through
+  `Authorization: Bearer $INTERNAL_SERVICE_TOKEN`
+- `acp.capabilities` is the single APP-facing source for task dialog modes and
+  target-scoped provider catalogs
+- `providerCatalog` currently advertises the ACP single-agent providers:
+  `codex`, `opencode`, and `gemini`
+- `gatewayProviders` currently advertises the gateway-scoped providers, such as
+  `openclaw`
+- `availableExecutionTargets` tells the app which first-level task dialog modes
+  are currently available
+- for `gatewayProviderId=openclaw`, the bridge rewrites the upstream target to
+  `wss://openclaw.svc.plus`
 ## Production Truth
 
 当前 production forwarding 事实：

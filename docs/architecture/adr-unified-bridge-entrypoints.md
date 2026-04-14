@@ -69,6 +69,44 @@ If the bridge reports gateway provider IDs such as `openclaw`, the
 app should treat them as bridge-owned gateway backend identifiers, not as
 independent app entrypoints.
 
+APP-facing routing should be modeled in two layers:
+
+- `executionTarget`
+  - `agent`
+  - `gateway`
+- `agentProviders`
+  - `codex`
+  - `opencode`
+  - `gemini`
+- `gatewayProviders`
+  - `openclaw`
+
+For APP integration, `gatewayProviders` is the stable gateway-facing concept.
+
+APP and UI code should consume bridge state in two phases:
+
+1. `acp.capabilities`
+   - discover `availableExecutionTargets`
+   - discover `agentProviders`
+   - discover `gatewayProviders`
+2. `xworkmate.routing.resolve`
+   - determine `resolvedExecutionTarget`
+   - determine `resolvedProviderId` or `resolvedGatewayProviderId`
+   - determine unavailable state
+
+The APP should treat `resolvedProviderId` and `resolvedGatewayProviderId` as
+mutually exclusive routing outputs depending on `resolvedExecutionTarget`.
+
+Gateway access remains bridge-owned via JSON-RPC methods:
+
+- `xworkmate.gateway.connect`
+- `xworkmate.gateway.request`
+- `xworkmate.gateway.disconnect`
+
+Upstream authentication is unified for both ACP and gateway routes:
+
+- `Authorization: Bearer $INTERNAL_SERVICE_TOKEN`
+
 ## Consequences
 
 ### Positive

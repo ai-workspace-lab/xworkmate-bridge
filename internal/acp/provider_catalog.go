@@ -107,6 +107,7 @@ func (s *Server) availableProviderCatalog() []map[string]any {
 		result = append(result, map[string]any{
 			"providerId": provider.ProviderID,
 			"label":      providerLabel(provider),
+			"targets":    []string{"agent"},
 		})
 	}
 	return result
@@ -124,6 +125,24 @@ func availableGatewayProviderCatalog() []map[string]any {
 		{
 			"providerId": router.GatewayProviderOpenClaw,
 			"label":      "OpenClaw",
+			"targets":    []string{"gateway"},
+			"providerDisplay": map[string]any{
+				"logoEmoji": "🦞",
+			},
 		},
 	}
+}
+
+func availableExecutionTargets(
+	providerCatalog []map[string]any,
+	gatewayProviders []map[string]any,
+) []string {
+	result := make([]string, 0, 2)
+	if len(providerCatalog) > 0 {
+		result = append(result, "agent")
+	}
+	if len(gatewayProviders) > 0 {
+		result = append(result, "gateway")
+	}
+	return result
 }

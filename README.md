@@ -45,6 +45,10 @@ This repository includes one GitHub Actions pipeline with four stages:
 - `deploy`: run Ansible CD with `x-evor/playbooks`
 - `validate`: verify the public endpoints after deployment
 
+GitHub Releases are published only after `deploy` and `validate` both succeed.
+In this repository, a published Release means the built image has been deployed
+to `xworkmate-bridge.svc.plus` and passed post-deploy validation there.
+
 ### Deploy stage
 
 The deploy stage checks out:
@@ -53,6 +57,16 @@ The deploy stage checks out:
 - the `x-evor/playbooks` repository into `playbooks/`
 
 Then it runs `playbooks/deploy_xworkmate_bridge_vhosts.yml`, which builds the service for `linux/amd64` and deploys it to the target host with Ansible.
+
+### Validate stage
+
+The validate stage proves production alignment against the bridge public
+contract:
+
+- bridge root and `/api/ping`
+- strict image / tag / commit / version match against the built image ref
+- upstream ACP capability probes for `codex`, `opencode`, and `gemini`
+- minimal `session.start` smoke tests through `https://xworkmate-bridge.svc.plus/acp/rpc`
 
 Required GitHub secrets:
 

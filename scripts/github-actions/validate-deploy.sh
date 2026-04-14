@@ -73,6 +73,7 @@ probe_jsonrpc_capabilities() {
   local response
   local headers=(
     -H 'Content-Type: application/json'
+    -H 'Accept: application/json'
   )
 
   headers+=("${auth_headers[@]}")
@@ -84,8 +85,94 @@ probe_jsonrpc_capabilities() {
       "${endpoint}"
   )"
 
-  grep -q '"jsonrpc":"2.0"' <<<"${response}"
-  grep -Eq '"result"|"providers"' <<<"${response}"
+  RESPONSE_JSON="${response}" python3 - <<'PY'
+import json
+import os
+
+payload = json.loads(os.environ["RESPONSE_JSON"])
+if payload.get("jsonrpc") != "2.0":
+    raise SystemExit("capabilities response missing jsonrpc envelope")
+
+result = payload.get("result")
+if not isinstance(result, dict):
+    raise SystemExit("capabilities response missing result payload")
+
+if not result and "providers" not in payload:
+    raise SystemExit("capabilities response missing result/providers data")
+PY
+}
+
+jsonrpc_bridge_call() {
+  local payload="$1"
+  local response
+  local headers=(
+    -H 'Content-Type: application/json'
+    -H 'Accept: application/json'
+  )
+
+  headers+=("${auth_headers[@]}")
+
+  response="$(
+    curl "${curl_common[@]}" \
+      "${headers[@]}" \
+      --data "${payload}" \
+      "${BASE_URL}/acp/rpc"
+  )"
+
+  printf '%s\n' "${response}"
+}
+
+probe_bridge_single_agent_smoke() {
+  local provider_id="$1"
+  local request_id="smoke-${provider_id}-$(date +%s)"
+  local session_id="validate-${provider_id}-$(date +%s)"
+  local payload
+  local response
+
+  payload="$(cat <<JSON
+{"jsonrpc":"2.0","id":"${request_id}","method":"session.start","params":{"sessionId":"${session_id}","threadId":"${session_id}","taskPrompt":"Reply with exactly pong","routing":{"routingMode":"explicit","explicitExecutionTarget":"singleAgent","explicitProviderId":"${provider_id}"}}}
+JSON
+)"
+
+  response="$(jsonrpc_bridge_call "${payload}")"
+
+  PROVIDER_ID="${provider_id}" RESPONSE_JSON="${response}" python3 - <<'PY'
+import json
+import os
+
+provider = os.environ["PROVIDER_ID"]
+payload = json.loads(os.environ["RESPONSE_JSON"])
+
+if payload.get("jsonrpc") != "2.0":
+    raise SystemExit(f"{provider}: missing jsonrpc envelope")
+
+if payload.get("error"):
+    raise SystemExit(f"{provider}: rpc error {payload['error']}")
+
+result = payload.get("result")
+if not isinstance(result, dict):
+    raise SystemExit(f"{provider}: missing result payload")
+
+if result.get("success") is not True:
+    raise SystemExit(f"{provider}: success flag was not true: {result!r}")
+
+def first_text_candidate(data):
+    for key in ("output", "resultSummary", "summary", "message"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return ""
+
+def normalize_text(value):
+    normalized = value.strip().strip("`").strip()
+    if len(normalized) >= 2 and normalized[0] == normalized[-1] and normalized[0] in {'"', "'"}:
+        normalized = normalized[1:-1].strip()
+    return normalized.lower()
+
+text = first_text_candidate(result)
+if normalize_text(text) != "pong":
+    raise SystemExit(f"{provider}: expected normalized pong output, got {text!r} from {result!r}")
+PY
 }
 
 probe_safe_http_endpoint() {
@@ -152,3 +239,6 @@ probe_safe_http_endpoint "${OPENCLAW_HTTP_PROBE_URL}"
 probe_jsonrpc_capabilities "${CODEX_RPC_URL}"
 probe_jsonrpc_capabilities "${OPENCODE_RPC_URL}"
 probe_jsonrpc_capabilities "${GEMINI_RPC_URL}"
+probe_bridge_single_agent_smoke "codex"
+probe_bridge_single_agent_smoke "opencode"
+probe_bridge_single_agent_smoke "gemini"
