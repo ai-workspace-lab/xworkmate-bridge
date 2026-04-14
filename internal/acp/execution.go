@@ -168,6 +168,37 @@ func (s *Server) runSingleAgentViaExternalProvider(
 	return enrichSingleAgentResultArtifacts(collector.apply(result), forwardParams), nil
 }
 
+func (s *Server) probeExternalProvider(
+	ctx context.Context,
+	provider syncedProvider,
+	params map[string]any,
+) (map[string]any, error) {
+	endpoint := resolveSingleAgentForwardEndpoint(provider)
+	if endpoint == "" {
+		return nil, fmt.Errorf("external provider endpoint is missing")
+	}
+	authorization := firstNonEmptyString(
+		strings.TrimSpace(provider.AuthorizationHeader),
+		strings.TrimSpace(shared.StringArg(params, inboundAuthorizationHeaderKey, "")),
+	)
+	response, err := requestExternalACP(
+		ctx,
+		endpoint,
+		authorization,
+		"acp.capabilities",
+		map[string]any{},
+		nil,
+	)
+	if err != nil {
+		return nil, err
+	}
+	result := asMap(response["result"])
+	if len(result) == 0 {
+		return nil, fmt.Errorf("external provider probe missing result payload")
+	}
+	return result, nil
+}
+
 func resolveSingleAgentForwardEndpoint(provider syncedProvider) string {
 	return strings.TrimSpace(provider.Endpoint)
 }

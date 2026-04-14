@@ -5,7 +5,7 @@ IMAGE_REF="${1:?image_ref is required}"
 RETRYABLE_TRANSPORT=10
 RETRYABLE_NOT_READY=11
 FAST_HTTP_TIMEOUT_SECONDS=20
-BRIDGE_RPC_TIMEOUT_SECONDS=330
+BRIDGE_RPC_TIMEOUT_SECONDS=60
 
 normalize_url() {
   local value="$1"
@@ -215,15 +215,13 @@ jsonrpc_bridge_call() {
   printf '%s\n' "${response}"
 }
 
-probe_bridge_single_agent_smoke_once() {
+probe_bridge_provider_probe_once() {
   local provider_id="$1"
-  local request_id="smoke-${provider_id}-$(date +%s)"
-  local session_id="validate-${provider_id}-$(date +%s)"
   local payload
   local response
 
   payload="$(cat <<JSON
-{"jsonrpc":"2.0","id":"${request_id}","method":"session.start","params":{"sessionId":"${session_id}","threadId":"${session_id}","taskPrompt":"Reply with exactly pong","routing":{"routingMode":"explicit","explicitExecutionTarget":"singleAgent","explicitProviderId":"${provider_id}"}}}
+{"jsonrpc":"2.0","id":"probe-${provider_id}-$(date +%s)","method":"xworkmate.provider.probe","params":{"providerId":"${provider_id}"}}
 JSON
 )"
 
@@ -247,32 +245,19 @@ except json.JSONDecodeError as exc:
 if payload.get("jsonrpc") != "2.0":
     raise SystemExit(f"{provider}: missing jsonrpc envelope")
 
-if payload.get("error"):
-    raise SystemExit(f"{provider}: rpc error {payload['error']}")
-
 result = payload.get("result")
 if not isinstance(result, dict):
     raise SystemExit(f"{provider}: missing result payload")
 
 if result.get("success") is not True:
-    raise SystemExit(f"{provider}: success flag was not true: {result!r}")
+    raise SystemExit(f"{provider}: provider probe failed: {result!r}")
 
-def first_text_candidate(data):
-    for key in ("output", "resultSummary", "summary", "message"):
-        value = data.get(key)
-        if isinstance(value, str) and value.strip():
-            return value
-    return ""
+if result.get("providerId") != provider:
+    raise SystemExit(f"{provider}: providerId mismatch: {result!r}")
 
-def normalize_text(value):
-    normalized = value.strip().strip("`").strip()
-    if len(normalized) >= 2 and normalized[0] == normalized[-1] and normalized[0] in {'"', "'"}:
-        normalized = normalized[1:-1].strip()
-    return normalized.lower()
-
-text = first_text_candidate(result)
-if normalize_text(text) != "pong":
-    raise SystemExit(f"{provider}: expected normalized pong output, got {text!r} from {result!r}")
+capabilities = result.get("capabilities")
+if not isinstance(capabilities, dict):
+    raise SystemExit(f"{provider}: probe did not return capabilities payload: {result!r}")
 PY
 }
 
@@ -376,6 +361,6 @@ probe_safe_http_endpoint "${OPENCLAW_HTTP_PROBE_URL}"
 run_with_retry "capabilities ${CODEX_RPC_URL}" 3 5 "${RETRYABLE_TRANSPORT}" probe_jsonrpc_capabilities_once "${CODEX_RPC_URL}"
 run_with_retry "capabilities ${OPENCODE_RPC_URL}" 3 5 "${RETRYABLE_TRANSPORT}" probe_jsonrpc_capabilities_once "${OPENCODE_RPC_URL}"
 run_with_retry "capabilities ${GEMINI_RPC_URL}" 3 5 "${RETRYABLE_TRANSPORT}" probe_jsonrpc_capabilities_once "${GEMINI_RPC_URL}"
-run_with_retry "bridge single-agent smoke codex" 3 10 "${RETRYABLE_TRANSPORT}" probe_bridge_single_agent_smoke_once "codex"
-run_with_retry "bridge single-agent smoke opencode" 3 10 "${RETRYABLE_TRANSPORT}" probe_bridge_single_agent_smoke_once "opencode"
-run_with_retry "bridge single-agent smoke gemini" 3 10 "${RETRYABLE_TRANSPORT}" probe_bridge_single_agent_smoke_once "gemini"
+run_with_retry "bridge provider probe codex" 3 10 "${RETRYABLE_TRANSPORT}" probe_bridge_provider_probe_once "codex"
+run_with_retry "bridge provider probe opencode" 3 10 "${RETRYABLE_TRANSPORT}" probe_bridge_provider_probe_once "opencode"
+run_with_retry "bridge provider probe gemini" 3 10 "${RETRYABLE_TRANSPORT}" probe_bridge_provider_probe_once "gemini"

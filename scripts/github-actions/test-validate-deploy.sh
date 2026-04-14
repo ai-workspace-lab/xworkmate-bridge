@@ -139,7 +139,20 @@ case "${scenario}" in
         printf '{"jsonrpc":"2.0","result":{"providers":["ok"]}}\n'
         ;;
       https://xworkmate-bridge.svc.plus/acp/rpc)
-        printf '{"jsonrpc":"2.0","result":{"success":true,"output":"pong"}}\n'
+        if [[ "${data}" == *'"providerId":"codex"'* ]]; then
+          printf '{"jsonrpc":"2.0","result":{"success":true,"providerId":"codex","capabilities":{"providers":["codex"]}}}\n'
+          exit 0
+        fi
+        if [[ "${data}" == *'"providerId":"opencode"'* ]]; then
+          printf '{"jsonrpc":"2.0","result":{"success":true,"providerId":"opencode","capabilities":{"providers":["opencode"]}}}\n'
+          exit 0
+        fi
+        if [[ "${data}" == *'"providerId":"gemini"'* ]]; then
+          printf '{"jsonrpc":"2.0","result":{"success":true,"providerId":"gemini","capabilities":{"providers":["gemini"]}}}\n'
+          exit 0
+        fi
+        printf 'unexpected bridge probe payload in retry-success scenario: %s\n' "${data}" >&2
+        exit 1
         ;;
       *)
         printf 'unexpected url in retry-success scenario: %s\n' "${url}" >&2

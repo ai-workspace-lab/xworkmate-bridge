@@ -396,6 +396,36 @@ func (s *Server) handleRequest(
 			s.availableProviders(),
 		)
 		return mergeRoutingResponse(map[string]any{"ok": true}, result), nil
+	case "xworkmate.provider.probe":
+		providerID := strings.TrimSpace(shared.StringArg(request.Params, "providerId", ""))
+		if providerID == "" {
+			return nil, &shared.RPCError{
+				Code:    -32602,
+				Message: "providerId is required",
+			}
+		}
+		provider, ok := s.syncedProviderByID(providerID)
+		if !ok {
+			return map[string]any{
+				"success":    false,
+				"providerId": providerID,
+				"error":      "provider is not advertised by the bridge",
+			}, nil
+		}
+		result, err := s.probeExternalProvider(context.Background(), provider, request.Params)
+		if err != nil {
+			return map[string]any{
+				"success":    false,
+				"providerId": providerID,
+				"error":      err.Error(),
+			}, nil
+		}
+		return map[string]any{
+			"success":      true,
+			"providerId":   providerID,
+			"probeMethod":  "acp.capabilities",
+			"capabilities": result,
+		}, nil
 	case "xworkmate.mounts.reconcile":
 		return handleMountReconcile(request.Params), nil
 	case "xworkmate.gateway.connect":

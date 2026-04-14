@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -309,6 +310,64 @@ func TestExecuteSessionTaskUsesBridgeAuthTokenFallbackForBuiltInProvider(t *test
 	}
 	if got := response["output"]; got != "bridge-auth-token-ok" {
 		t.Fatalf("expected fallback provider output, got %#v", response)
+	}
+}
+
+func TestHandleRequestProviderProbeUsesBridgeForwardingPath(t *testing.T) {
+	externalServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer probe-token" {
+			t.Fatalf("expected probe bearer auth header, got %q", got)
+		}
+		defer func() {
+			_ = r.Body.Close()
+		}()
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if got := request["method"]; got != "acp.capabilities" {
+			t.Fatalf("expected bridge probe to forward acp.capabilities, got %#v", request)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      request["id"],
+			"result": map[string]any{
+				"providers": []string{"codex"},
+			},
+		})
+	}))
+	defer externalServer.Close()
+
+	server := NewServer()
+	setTestBridgeProvider(server, syncedProvider{
+		ProviderID:          "codex",
+		Label:               "Codex",
+		Endpoint:            externalServer.URL,
+		AuthorizationHeader: "Bearer probe-token",
+		Enabled:             true,
+	})
+
+	response, rpcErr := server.handleRequest(shared.RPCRequest{
+		Method: "xworkmate.provider.probe",
+		Params: map[string]any{
+			"providerId": "codex",
+		},
+	}, func(map[string]any) {})
+	if rpcErr != nil {
+		t.Fatalf("expected success, got rpc error: %v", rpcErr)
+	}
+	if got := response["success"]; got != true {
+		t.Fatalf("expected provider probe success, got %#v", response)
+	}
+	if got := response["providerId"]; got != "codex" {
+		t.Fatalf("expected providerId codex, got %#v", response)
+	}
+	capabilities, ok := response["capabilities"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected capabilities payload, got %#v", response)
+	}
+	if got := capabilities["providers"]; !reflect.DeepEqual(got, []any{"codex"}) {
+		t.Fatalf("expected provider list in capabilities, got %#v", capabilities)
 	}
 }
 
