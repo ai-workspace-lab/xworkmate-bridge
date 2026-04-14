@@ -218,9 +218,13 @@ func sanitizeExternalACPParams(method string, params map[string]any) map[string]
 	delete(next, "resolvedGatewayProviderId")
 	delete(next, "resolvedModel")
 	delete(next, "resolvedSkills")
-	delete(next, inboundAuthorizationHeaderKey)
-	// Gateway-only fields are irrelevant in ACP single-agent forwarding.
 	normalizedMethod := strings.TrimSpace(method)
+	// Bridge-compatible upstream ACP services may need the inbound bearer token
+	// in params so they can forward auth again during nested provider execution.
+	if normalizedMethod != "session.start" && normalizedMethod != "session.message" {
+		delete(next, inboundAuthorizationHeaderKey)
+	}
+	// Gateway-only fields are irrelevant in ACP single-agent forwarding.
 	if normalizedMethod == "session.start" || normalizedMethod == "session.message" {
 		delete(next, "executionTarget")
 		delete(next, "agentId")
