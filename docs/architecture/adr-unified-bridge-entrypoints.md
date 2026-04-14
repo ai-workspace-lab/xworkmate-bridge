@@ -49,13 +49,12 @@ The APP should not depend on provider-specific public URLs such as:
 
 Provider choice remains bridge-owned routing, not URL-owned routing.
 
-APP-facing routing should be modeled in three layers:
+APP-facing routing should be modeled in two layers:
 
 - `executionTarget`
-  - `single-agent`
-  - `multi-agent`
+  - `agent`
   - `gateway`
-- `singleAgentProviders`
+- `agentProviders`
   - `codex`
   - `opencode`
   - `gemini`
@@ -68,7 +67,8 @@ For APP integration, `gatewayProviders` is the stable gateway-facing concept.
 APP and UI code should consume bridge state in two phases:
 
 1. `acp.capabilities`
-   - discover `singleAgentProviders`
+   - discover `availableExecutionTargets`
+   - discover `agentProviders`
    - discover `gatewayProviders`
 2. `xworkmate.routing.resolve`
    - determine `resolvedExecutionTarget`

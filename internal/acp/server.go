@@ -318,20 +318,26 @@ func (s *Server) handleRequest(
 		providerCatalog := s.availableProviderCatalog()
 		gatewayProviders := availableGatewayProviderCatalog()
 		singleAgent := len(providerCatalog) > 0
+		availableExecutionTargets := availableExecutionTargets(
+			providerCatalog,
+			gatewayProviders,
+		)
 		multiAgent := shared.BoolArg(
 			shared.EnvOrDefault("ACP_MULTI_AGENT_ENABLED", "true"),
 			true,
 		)
 		result := map[string]any{
-			"singleAgent":      singleAgent,
-			"multiAgent":       multiAgent,
-			"providerCatalog":  providerCatalog,
-			"gatewayProviders": gatewayProviders,
+			"singleAgent":              singleAgent,
+			"multiAgent":               multiAgent,
+			"availableExecutionTargets": availableExecutionTargets,
+			"providerCatalog":          providerCatalog,
+			"gatewayProviders":         gatewayProviders,
 			"capabilities": map[string]any{
-				"single_agent":     singleAgent,
-				"multi_agent":      multiAgent,
-				"providerCatalog":  providerCatalog,
-				"gatewayProviders": gatewayProviders,
+				"single_agent":              singleAgent,
+				"multi_agent":               multiAgent,
+				"availableExecutionTargets": availableExecutionTargets,
+				"providerCatalog":           providerCatalog,
+				"gatewayProviders":          gatewayProviders,
 			},
 		}
 		return result, nil

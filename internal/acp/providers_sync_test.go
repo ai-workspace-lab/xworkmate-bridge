@@ -42,11 +42,20 @@ func TestCapabilitiesExposeBuiltInProductionProviderCatalog(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected gatewayProviders array, got %#v", result)
 	}
+	availableExecutionTargets, ok := result["availableExecutionTargets"].([]string)
+	if !ok {
+		t.Fatalf("expected availableExecutionTargets array, got %#v", result)
+	}
 	if len(providerCatalog) != 3 {
 		t.Fatalf("expected 3 built-in providers, got %#v", providerCatalog)
 	}
 	if len(gatewayProviders) != 2 {
 		t.Fatalf("expected 2 built-in gateway providers, got %#v", gatewayProviders)
+	}
+	if len(availableExecutionTargets) != 2 ||
+		availableExecutionTargets[0] != "agent" ||
+		availableExecutionTargets[1] != "gateway" {
+		t.Fatalf("expected agent/gateway execution targets, got %#v", availableExecutionTargets)
 	}
 	wantOrder := []string{"codex", "opencode", "gemini"}
 	wantLabels := []string{"Codex", "OpenCode", "Gemini"}
@@ -56,6 +65,10 @@ func TestCapabilitiesExposeBuiltInProductionProviderCatalog(t *testing.T) {
 		}
 		if got := providerCatalog[index]["label"]; got != wantLabels[index] {
 			t.Fatalf("expected label %q at index %d, got %#v", wantLabels[index], index, providerCatalog)
+		}
+		targets, ok := providerCatalog[index]["targets"].([]string)
+		if !ok || len(targets) != 1 || targets[0] != "agent" {
+			t.Fatalf("expected agent target metadata at index %d, got %#v", index, providerCatalog[index]["targets"])
 		}
 	}
 	wantGatewayOrder := []string{"local", "openclaw"}
@@ -67,6 +80,17 @@ func TestCapabilitiesExposeBuiltInProductionProviderCatalog(t *testing.T) {
 		if got := gatewayProviders[index]["label"]; got != wantGatewayLabels[index] {
 			t.Fatalf("expected gateway label %q at index %d, got %#v", wantGatewayLabels[index], index, gatewayProviders)
 		}
+		targets, ok := gatewayProviders[index]["targets"].([]string)
+		if !ok || len(targets) != 1 || targets[0] != "gateway" {
+			t.Fatalf("expected gateway target metadata at index %d, got %#v", index, gatewayProviders[index]["targets"])
+		}
+	}
+	openClawDisplay, ok := gatewayProviders[1]["providerDisplay"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected providerDisplay metadata for openclaw, got %#v", gatewayProviders[1])
+	}
+	if got := openClawDisplay["logoEmoji"]; got != "🦞" {
+		t.Fatalf("expected openclaw logo emoji, got %#v", got)
 	}
 }
 

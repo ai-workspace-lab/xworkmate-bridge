@@ -49,7 +49,7 @@ flowchart LR
     subgraph L2["Bridge 视角"]
         BRIDGE["xworkmate-bridge<br/>唯一上游发现真源"]
 
-        CAP["Bridge-owned ACP routing catalog"]
+        CAP["Bridge-owned target-scoped provider catalog"]
         CAP1["codex"]
         CAP2["opencode"]
         CAP3["gemini"]
@@ -89,10 +89,14 @@ Important distinction:
   are all proxied through `https://xworkmate-bridge.svc.plus`
 - upstream authentication is unified through
   `Authorization: Bearer $INTERNAL_SERVICE_TOKEN`
-- `acp.capabilities.providerCatalog` currently advertises only the ACP
-  single-agent providers: `codex`, `opencode`, and `gemini`
-- `gateway` is not part of that provider catalog; it is exposed through the
-  separate `xworkmate.gateway.*` bridge-owned runtime path
+- `acp.capabilities` is the single APP-facing source for task dialog modes and
+  target-scoped provider catalogs
+- `providerCatalog` currently advertises the ACP single-agent providers:
+  `codex`, `opencode`, and `gemini`
+- `gatewayProviders` currently advertises the gateway-scoped providers, such as
+  `openclaw`
+- `availableExecutionTargets` tells the app which first-level task dialog modes
+  are currently available
 - for `gatewayProviderId=openclaw`, the bridge rewrites the upstream target to
   `wss://openclaw.svc.plus`
 
