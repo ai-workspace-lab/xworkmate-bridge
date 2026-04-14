@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -191,6 +192,147 @@ func TestHandleRPCCapabilitiesStillReturnsJSONResult(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), `"providerCatalog"`) {
 		t.Fatalf("expected capabilities response, got %q", recorder.Body.String())
+	}
+}
+
+func TestHandleRPCCapabilitiesReturnsCanonicalProviderContract(t *testing.T) {
+	server := NewServer()
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"http://127.0.0.1/acp/rpc",
+		strings.NewReader(`{"jsonrpc":"2.0","id":"cap-1","method":"acp.capabilities"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer test")
+
+	server.HandleRPC(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", recorder.Code)
+	}
+
+	var envelope map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode capabilities response: %v", err)
+	}
+
+	result := asMap(envelope["result"])
+	availableTargets := mustStringList(t, result["availableExecutionTargets"])
+	if !reflect.DeepEqual(availableTargets, []string{"agent", "gateway"}) {
+		t.Fatalf("expected canonical execution targets, got %#v", availableTargets)
+	}
+
+	providerCatalog := mustObjectList(t, result["providerCatalog"])
+	if len(providerCatalog) != 3 {
+		t.Fatalf("expected 3 providers, got %#v", providerCatalog)
+	}
+	wantAgentIDs := []string{"codex", "opencode", "gemini"}
+	wantAgentLabels := []string{"Codex", "OpenCode", "Gemini"}
+	for index, wantID := range wantAgentIDs {
+		if got := providerCatalog[index]["providerId"]; got != wantID {
+			t.Fatalf("expected provider %q at index %d, got %#v", wantID, index, providerCatalog)
+		}
+		if got := providerCatalog[index]["label"]; got != wantAgentLabels[index] {
+			t.Fatalf("expected label %q at index %d, got %#v", wantAgentLabels[index], index, providerCatalog)
+		}
+		if targets := mustStringList(t, providerCatalog[index]["targets"]); !reflect.DeepEqual(targets, []string{"agent"}) {
+			t.Fatalf("expected agent targets for %q, got %#v", wantID, targets)
+		}
+	}
+
+	gatewayProviders := mustObjectList(t, result["gatewayProviders"])
+	if len(gatewayProviders) != 1 {
+		t.Fatalf("expected exactly one gateway provider, got %#v", gatewayProviders)
+	}
+	if got := gatewayProviders[0]["providerId"]; got != "openclaw" {
+		t.Fatalf("expected gateway providerId openclaw, got %#v", gatewayProviders[0])
+	}
+	if got := gatewayProviders[0]["label"]; got != "OpenClaw" {
+		t.Fatalf("expected gateway label OpenClaw, got %#v", gatewayProviders[0])
+	}
+	if targets := mustStringList(t, gatewayProviders[0]["targets"]); !reflect.DeepEqual(targets, []string{"gateway"}) {
+		t.Fatalf("expected gateway targets, got %#v", targets)
+	}
+}
+
+func TestHandleRPCSessionStartSucceedsWithExplicitProvider(t *testing.T) {
+	externalServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer internal-test-token" {
+			t.Fatalf("unexpected auth header: %q", got)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      "task-1",
+			"result": map[string]any{
+				"success":  true,
+				"provider": "opencode",
+				"output":   "pong",
+			},
+		})
+	}))
+	defer externalServer.Close()
+
+	t.Setenv("INTERNAL_SERVICE_TOKEN", "internal-test-token")
+
+	server := NewServer()
+	setTestBridgeProvider(server, syncedProvider{
+		ProviderID:          "opencode",
+		Label:               "OpenCode",
+		Endpoint:            externalServer.URL,
+		AuthorizationHeader: "Bearer internal-test-token",
+		Enabled:             true,
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"http://127.0.0.1/acp/rpc",
+		strings.NewReader(`{"jsonrpc":"2.0","id":"task-1","method":"session.start","params":{"sessionId":"s1","threadId":"t1","taskPrompt":"Reply with exactly pong","workingDirectory":"`+t.TempDir()+`","routing":{"routingMode":"explicit","explicitExecutionTarget":"singleAgent","explicitProviderId":"opencode"}}}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer bridge-token")
+
+	server.HandleRPC(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", recorder.Code)
+	}
+	if !strings.Contains(recorder.Body.String(), `"output":"pong"`) {
+		t.Fatalf("expected pong output, got %q", recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"provider":"opencode"`) {
+		t.Fatalf("expected opencode provider, got %q", recorder.Body.String())
+	}
+}
+
+func mustObjectList(t *testing.T, value any) []map[string]any {
+	t.Helper()
+	raw, ok := value.([]any)
+	if !ok {
+		t.Fatalf("expected object list, got %#v", value)
+	}
+	items := make([]map[string]any, 0, len(raw))
+	for _, item := range raw {
+		items = append(items, asMap(item))
+	}
+	return items
+}
+
+func mustStringList(t *testing.T, value any) []string {
+	t.Helper()
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []any:
+		items := make([]string, 0, len(typed))
+		for _, item := range typed {
+			items = append(items, strings.TrimSpace(item.(string)))
+		}
+		return items
+	default:
+		t.Fatalf("expected string list, got %#v", value)
+		return nil
 	}
 }
 

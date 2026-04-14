@@ -276,3 +276,8 @@ jobs:
 
       - name: Validate deployed endpoints
         run: bash ./scripts/github-actions/validate-deploy.sh "${{ needs.build.outputs.service_image_ref }}" "${BRIDGE_SERVER_URL}" "${OPENCLAW_URL}" "${CODEX_RPC_URL}" "${OPENCODE_RPC_URL}" "${GEMINI_RPC_URL}" "${INTERNAL_SERVICE_TOKEN}"
+
+      - name: Validate public ACP contract
+        env:
+          BRIDGE_AUTH_TOKEN: ${{ env.INTERNAL_SERVICE_TOKEN }}
+        run: bash ./scripts/github-actions/verify-public-rpc-contract.sh
