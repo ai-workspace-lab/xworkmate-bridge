@@ -22,6 +22,7 @@ import (
 
 const (
 	inboundAuthorizationHeaderKey = "bridgeAuthorizationHeader"
+	externalACPHTTPTimeout        = 5 * time.Minute
 )
 
 func buildResolvedExecutionParams(
@@ -243,7 +244,7 @@ func requestExternalACPHTTP(
 	if normalized := normalizeAuthorizationHeader(authorization); normalized != "" {
 		req.Header.Set("Authorization", normalized)
 	}
-	response, err := (&http.Client{Timeout: 2 * time.Minute}).Do(req)
+	response, err := (&http.Client{Timeout: externalACPHTTPTimeout}).Do(req)
 	if err != nil {
 		return nil, err
 	}
