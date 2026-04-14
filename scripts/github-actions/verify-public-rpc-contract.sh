@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BASE_URL="${BRIDGE_SERVER_URL:-https://xworkmate-bridge.svc.plus}"
+AUTH_TOKEN="${BRIDGE_AUTH_TOKEN:-${INTERNAL_SERVICE_TOKEN:-}}"
+HTTP_TIMEOUT_SECONDS="${HTTP_TIMEOUT_SECONDS:-30}"
+RPC_TIMEOUT_SECONDS="${RPC_TIMEOUT_SECONDS:-90}"
+
+if [[ -z "${AUTH_TOKEN}" ]]; then
+  echo "BRIDGE_AUTH_TOKEN or INTERNAL_SERVICE_TOKEN is required" >&2
+  exit 1
+fi
+
+normalize_url() {
+  local raw="$1"
+  printf '%s\n' "${raw%/}"
+}
+
+json_rpc_call() {
+  local payload="$1"
+  shift
+  curl \
+    --silent \
+    --show-error \
+    --fail \
+    --location \
+    --max-time "${RPC_TIMEOUT_SECONDS}" \
+    -H 'Accept: application/json' \
+    -H 'Content-Type: application/json' \
+    "$@" \
+    --data "${payload}" \
+    "${resolved_base_url}/acp/rpc"
+}
+
+json_rpc_with_retry() {
+  local payload="$1"
+  shift
+  local attempt
+  for attempt in 1 2 3; do
+    if json_rpc_call "${payload}" "$@"; then
+      return 0
+    fi
+    if (( attempt == 3 )); then
+      return 1
+    fi
+    sleep 5
+  done
+}
+
+resolved_base_url="$(normalize_url "${BASE_URL}")"
+
+unauthorized_status="$(
+  curl \
+    --silent \
+    --show-error \
+    --output /tmp/xworkmate-bridge-public-contract-unauthorized.json \
+    --write-out '%{http_code}' \
+    --location \
+    --max-time "${HTTP_TIMEOUT_SECONDS}" \
+    -H 'Accept: application/json' \
+    -H 'Content-Type: application/json' \
+    --data '{"jsonrpc":"2.0","id":"cap-unauthorized","method":"acp.capabilities"}' \
+    "${resolved_base_url}/acp/rpc"
+)"
+
+if [[ "${unauthorized_status}" != "401" ]]; then
+  echo "expected unauthorized capabilities request to return 401, got ${unauthorized_status}" >&2
+  exit 1
+fi
+
+capabilities_json="$(
+  json_rpc_with_retry \
+    '{"jsonrpc":"2.0","id":"cap-1","method":"acp.capabilities"}' \
+    -H "Authorization: Bearer ${AUTH_TOKEN}"
+)"
+
+RESPONSE_JSON="${capabilities_json}" python3 - <<'PY'
+import json
+import os
+
+payload = json.loads(os.environ["RESPONSE_JSON"])
+if payload.get("jsonrpc") != "2.0":
+    raise SystemExit("bridge capabilities response missing jsonrpc envelope")
+
+result = payload.get("result")
+if not isinstance(result, dict):
+    raise SystemExit("bridge capabilities response missing result payload")
+
+expected_targets = ["agent", "gateway"]
+if result.get("availableExecutionTargets") != expected_targets:
+    raise SystemExit(
+        f"expected availableExecutionTargets {expected_targets!r}, got {result.get('availableExecutionTargets')!r}"
+    )
+
+provider_catalog = result.get("providerCatalog")
+gateway_providers = result.get("gatewayProviders")
+if not isinstance(provider_catalog, list):
+    raise SystemExit("providerCatalog is missing or invalid")
+if not isinstance(gateway_providers, list):
+    raise SystemExit("gatewayProviders is missing or invalid")
+
+expected_agent_ids = ["codex", "opencode", "gemini"]
+expected_agent_labels = ["Codex", "OpenCode", "Gemini"]
+if len(provider_catalog) != len(expected_agent_ids):
+    raise SystemExit(f"expected 3 agent providers, got {provider_catalog!r}")
+
+for index, (provider_id, label) in enumerate(zip(expected_agent_ids, expected_agent_labels)):
+    item = provider_catalog[index]
+    if item.get("providerId") != provider_id:
+        raise SystemExit(f"expected providerId {provider_id!r} at index {index}, got {item!r}")
+    if item.get("label") != label:
+        raise SystemExit(f"expected label {label!r} at index {index}, got {item!r}")
+    if item.get("targets") != ["agent"]:
+        raise SystemExit(f"expected agent targets for {provider_id!r}, got {item!r}")
+
+if len(gateway_providers) != 1:
+    raise SystemExit(f"expected one gateway provider, got {gateway_providers!r}")
+
+gateway = gateway_providers[0]
+if gateway.get("providerId") != "openclaw":
+    raise SystemExit(f"expected gateway providerId 'openclaw', got {gateway!r}")
+if gateway.get("label") != "OpenClaw":
+    raise SystemExit(f"expected gateway label 'OpenClaw', got {gateway!r}")
+if gateway.get("targets") != ["gateway"]:
+    raise SystemExit(f"expected gateway targets ['gateway'], got {gateway!r}")
+PY
+
+session_start_json="$(
+  json_rpc_with_retry \
+    '{"jsonrpc":"2.0","id":"task-1","method":"session.start","params":{"sessionId":"public-contract-smoke","threadId":"public-contract-smoke","taskPrompt":"Reply with exactly pong","workingDirectory":"/tmp","routing":{"routingMode":"explicit","explicitExecutionTarget":"singleAgent","explicitProviderId":"opencode"}}}' \
+    -H "Authorization: Bearer ${AUTH_TOKEN}"
+)"
+
+RESPONSE_JSON="${session_start_json}" python3 - <<'PY'
+import json
+import os
+
+payload = json.loads(os.environ["RESPONSE_JSON"])
+if payload.get("jsonrpc") != "2.0":
+    raise SystemExit("session.start response missing jsonrpc envelope")
+
+result = payload.get("result")
+if not isinstance(result, dict):
+    raise SystemExit(f"session.start missing result payload: {payload!r}")
+
+if result.get("success") is not True:
+    raise SystemExit(f"session.start did not succeed: {result!r}")
+
+if result.get("provider") != "opencode":
+    raise SystemExit(f"expected provider 'opencode', got {result!r}")
+
+output = str(result.get("output", "")).strip().lower()
+if output != "pong":
+    raise SystemExit(f"expected output 'pong', got {result!r}")
+PY
+
+printf 'public bridge RPC contract verified via %s\n' "${resolved_base_url}"
