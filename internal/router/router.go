@@ -242,20 +242,20 @@ func resolveProvider(
 	availableProviders []string,
 	executionTarget string,
 ) (string, bool, string, string) {
-	explicitProviderID := normalize(strings.TrimSpace(req.ExplicitProviderID))
-	if explicitProviderID != "" {
-		if containsProvider(availableProviders, explicitProviderID) {
-			return explicitProviderID, false, "", ""
-		}
-		return "", true, "PROVIDER_UNAVAILABLE", "explicit provider is unavailable"
-	}
-
 	if executionTarget != ExecutionTargetSingleAgent {
 		preferredProvider := normalize(strings.TrimSpace(prefs.Provider))
 		if containsProvider(availableProviders, preferredProvider) {
 			return preferredProvider, false, "", ""
 		}
 		return "", false, "", ""
+	}
+
+	explicitProviderID := normalize(strings.TrimSpace(req.ExplicitProviderID))
+	if explicitProviderID != "" {
+		if containsProvider(availableProviders, explicitProviderID) {
+			return explicitProviderID, false, "", ""
+		}
+		return "", true, "PROVIDER_UNAVAILABLE", "explicit provider is unavailable"
 	}
 
 	preferredProvider := normalize(strings.TrimSpace(prefs.Provider))

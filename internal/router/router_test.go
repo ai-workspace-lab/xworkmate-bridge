@@ -59,6 +59,35 @@ func TestResolveExplicitProviderRequiresAvailability(t *testing.T) {
 	}
 }
 
+func TestResolveExplicitGatewayIgnoresExplicitProvider(t *testing.T) {
+	resolver := Resolver{
+		SkillFinder:    skills.StaticFinder{},
+		SkillInstaller: nil,
+		MemoryService:  memory.Service{},
+	}
+
+	result := resolver.Resolve(Request{
+		Prompt:                     "search the web and summarize results",
+		RoutingMode:                RoutingModeExplicit,
+		ExplicitExecutionTarget:    ExecutionTargetGateway,
+		ExplicitProviderID:         "codex",
+		PreferredGatewayProviderID: GatewayProviderOpenClaw,
+	})
+
+	if result.Unavailable {
+		t.Fatalf("expected explicit gateway route to ignore explicit provider, got %#v", result)
+	}
+	if result.ResolvedExecutionTarget != ExecutionTargetGateway {
+		t.Fatalf("expected gateway route, got %#v", result)
+	}
+	if result.ResolvedGatewayProviderID != GatewayProviderOpenClaw {
+		t.Fatalf("expected openclaw gateway provider, got %#v", result)
+	}
+	if result.ResolvedProviderID != "" {
+		t.Fatalf("expected no single-agent provider on gateway route, got %#v", result)
+	}
+}
+
 func TestResolveAutoLocalTaskToSingleAgent(t *testing.T) {
 	resolver := Resolver{
 		SkillFinder:    skills.StaticFinder{},

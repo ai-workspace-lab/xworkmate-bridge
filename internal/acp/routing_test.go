@@ -342,6 +342,44 @@ func TestExecuteSessionTaskExplicitProviderRequiresAdvertisedBridgeProvider(t *t
 	}
 }
 
+func TestExecuteSessionTaskExplicitGatewayIgnoresExplicitProvider(t *testing.T) {
+	server := NewServer()
+	response, rpcErr := server.executeSessionTask(task{
+		req: shared.RPCRequest{
+			Method: "session.start",
+			Params: map[string]any{
+				"sessionId":  "session-explicit-gateway",
+				"threadId":   "thread-explicit-gateway",
+				"taskPrompt": "search latest news",
+				"routing": map[string]any{
+					"routingMode":                "explicit",
+					"explicitExecutionTarget":    "gateway",
+					"explicitProviderId":         "claude",
+					"preferredGatewayProviderId": "openclaw",
+				},
+			},
+		},
+	})
+	if rpcErr != nil {
+		t.Fatalf("expected structured response, got rpc error: %v", rpcErr)
+	}
+	if unavailable, _ := response["unavailable"].(bool); unavailable {
+		t.Fatalf("expected gateway route without provider unavailable error, got %#v", response)
+	}
+	if got := response["resolvedExecutionTarget"]; got != "gateway" {
+		t.Fatalf("expected resolved gateway target, got %#v", response)
+	}
+	if got := response["resolvedGatewayProviderId"]; got != "openclaw" {
+		t.Fatalf("expected resolved openclaw gateway provider, got %#v", response)
+	}
+	if got := response["resolvedProviderId"]; got != "" {
+		t.Fatalf("expected no resolved single-agent provider, got %#v", response)
+	}
+	if got := response["error"]; got != "gateway not connected" {
+		t.Fatalf("expected test environment to reach gateway execution path, got %#v", response)
+	}
+}
+
 func TestExecuteSessionTaskAutoRoutingUsesBridgeProductionProviderOrder(t *testing.T) {
 	workspaceDir := filepath.Join(t.TempDir(), "workspace")
 	if err := os.MkdirAll(workspaceDir, 0o755); err != nil {
