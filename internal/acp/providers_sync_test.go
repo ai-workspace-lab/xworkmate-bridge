@@ -140,6 +140,62 @@ func TestBuiltInProviderReusesInboundBridgeBearerWhenUpstreamAuthUnset(t *testin
 	}
 }
 
+func TestBuiltInProviderPreservesInboundBridgeAuthParamForNestedForwarding(t *testing.T) {
+	externalServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer bridge-token" {
+			t.Fatalf("expected inbound bridge bearer header, got %q", got)
+		}
+		defer func() {
+			_ = r.Body.Close()
+		}()
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		params := asMap(request["params"])
+		if got := params[inboundAuthorizationHeaderKey]; got != "Bearer bridge-token" {
+			t.Fatalf("expected nested bridge auth param to be preserved, got %#v", params)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      "run-auth-nested-forward",
+			"result": map[string]any{
+				"success": true,
+				"output":  "forwarded-nested-auth-ok",
+			},
+		})
+	}))
+	defer externalServer.Close()
+
+	t.Setenv("INTERNAL_SERVICE_TOKEN", "")
+	t.Setenv("BRIDGE_AUTH_TOKEN", "")
+	server := NewServer()
+	setTestBridgeProvider(server, syncedProvider{
+		ProviderID: "codex",
+		Label:      "Codex",
+		Endpoint:   externalServer.URL,
+		Enabled:    true,
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"http://127.0.0.1/acp/rpc",
+		strings.NewReader(`{"jsonrpc":"2.0","id":"run-auth-nested-forward","method":"session.start","params":{"sessionId":"s1","threadId":"t1","taskPrompt":"hello","workingDirectory":"`+t.TempDir()+`","routing":{"routingMode":"explicit","explicitExecutionTarget":"singleAgent","explicitProviderId":"codex"}}}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer bridge-token")
+
+	server.HandleRPC(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", recorder.Code)
+	}
+	if !strings.Contains(recorder.Body.String(), "forwarded-nested-auth-ok") {
+		t.Fatalf("expected forwarded provider response, got %q", recorder.Body.String())
+	}
+}
+
 func TestProductionProviderCatalogFallsBackToBridgeAuthToken(t *testing.T) {
 	t.Setenv("INTERNAL_SERVICE_TOKEN", "")
 	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-auth-token")
