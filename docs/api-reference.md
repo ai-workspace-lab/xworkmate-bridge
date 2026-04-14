@@ -1,274 +1,321 @@
 # API Interface Reference
 
-This document organizes the current API surface of `xworkmate-bridge` based on the actual code paths in this repository.
+本文档是 `xworkmate-bridge` 当前运行入口与对外协议契约的唯一真相来源，按实际代码整理。
 
-It focuses on:
+覆盖范围：
 
-- the ACP Bridge exposed by `xworkmate-go-core serve`
-- the Gemini ACP adapter exposed by `xworkmate-go-core gemini-acp-adapter`
-- auxiliary HTTP handlers that exist in code but are not currently mounted by `main.go`
+- `xworkmate-go-core serve` 暴露的 bridge HTTP / WebSocket API
+- `xworkmate-go-core acp-stdio` 暴露的 stdio ACP bridge
+- `xworkmate-go-core gemini-acp-adapter` 暴露的 Gemini adapter HTTP / WebSocket API
+- `main.go` 默认模式下 `toolbridge.Run` 暴露的本地工具桥协议
+
+不覆盖：
+
+- 仅存在于内部包、但未作为外部入口挂载的 helper
+- 作为 bridge 内部实现细节的 provider-specific upstream URL 契约
 
 ## 1. Runtime Entry Points
 
-The binary currently exposes these runtime modes:
+二进制入口在 [main.go](../main.go) 中定义。
 
-```bash
-./build/bin/xworkmate-go-core serve
-./build/bin/xworkmate-go-core acp-stdio
-./build/bin/xworkmate-go-core gemini-acp-adapter
-```
-
-Relevant source:
-
-- [main.go](/Users/shenlan/workspaces/cloud-neutral-toolkit/xworkmate-bridge/main.go)
-- [internal/acp/server.go](/Users/shenlan/workspaces/cloud-neutral-toolkit/xworkmate-bridge/internal/acp/server.go)
-- [internal/geminiadapter/server.go](/Users/shenlan/workspaces/cloud-neutral-toolkit/xworkmate-bridge/internal/geminiadapter/server.go)
-
-## 2. ACP Bridge HTTP / WebSocket API
-
-Canonical APP-facing public origin:
-
-- `https://xworkmate-bridge.svc.plus`
-
-Canonical APP-facing ACP paths:
-
-- `POST /acp/rpc`
-- `GET /acp` for WebSocket ACP
-
-Independent upstream ACP and gateway services may exist behind the bridge, but
-they are not the primary APP contract.
-
-### 2.1 Default listen address
-
-`serve` mode reads:
-
-- `ACP_LISTEN_ADDR`, default `127.0.0.1:8787`
-
-### 2.2 Exposed routes
-
-When running `xworkmate-go-core serve`, only these two routes are mounted:
-
-| Path | Protocol | Purpose |
+| 模式 | 命令 | 作用 |
 | --- | --- | --- |
-| `/acp/rpc` | HTTP POST | JSON-RPC entrypoint |
-| `/acp` | WebSocket | ACP over WebSocket |
+| Bridge HTTP / WS | `./build/bin/xworkmate-go-core serve` | 启动 canonical bridge，对外暴露 `/acp/rpc` 与 `/acp`，并附带健康检查。 |
+| ACP stdio | `./build/bin/xworkmate-go-core acp-stdio` | 通过 stdin/stdout 提供 ACP bridge。 |
+| Gemini adapter | `./build/bin/xworkmate-go-core gemini-acp-adapter` | 把 Gemini CLI / Gemini ACP stdio 封装成 HTTP / WebSocket ACP 服务。 |
+| Tool bridge | `./build/bin/xworkmate-go-core` | 默认模式；暴露本地工具桥协议，不挂 bridge HTTP 路由。 |
 
-Any other path returns `404`.
+## 2. Bridge `serve` Mode
 
-### 2.3 Auth and CORS
+### 2.1 Canonical origin 与 listen 地址
 
-Bridge auth is bearer-token based:
+- APP-facing canonical public origin: `https://xworkmate-bridge.svc.plus`
+- 默认 listen 地址：`127.0.0.1:8787`
+- 读取环境变量：`ACP_LISTEN_ADDR`
 
-- Environment variable: `ACP_AUTH_TOKEN`
-- Required header: `Authorization: Bearer <token>`
+### 2.2 实际挂载路由
 
-Origin allowlist comes from:
+`serve` 模式当前由 `internal/acp.Server.Handler()` 实际挂载以下路径：
 
+| Path | Method / Protocol | Auth | 用途 |
+| --- | --- | --- | --- |
+| `/` | `GET` | 否 | 纯文本运行状态探针，返回 `xworkmate-bridge is running`。 |
+| `/api/ping` | `GET` | 否 | 返回镜像、tag、commit、version 等版本信息。 |
+| `/bridge/bootstrap/health` | `GET` | 否 | bootstrap 健康检查，返回 `bridgeOrigin`。 |
+| `/acp/rpc` | `POST` | 是 | JSON-RPC over HTTP 主入口。 |
+| `/acp/rpc` | `OPTIONS` | 否 | CORS 预检。 |
+| `/acp` | `GET` + WebSocket upgrade | 是 | JSON-RPC over WebSocket 主入口。 |
+
+其他路径返回 `404 Not Found`。
+
+### 2.3 Auth、Origin 与 CORS
+
+bridge 的认证与跨域规则来自：
+
+- `ACP_AUTH_TOKEN`
 - `ACP_ALLOWED_ORIGINS`
-- default: `https://xworkmate.svc.plus,http://localhost:*,http://127.0.0.1:*`
 
-Behavior summary:
+默认 allowed origins：
 
-- missing or invalid bearer token: HTTP `401`, JSON-RPC error code `-32001`
-- disallowed origin: HTTP `403`, JSON-RPC error code `-32003`
-- `OPTIONS /acp/rpc` is supported for CORS preflight
+- `https://xworkmate.svc.plus`
+- `http://localhost:*`
+- `http://127.0.0.1:*`
 
-Relevant source:
+规则：
 
-- [internal/acp/server.go](/Users/shenlan/workspaces/cloud-neutral-toolkit/xworkmate-bridge/internal/acp/server.go)
-- [internal/acp/web_contract.go](/Users/shenlan/workspaces/cloud-neutral-toolkit/xworkmate-bridge/internal/acp/web_contract.go)
+- `/acp/rpc` 与 `/acp` 都要求 origin 通过 allowlist 校验。
+- 空 `Origin` 默认允许。
+- `:*` 表示前缀匹配，例如 `http://localhost:*`。
+- auth 使用 bearer header。
+- 如果 `ACP_AUTH_TOKEN` 为空，则接受任意非空 bearer header。
+- 如果 `ACP_AUTH_TOKEN` 非空，则必须匹配裸 token 或 `Bearer <token>`。
 
-### 2.4 Content negotiation
+错误行为：
 
-For `POST /acp/rpc`:
+- origin 不允许：HTTP `403`，JSON-RPC error code `-32003`
+- bearer 缺失或不合法：HTTP `401`，JSON-RPC error code `-32001`
+- 非 `POST` 请求打到 `/acp/rpc`：HTTP `405`，JSON-RPC error code `-32600`
 
-- normal JSON-RPC response: `Content-Type: application/json`
-- if `Accept` contains `text/event-stream`, the server streams notifications as SSE and sends the final JSON-RPC result through SSE as well
+### 2.4 JSON-RPC envelope
 
-### 2.5 JSON-RPC methods exposed by the bridge
-
-The bridge currently handles these methods:
-
-| Method | Description |
-| --- | --- |
-| `acp.capabilities` | Return current bridge capability summary |
-| `session.start` | Start a task session |
-| `session.message` | Continue an existing session |
-| `session.cancel` | Cancel an active session |
-| `session.close` | Close session state |
-| `xworkmate.dispatch.resolve` | Resolve provider choice from candidate providers and requirements |
-| `xworkmate.routing.resolve` | Resolve execution target / provider / skills from routing metadata |
-| `xworkmate.mounts.reconcile` | Reconcile managed MCP configuration and mount-related settings |
-| `xworkmate.gateway.connect` | Connect bridge runtime to gateway |
-| `xworkmate.gateway.request` | Send a request to the connected gateway runtime |
-| `xworkmate.gateway.disconnect` | Disconnect gateway runtime |
-
-Unknown methods return JSON-RPC error code `-32601`.
-
-## 3. Bridge Method Details
-
-### 3.1 `acp.capabilities`
-
-Request:
+HTTP 与 WebSocket 统一使用 JSON-RPC 2.0 结构：
 
 ```json
 {
   "jsonrpc": "2.0",
-  "id": "cap-1",
-  "method": "acp.capabilities"
+  "id": "req-1",
+  "method": "acp.capabilities",
+  "params": {}
 }
 ```
 
-Response shape:
+成功响应：
 
 ```json
 {
   "jsonrpc": "2.0",
-  "id": "cap-1",
-  "result": {
-    "singleAgent": true,
-    "multiAgent": true,
+  "id": "req-1",
+  "result": {}
+}
+```
+
+错误响应：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "req-1",
+  "error": {
+    "code": -32601,
+    "message": "unknown method: ..."
+  }
+}
+```
+
+### 2.5 HTTP streaming
+
+当 `/acp/rpc` 的 `Accept` 包含 `text/event-stream` 时：
+
+- 中间通知通过 SSE `data: ...` 推送
+- 最终结果也通过 SSE 发出
+- 非流式场景则返回普通 `application/json`
+
+## 3. Bridge HTTP Route Details
+
+### 3.1 `GET /`
+
+- Auth：不需要
+- 返回：`text/plain; charset=utf-8`
+- 内容：`xworkmate-bridge is running`
+
+### 3.2 `GET /api/ping`
+
+- Auth：不需要
+- 返回：`application/json`
+- 返回结构：
+
+```json
+{
+  "status": "ok",
+  "image": "full-image-ref-or-empty",
+  "tag": "tag-or-empty",
+  "commit": "commit-or-empty",
+  "version": "version-or-empty"
+}
+```
+
+说明：
+
+- 版本信息来自环境变量 `IMAGE`
+- `IMAGE` 会被解析成 `image` / `tag` / `commit` / `version`
+
+### 3.3 `GET /bridge/bootstrap/health`
+
+- Auth：不需要
+- 返回：`application/json`
+- 返回结构：
+
+```json
+{
+  "ok": true,
+  "bridgeOrigin": "https://xworkmate-bridge.svc.plus",
+  "issuedBy": "xworkmate-bridge"
+}
+```
+
+说明：
+
+- `bridgeOrigin` 读取 `BRIDGE_PUBLIC_BASE_URL`
+- 默认值：`https://xworkmate-bridge.svc.plus`
+
+## 4. Bridge JSON-RPC Methods
+
+未知方法统一返回：
+
+- JSON-RPC error code `-32601`
+- message 形如 `unknown method: <method>`
+
+### 4.1 `acp.capabilities`
+
+用途：返回 bridge 当前可用能力、provider catalog、gateway provider catalog 和 APP-facing execution target 列表。
+
+必填参数：无
+
+可选参数：无
+
+返回结构：
+
+```json
+{
+  "singleAgent": true,
+  "multiAgent": true,
+  "availableExecutionTargets": ["agent", "gateway"],
+  "providerCatalog": [
+    { "providerId": "codex", "label": "Codex", "targets": ["agent"] },
+    { "providerId": "opencode", "label": "OpenCode", "targets": ["agent"] },
+    { "providerId": "gemini", "label": "Gemini", "targets": ["agent"] }
+  ],
+  "gatewayProviders": [
+    {
+      "providerId": "openclaw",
+      "label": "OpenClaw",
+      "targets": ["gateway"],
+      "providerDisplay": { "logoEmoji": "🦞" }
+    }
+  ],
+  "capabilities": {
+    "single_agent": true,
+    "multi_agent": true,
     "availableExecutionTargets": ["agent", "gateway"],
-    "providerCatalog": [
-      { "providerId": "codex", "label": "Codex", "targets": ["agent"] },
-      { "providerId": "opencode", "label": "OpenCode", "targets": ["agent"] },
-      { "providerId": "gemini", "label": "Gemini", "targets": ["agent"] }
-    ],
-    "gatewayProviders": [
-      {
-        "providerId": "openclaw",
-        "label": "OpenClaw",
-        "targets": ["gateway"],
-        "providerDisplay": { "logoEmoji": "🦞" }
-      }
-    ],
-    "capabilities": {
-      "single_agent": true,
-      "multi_agent": true,
-      "availableExecutionTargets": ["agent", "gateway"],
-      "providerCatalog": [
-        { "providerId": "codex", "label": "Codex", "targets": ["agent"] },
-        { "providerId": "opencode", "label": "OpenCode", "targets": ["agent"] },
-        { "providerId": "gemini", "label": "Gemini", "targets": ["agent"] }
-      ],
-      "gatewayProviders": [
-        {
-          "providerId": "openclaw",
-          "label": "OpenClaw",
-          "targets": ["gateway"],
-          "providerDisplay": { "logoEmoji": "🦞" }
-        }
-      ]
-    }
+    "providerCatalog": [...],
+    "gatewayProviders": [...]
   }
 }
 ```
 
-Notes:
+失败条件：
 
-- `availableExecutionTargets` is the APP-facing task dialog mode list
-- `providerCatalog` is the APP-facing agent provider catalog
-- `gatewayProviders` is the APP-facing gateway provider catalog
-- provider entries may include target metadata and optional display metadata such as `providerDisplay.logoEmoji`
-- production upstream routing map is fixed to:
-  - `codex` -> `https://acp-server.svc.plus/codex/acp/rpc`
-  - `opencode` -> `https://acp-server.svc.plus/opencode/acp/rpc`
-  - `gemini` -> `https://acp-server.svc.plus/gemini/acp/rpc`
-- APP traffic reaches those upstreams through the bridge's canonical public
-  ACP path, not by depending on upstream URLs directly
-- upstream ACP auth prefers bridge-owned service auth and otherwise reuses the
-  inbound bridge bearer header
-- `multiAgent` is controlled by `ACP_MULTI_AGENT_ENABLED`, default `true`
+- 一般不返回 RPC error；只要请求合法即给出当前 bridge 视角能力。
 
-### 3.2 `session.start`
+### 4.2 `session.start`
 
-Starts a session and resets any existing state with the same `sessionId`.
+用途：开始一个新任务 session；如果相同 `sessionId` 已存在，会 reset 该 session。
 
-Minimum required params:
+必填参数：
 
-```json
-{
-  "sessionId": "session-1"
-}
-```
+- `sessionId: string`
+- `routing: object`
 
-Typical request:
+常用可选参数：
 
-```json
-{
-  "jsonrpc": "2.0",
-  "id": "task-1",
-  "method": "session.start",
-  "params": {
-    "sessionId": "session-1",
-    "threadId": "thread-1",
-    "taskPrompt": "Reply with exactly pong",
-    "workingDirectory": "/tmp/demo",
-    "routing": {
-      "routingMode": "explicit",
-      "explicitExecutionTarget": "singleAgent",
-      "explicitProviderId": "opencode"
-    }
-  }
-}
-```
+- `threadId: string`
+- `taskPrompt: string`
+- `workingDirectory: string`
+- `attachments: []`
+- `aiGatewayBaseUrl: string`
+- `aiGatewayApiKey: string`
 
-Rules:
+`routing` 常见字段：
 
-- `sessionId` is required, otherwise `-32602`
-- `threadId` defaults to `sessionId`
-- work is queued per `threadId`
-- for public single-agent multi-turn usage, `routing` should be resent on later turns
+- `routingMode`
+- `preferredGatewayProviderId`
+- `explicitExecutionTarget`
+- `explicitProviderId`
+- `explicitModel`
+- `explicitSkills`
+- `allowSkillInstall`
+- `installApproval`
+- `availableSkills`
 
-### 3.3 `session.message`
+返回结构：
 
-Continues an existing session.
+- 所有成功结果都会被 bridge 补齐 routing 元数据：
+  - `resolvedExecutionTarget`
+  - `resolvedProviderId`
+  - `resolvedGatewayProviderId`
+  - `resolvedModel`
+  - `resolvedSkills`
+- single-agent 成功时通常包含：
+  - `success: true`
+  - `turnId: string`
+  - `mode: "single-agent"`
+  - `provider: string`
+  - 可能包含 `effectiveWorkingDirectory`、`output`、`workspace`、artifact metadata
+- multi-agent 成功时通常包含：
+  - `success: true`
+  - `summary: string`
+  - `finalScore: number`
+  - `iterations: number`
+  - `turnId: string`
+  - `mode: "multi-agent"`
+- gateway 成功时至少保证：
+  - `turnId`
+  - `mode: "gateway-chat"`
+  - 其余字段取决于 gateway payload
 
-Minimum required params:
+失败条件：
 
-```json
-{
-  "sessionId": "session-1"
-}
-```
+- 缺少 `sessionId`：`-32602`
+- 缺少 `routing`：`-32602`，message 为 `ROUTING_REQUIRED`
+- routing 标记 unavailable：返回 `success: false` 与 `unavailable*` 字段
+- single-agent provider 未被 bridge 广告：返回 `success: false`
+- multi-agent 缺少 `aiGatewayApiKey`：返回 `success: false`
 
-Typical request:
+通知：
 
-```json
-{
-  "jsonrpc": "2.0",
-  "id": "task-2",
-  "method": "session.message",
-  "params": {
-    "sessionId": "session-1",
-    "threadId": "thread-1",
-    "taskPrompt": "Continue the previous task",
-    "workingDirectory": "/tmp/demo",
-    "routing": {
-      "routingMode": "explicit",
-      "explicitExecutionTarget": "singleAgent",
-      "explicitProviderId": "opencode"
-    }
-  }
-}
-```
+- 执行期间会通过 `session.update` 推送状态与步骤更新
 
-### 3.4 `session.cancel`
+### 4.3 `session.message`
 
-Request:
+用途：继续已有 session 的下一轮消息。
 
-```json
-{
-  "jsonrpc": "2.0",
-  "id": "cancel-1",
-  "method": "session.cancel",
-  "params": {
-    "sessionId": "session-1"
-  }
-}
-```
+必填参数：
 
-Response:
+- `sessionId: string`
+- `routing: object`
+
+可选参数：
+
+- 与 `session.start` 基本一致
+
+返回结构：
+
+- 与 `session.start` 相同；bridge 会复用 session 历史，尤其在 multi-agent 与 Gemini adapter 路径中。
+
+失败条件：
+
+- 缺少 `sessionId`：`-32602`
+- 缺少 `routing`：`-32602`
+
+### 4.4 `session.cancel`
+
+用途：取消活跃 session。
+
+必填参数：
+
+- `sessionId: string`
+
+返回结构：
 
 ```json
 {
@@ -277,29 +324,19 @@ Response:
 }
 ```
 
-Notes:
+失败条件：
 
-- `accepted` indicates the request envelope was accepted
-- `cancelled` is `true` only when an active session was actually cancelled
-- if the session does not exist or is already finished, `cancelled` may be
-  `false`
+- 缺少 `sessionId`：`-32602`
 
-### 3.5 `session.close`
+### 4.5 `session.close`
 
-Request:
+用途：关闭 session 状态。
 
-```json
-{
-  "jsonrpc": "2.0",
-  "id": "close-1",
-  "method": "session.close",
-  "params": {
-    "sessionId": "session-1"
-  }
-}
-```
+必填参数：
 
-Response:
+- `sessionId: string`
+
+返回结构：
 
 ```json
 {
@@ -308,197 +345,179 @@ Response:
 }
 ```
 
-Notes:
+失败条件：
 
-- `accepted` indicates the request envelope was accepted
-- `closed` is `true` only when an existing session state was actually closed
-- if the session does not exist or is already gone, `closed` may be `false`
+- 缺少 `sessionId`：`-32602`
 
-### 3.6 `xworkmate.dispatch.resolve`
+### 4.6 `xworkmate.dispatch.resolve`
 
-Purpose:
+用途：根据候选 providers、required capabilities 和 node state 选择 provider，并返回 dispatch metadata。
 
-- choose a provider from a list of candidates
-- apply preferred provider and capability constraints
-- optionally consider node state and node info
+必填参数：
 
-Key params:
+- 无强制必填；空输入也会返回结构化结果
 
-- `providers`: array of provider definitions
-- `preferredProviderId`
-- `requiredCapabilities`
-- `nodeState`
-- `nodeInfo`
+常用参数：
 
-Provider item shape:
+- `providers: []`
+- `preferredProviderId: string`
+- `requiredCapabilities: []string`
+- `nodeState: object`
+- `nodeInfo: object`
+
+返回结构：
 
 ```json
 {
-  "id": "codex",
-  "name": "Codex",
-  "defaultArgs": ["app-server"],
-  "capabilities": ["singleAgent", "tools"]
+  "providerId": "codex",
+  "provider": {
+    "id": "codex",
+    "name": "Codex",
+    "defaultArgs": [],
+    "capabilities": []
+  },
+  "agentId": "optional-agent-id",
+  "metadata": {
+    "node": {...},
+    "dispatch": {...},
+    "bridge": {...},
+    "provider": {...}
+  }
 }
 ```
 
-### 3.7 `xworkmate.routing.resolve`
+失败条件：
 
-Purpose:
+- 不走 RPC error；provider 选不到时 `providerId` / `provider` 可能为空。
 
-- resolve routing metadata into:
-  - execution target
-  - provider
-  - gateway provider
-  - model
-  - selected skills
-  - install suggestion / unavailable state
+### 4.7 `xworkmate.routing.resolve`
 
-Canonical use:
+用途：只做 routing resolve，不执行任务。
 
-- apps should use this method as the single preflight source for:
-  - effective execution target
-  - effective provider selection
-  - unavailable code / message
-- apps should not re-derive provider availability or `auto` resolution from
-  `acp.capabilities`
+必填参数：
 
-Key input fields:
+- `routing: object`
+
+常用参数：
 
 - `taskPrompt`
 - `workingDirectory`
-- `routing.routingMode`
-- `routing.preferredGatewayProviderId`
-- `routing.explicitExecutionTarget`
-- `routing.explicitProviderId`
-- `routing.explicitModel`
-- `routing.explicitSkills`
-- `routing.allowSkillInstall`
-- `routing.installApproval`
-- `routing.availableSkills`
 - `aiGatewayBaseUrl`
 - `aiGatewayApiKey`
 
-Representative response fields:
-
-- `resolvedExecutionTarget`
-- `resolvedProviderId`
-- `resolvedGatewayProviderId`
-- `resolvedModel`
-- `resolvedSkills`
-- `skillResolutionSource`
-- `needsSkillInstall`
-- `unavailable`
-- `unavailableCode`
-- `unavailableMessage`
-- `skillInstallRequestId`
-- `skillCandidates`
-- `memorySources`
-
-APP-facing interpretation:
-
-- if `resolvedExecutionTarget = single-agent`, use `resolvedProviderId`
-- if `resolvedExecutionTarget = gateway`, use `resolvedGatewayProviderId`
-
-### 3.7.1 UI / APP consumption model
-
-Recommended APP-side flow:
-
-1. Call `acp.capabilities` at startup or refresh time.
-2. Read:
-   - `availableExecutionTargets`
-   - `providerCatalog` as the `agent` provider catalog
-   - `gatewayProviders` as `gatewayProviders`
-3. Before execution, call `xworkmate.routing.resolve`.
-4. Use the resolved fields, not local heuristics, to decide which UI state and
-   execution branch to use.
-5. Send `session.start` or `session.message` through the bridge canonical path.
-
-Suggested APP-side view model:
+返回结构：
 
 ```json
 {
-  "executionTargets": ["agent", "gateway"],
-  "agentProviders": ["codex", "opencode", "gemini"],
-  "gatewayProviders": ["openclaw"]
+  "ok": true,
+  "resolvedExecutionTarget": "single-agent",
+  "resolvedProviderId": "codex",
+  "resolvedGatewayProviderId": "",
+  "resolvedModel": "",
+  "resolvedSkills": [],
+  "skillResolutionSource": "local_match",
+  "needsSkillInstall": false,
+  "unavailable": false
 }
 ```
 
-Recommended interpretation rules:
+失败条件：
 
-- if `resolvedExecutionTarget = single-agent`
-  - read `resolvedProviderId`
-  - ignore `resolvedGatewayProviderId`
-- if `resolvedExecutionTarget = multi-agent`
-  - treat the run as bridge-orchestrated multi-agent execution
-  - do not force a single provider picker as the primary routing control
-- if `resolvedExecutionTarget = gateway`
-  - read `resolvedGatewayProviderId`
-  - ignore `resolvedProviderId`
+- 若未提供 `routing`，bridge 层不会对该方法报错，但返回的 resolved 结果可能为空。
+- unavailable 场景通过 `unavailable` / `unavailableCode` / `unavailableMessage` 表达。
 
-UI binding guidance:
+### 4.8 `xworkmate.provider.probe`
 
-- provider picker for `agent` mode should be populated from `providerCatalog`
-- gateway picker should be populated from `gatewayProviders`
-- task dialog mode visibility should be populated from
-  `availableExecutionTargets`
-- gateway UI should display the bridge-owned providers from
-  `gatewayProviders`
-- disabled or unavailable states should come from `xworkmate.routing.resolve`
-  response fields such as:
-  - `unavailable`
-  - `unavailableCode`
-  - `unavailableMessage`
+用途：通过 bridge 对外探测某个 advertised provider 的 `acp.capabilities`。
 
-Do not:
+必填参数：
 
-- infer provider availability from hardcoded lists
-- treat `openclaw` as a single-agent provider
-- re-derive auto-routing from prompt text on the APP side
-- use upstream URLs as the APP-facing contract
+- `providerId: string`
 
-### 3.8 `xworkmate.mounts.reconcile`
+返回结构：
 
-Purpose:
+成功：
 
-- reconcile managed MCP server config for supported local tools and homes
+```json
+{
+  "success": true,
+  "providerId": "codex",
+  "probeMethod": "acp.capabilities",
+  "capabilities": {}
+}
+```
 
-Key params:
+provider 未广告：
 
-- `config.autoSync`
-- `config.usesAris`
-- `config.managedMcpServers`
+```json
+{
+  "success": false,
+  "providerId": "codex",
+  "error": "provider is not advertised by the bridge"
+}
+```
+
+失败条件：
+
+- 缺少 `providerId`：`-32602`
+- upstream probe 失败：返回 `success: false` 与 error 文本
+
+### 4.9 `xworkmate.mounts.reconcile`
+
+用途：对 Codex / Claude / Gemini / OpenCode / OpenClaw / ARIS 的 mount 与 MCP 状态做统一 reconcile。
+
+必填参数：无
+
+常用参数：
+
+- `config`
 - `aiGatewayUrl`
 - `configuredCodexCliPath`
 - `codexHome`
 - `opencodeHome`
-- `openclawHome`
+- `openClawHome`
 - `aris`
 
-Managed MCP server item shape:
+返回结构：
 
 ```json
 {
-  "id": "xworkmate_server",
-  "command": "xworkmate-mcp",
-  "args": ["--port", "7777"],
-  "enabled": true
+  "mountTargets": [
+    {
+      "targetId": "codex",
+      "label": "Codex",
+      "available": true,
+      "supportsSkills": true,
+      "supportsMcp": true,
+      "supportsAiGatewayInjection": true,
+      "discoveryState": "ready",
+      "syncState": "ready",
+      "discoveredSkillCount": 0,
+      "discoveredMcpCount": 2,
+      "managedMcpCount": 1,
+      "detail": "..."
+    }
+  ],
+  "arisBundleVersion": "optional",
+  "arisCompatStatus": "idle"
 }
 ```
 
-### 3.9 Gateway runtime methods
+失败条件：
 
-#### `xworkmate.gateway.connect`
+- 不通过 RPC error 暴露；目标缺失或配置异常通过每个 mount target 的 `available` / `discoveryState` / `syncState` / `detail` 体现。
 
-Purpose:
+### 4.10 `xworkmate.gateway.connect`
 
-- connect a bridge runtime session to the bridge-owned production gateway route
-- from the APP perspective this still enters through the canonical bridge ACP
-  path and bridge JSON-RPC methods, not a direct `openclaw` URL contract
+用途：把 bridge runtime 连接到 gateway provider。
 
-Key params:
+必填参数：
 
-- `runtimeId`
-- `gatewayProviderId`
+- `runtimeId: string`
+
+常用参数：
+
+- `gatewayProviderId: string`
 - `clientId`
 - `locale`
 - `userAgent`
@@ -507,57 +526,72 @@ Key params:
 - `connectAuthSources`
 - `hasSharedAuth`
 - `hasDeviceToken`
-- `endpoint.host`
-- `endpoint.port`
-- `endpoint.tls`
+- `endpoint`
 - `packageInfo`
 - `deviceInfo`
 - `identity`
 - `auth`
 
-Response fields:
+返回结构：
 
-- `ok`
-- `snapshot`
-- `auth`
-- `returnedDeviceToken`
-- `error`
+```json
+{
+  "ok": true,
+  "snapshot": {},
+  "auth": {},
+  "returnedDeviceToken": "optional",
+  "error": {}
+}
+```
 
-Notes:
+说明：
 
-- empty or unsupported `gatewayProviderId` values are normalized to
-  `openclaw`
-- for `gatewayProviderId=openclaw`, the bridge overrides runtime endpoint
-  selection to `wss://openclaw.svc.plus`
-- upstream gateway auth uses `Authorization: Bearer $INTERNAL_SERVICE_TOKEN`
-- the app does not provide production openclaw endpoint truth
+- 当 `gatewayProviderId` 为空时默认使用 `openclaw`
+- 对 `openclaw` 会应用 bridge-owned production routing
 
-#### `xworkmate.gateway.request`
+失败条件：
 
-Purpose:
+- 缺少 `runtimeId`：通过 result 中 `ok: false` 与 `error.code = "INVALID_RUNTIME_ID"` 表达
+- 建连失败：`ok: false`，错误信息写入 `error`
 
-- send a gateway runtime RPC-like request through an existing runtime connection
+### 4.11 `xworkmate.gateway.request`
 
-Params:
+用途：向已连接的 gateway runtime 发送请求。
 
-- `runtimeId`
-- `method`
-- `params`
-- `timeoutMs`
+必填参数：
 
-Response fields:
+- `runtimeId: string`
+- `method: string`
 
-- `ok`
-- `payload`
-- `error`
+可选参数：
 
-#### `xworkmate.gateway.disconnect`
+- `params: object`
+- `timeoutMs: number`
 
-Params:
+返回结构：
 
-- `runtimeId`
+```json
+{
+  "ok": true,
+  "payload": {},
+  "error": {}
+}
+```
 
-Response:
+失败条件：
+
+- runtime 不在线：`ok: false`，`error.code = "OFFLINE"`
+- request timeout：`ok: false`，错误消息包含 timeout
+
+### 4.12 `xworkmate.gateway.disconnect`
+
+用途：断开 gateway runtime。
+
+必填参数：
+
+- `runtimeId: string`
+
+返回结构：
 
 ```json
 {
@@ -565,138 +599,267 @@ Response:
 }
 ```
 
-## 4. WebSocket Contract
+失败条件：
 
-`/acp` accepts the same JSON-RPC method set as `/acp/rpc`.
+- 无 RPC error；如果 runtime 不存在，视为幂等接受。
 
-Differences from HTTP:
+## 5. Bridge Notifications
 
-- each inbound message is a JSON-RPC request frame
-- notifications are written back as WebSocket JSON messages
-- result envelopes and error envelopes are also written as WebSocket JSON messages
+### 5.1 `session.update`
 
-Observed bridge behavior on the public deployment:
+bridge 在 session 执行期间会通过 `session.update` 推送通知，统一 envelope：
 
-- authenticated plain `GET /acp` without WebSocket upgrade headers returns HTTP
-  `400 Bad Request`
-- authenticated `GET /acp` with valid WebSocket upgrade headers returns HTTP
-  `101 Switching Protocols`
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "session.update",
+  "params": {
+    "sessionId": "s1",
+    "threadId": "t1",
+    "turnId": "turn-...",
+    "seq": 1
+  }
+}
+```
 
-## 5. Gemini ACP Adapter API
+常见 payload 字段：
 
-### 5.1 Default listen address
+- `type`
+- `event`
+- `message`
+- `pending`
+- `error`
+- `mode`
+- `title`
+- `role`
+- `iteration`
+- `score`
 
-`gemini-acp-adapter` reads:
+## 6. ACP stdio Mode
 
-- `GEMINI_ADAPTER_LISTEN_ADDR`, default `127.0.0.1:8791`
+`acp-stdio` 模式使用 `internal/acp.RunStdio`，通过 stdin/stdout 提供 ACP bridge。
 
-### 5.2 Exposed routes
+特点：
 
-When running `xworkmate-go-core gemini-acp-adapter`, only these routes are mounted:
+- 不挂 HTTP 路由
+- 不处理 CORS / origin
+- 协议方法族与 bridge 主控面一致，仍由 `internal/acp` 管理 session / routing / execution
 
-| Path | Protocol | Purpose |
-| --- | --- | --- |
-| `/acp/rpc` | HTTP POST | Adapter JSON-RPC entrypoint |
-| `/acp` | WebSocket | Adapter WebSocket JSON-RPC entrypoint |
+## 7. Gemini Adapter
 
-### 5.3 Auth and CORS
+### 7.1 Listen 与路由
 
-Adapter auth is separate from bridge auth:
+- 默认 listen：`127.0.0.1:8791`
+- 环境变量：`GEMINI_ADAPTER_LISTEN_ADDR`
 
-- Environment variable: `GEMINI_ADAPTER_AUTH_TOKEN`
-- Required header: `Authorization: Bearer <token>`
+实际挂载路由：
 
-Allowed origins come from:
+| Path | Method / Protocol | Auth | 用途 |
+| --- | --- | --- | --- |
+| `/acp/rpc` | `POST` | 取决于 `GEMINI_ADAPTER_AUTH_TOKEN` | Gemini adapter JSON-RPC HTTP 入口 |
+| `/acp/rpc` | `OPTIONS` | 否 | CORS 预检 |
+| `/acp` | `GET` + WebSocket upgrade | 取决于 `GEMINI_ADAPTER_AUTH_TOKEN` | Gemini adapter WebSocket 入口 |
 
+### 7.2 Auth 与 origin
+
+相关环境变量：
+
+- `GEMINI_ADAPTER_AUTH_TOKEN`
 - `GEMINI_ADAPTER_ALLOWED_ORIGINS`
-- default: `https://xworkmate.svc.plus,http://localhost:*,http://127.0.0.1:*`
 
-### 5.4 Adapter JSON-RPC methods
+规则：
 
-| Method | Description |
-| --- | --- |
-| `acp.capabilities` | Synthesized Gemini single-agent capability response |
-| `session.start` | Start adapter-local Gemini session |
-| `session.message` | Continue adapter-local Gemini session |
-| `session.cancel` | Accept cancel request, currently returns `cancelled: false` |
-| `session.close` | Close adapter-local session |
-| `gemini.initialize` | Return upstream initialize result |
-| `gemini.raw` | Forward raw Gemini-facing payload handling |
+- 如果 `GEMINI_ADAPTER_AUTH_TOKEN` 为空，则 adapter 默认不强制 auth
+- 如果配置了 token，则要求 bearer 校验通过
+- allowed origins 默认与 bridge 类似：`https://xworkmate.svc.plus,http://localhost:*,http://127.0.0.1:*`
 
-Unsupported methods return:
+### 7.3 Gemini adapter methods
+
+支持的方法：
+
+- `acp.capabilities`
+- `session.start`
+- `session.message`
+- `session.cancel`
+- `session.close`
+- `gemini.initialize`
+- `gemini.raw`
+
+未知方法不会返回 RPC error，而是返回：
 
 ```json
 {
   "success": false,
-  "error": "unsupported method: <method>"
+  "error": "unsupported method: ..."
 }
 ```
 
-### 5.5 Core adapter env vars
+#### `acp.capabilities`
 
-- `GEMINI_ADAPTER_LISTEN_ADDR`
-- `GEMINI_ADAPTER_BIN`
-- `GEMINI_ADAPTER_ARGS`
-- `GEMINI_ADAPTER_PROTOCOL_VERSION`
-- `GEMINI_ADAPTER_AUTH_TOKEN`
-- `GEMINI_ADAPTER_PROVIDER_ID`
-- `GEMINI_ADAPTER_PROVIDER_LABEL`
-- `GEMINI_ADAPTER_ALLOWED_ORIGINS`
-- `GEMINI_ADAPTER_UPSTREAM_METHOD`
-- `ACP_GEMINI_BIN`
+用途：返回 adapter 自身 provider 信息以及 Gemini 上游 initialize 结果的摘要。
 
-## 6. Auxiliary HTTP Handlers Present in Code
+返回结构：
 
-The repository also contains two plain HTTP handlers:
+- `singleAgent: true`
+- `multiAgent: false`
+- `providers: [providerId]`
+- `capabilities.single_agent = true`
+- `provider.id` / `provider.label`
+- `upstream` 字段包含 Gemini initialize 信息摘要
 
-- [internal/handler/auth_handler.go](/Users/shenlan/workspaces/cloud-neutral-toolkit/xworkmate-bridge/internal/handler/auth_handler.go)
-- [internal/handler/token_auth_handler.go](/Users/shenlan/workspaces/cloud-neutral-toolkit/xworkmate-bridge/internal/handler/token_auth_handler.go)
+#### `session.start` / `session.message`
 
-These handlers are currently not mounted by `main.go`, so they are not part of the live binary HTTP routing surface unless another embedding program wires them in.
+用途：向 Gemini ACP upstream 转发，或在兼容模式下回退到本地 prompt runner。
 
-### 6.1 Username/password auth handler
+常用参数：
 
-Request body:
+- `sessionId`
+- `taskPrompt`
+- `model`
+- `workingDirectory`
+
+返回结构：
+
+- 成功时为 Gemini upstream result 或兼容模式汇总结果
+- adapter 会维护 `adapterSession.history`
+
+#### `session.cancel`
+
+返回固定结构：
 
 ```json
 {
-  "username": "demo",
-  "password": "secret"
+  "accepted": true,
+  "cancelled": false
 }
 ```
 
-Behavior:
+#### `session.close`
 
-- invalid JSON -> `400 invalid json`
-- auth failure -> `401 <error message>`
-- success -> `200 {"status":"ok"}`
+必填参数：
 
-### 6.2 Bearer token auth handler
+- `sessionId`
 
-Behavior:
+返回：
 
-- no service -> `503 service unavailable`
-- invalid bearer token -> `401 unauthorized`
-- success -> `200 {"ok":true}`
+```json
+{
+  "accepted": true,
+  "closed": true
+}
+```
 
-## 7. Public Deployment Notes
+#### `gemini.initialize`
 
-Existing project docs already record the current public ingress convention:
+用途：显式暴露 Gemini upstream initialize 结果。
 
-- Bridge-facing public ACP HTTP JSON-RPC path: `.../acp/rpc`
-- WebSocket ACP path: `.../acp`
+#### `gemini.raw`
 
-Reference docs:
+用途：直接向 Gemini upstream 调方法。
 
-- [docs/acp-public-validation-2026-04-09.md](/Users/shenlan/workspaces/cloud-neutral-toolkit/xworkmate-bridge/docs/acp-public-validation-2026-04-09.md)
-- [docs/gemini-acp-adapter.md](/Users/shenlan/workspaces/cloud-neutral-toolkit/xworkmate-bridge/docs/gemini-acp-adapter.md)
-- [docs/architecture/acp-forwarding-topology.md](/Users/shenlan/workspaces/cloud-neutral-toolkit/xworkmate-bridge/docs/architecture/acp-forwarding-topology.md)
+常用参数：
 
-## 8. Suggested Maintenance Rule
+- `method`
+- `params`
 
-If a new externally callable method is added to:
+如果缺少 `method`，返回：
 
-- [internal/acp/server.go](/Users/shenlan/workspaces/cloud-neutral-toolkit/xworkmate-bridge/internal/acp/server.go)
-- [internal/geminiadapter/server.go](/Users/shenlan/workspaces/cloud-neutral-toolkit/xworkmate-bridge/internal/geminiadapter/server.go)
+```json
+{
+  "success": false,
+  "error": "method is required"
+}
+```
 
-then this document should be updated in the same change.
+## 8. Tool Bridge Default Mode
+
+默认模式下 `toolbridge.Run` 通过 stdin/stdout 暴露本地工具桥协议。
+
+### 8.1 协议特点
+
+- 支持换行分隔 JSON
+- 也支持 `Content-Length` frame
+- 无 HTTP / WebSocket 外壳
+
+### 8.2 支持的方法
+
+- `initialize`
+- `ping`
+- `tools/list`
+- `tools/call`
+
+### 8.3 `tools/list`
+
+当前固定暴露三个工具：
+
+- `chat`
+- `claude_review`
+- `vault_kv`
+
+### 8.4 `tools/call`
+
+参数结构：
+
+```json
+{
+  "name": "chat",
+  "arguments": {}
+}
+```
+
+成功时返回 text tool result；失败时返回 `isError: true` 的 tool result 或 `-32601` / `-32602` error response。
+
+## 9. Environment Variables
+
+### 9.1 Bridge `serve`
+
+| 变量 | 默认值 | 作用 |
+| --- | --- | --- |
+| `ACP_LISTEN_ADDR` | `127.0.0.1:8787` | bridge listen 地址 |
+| `ACP_AUTH_TOKEN` | 空 | bridge bearer 校验 token |
+| `ACP_ALLOWED_ORIGINS` | `https://xworkmate.svc.plus,http://localhost:*,http://127.0.0.1:*` | bridge allowed origins |
+| `ACP_MULTI_AGENT_ENABLED` | `true` | `acp.capabilities` 中的 `multiAgent` 开关 |
+| `ACP_MULTI_AGENT_MODEL` | `gpt-4o` | multi-agent 默认模型 |
+| `BRIDGE_PUBLIC_BASE_URL` | `https://xworkmate-bridge.svc.plus` | bootstrap health 中的 public base URL |
+| `INTERNAL_SERVICE_TOKEN` | 空 | upstream provider / gateway 优先使用的内部服务 token |
+| `BRIDGE_AUTH_TOKEN` | 空 | `INTERNAL_SERVICE_TOKEN` 的 fallback，用于 upstream forwarding |
+| `IMAGE` | 空 | `/api/ping` 版本信息来源 |
+
+### 9.2 Gemini adapter
+
+| 变量 | 默认值 | 作用 |
+| --- | --- | --- |
+| `GEMINI_ADAPTER_LISTEN_ADDR` | `127.0.0.1:8791` | Gemini adapter listen 地址 |
+| `GEMINI_ADAPTER_BIN` | 继承 `ACP_GEMINI_BIN`，再回退到 `gemini` | Gemini CLI 二进制 |
+| `ACP_GEMINI_BIN` | `gemini` | Gemini CLI fallback binary |
+| `GEMINI_ADAPTER_ARGS` | `--experimental-acp` | Gemini CLI 启动参数 |
+| `GEMINI_ADAPTER_PROTOCOL_VERSION` | `1` | Gemini initialize 协议版本 |
+| `GEMINI_ADAPTER_AUTH_TOKEN` | 空 | Gemini adapter bearer token |
+| `GEMINI_ADAPTER_PROVIDER_ID` | `gemini` | adapter provider ID |
+| `GEMINI_ADAPTER_PROVIDER_LABEL` | `Gemini` | adapter provider label |
+| `GEMINI_ADAPTER_ALLOWED_ORIGINS` | `https://xworkmate.svc.plus,http://localhost:*,http://127.0.0.1:*` | adapter allowed origins |
+| `GEMINI_ADAPTER_UPSTREAM_METHOD` | 空 | adapter 上游方法覆盖 |
+
+### 9.3 Shared / provider command / tools
+
+| 变量 | 默认值 | 作用 |
+| --- | --- | --- |
+| `ACP_CODEX_BIN` | `codex` | Codex CLI binary |
+| `ACP_OPENCODE_BIN` | `opencode` | OpenCode CLI binary |
+| `ACP_CLAUDE_BIN` | `claude` | Claude CLI binary |
+| `ACP_GEMINI_BIN` | `gemini` | Gemini CLI binary |
+| `ACP_FIND_SKILLS_BIN` | 空 | 外部 skills finder 二进制 |
+| `ACP_INSTALL_SKILL_BIN` | 空 | 外部 skills installer 二进制 |
+| `LLM_API_KEY` | 空 | `chat` 工具使用的 OpenAI-compatible API key |
+
+## 10. 代码定位
+
+- [main.go](../main.go)
+- [internal/acp/server.go](../internal/acp/server.go)
+- [internal/acp/web_contract.go](../internal/acp/web_contract.go)
+- [internal/acp/bootstrap.go](../internal/acp/bootstrap.go)
+- [internal/acp/gateway_runtime.go](../internal/acp/gateway_runtime.go)
+- [internal/acp/provider_catalog.go](../internal/acp/provider_catalog.go)
+- [internal/acp/execution.go](../internal/acp/execution.go)
+- [internal/geminiadapter/server.go](../internal/geminiadapter/server.go)
+- [internal/toolbridge/runner.go](../internal/toolbridge/runner.go)
