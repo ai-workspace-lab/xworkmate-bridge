@@ -52,7 +52,7 @@
 
 bridge 的认证与跨域规则来自：
 
-- `ACP_AUTH_TOKEN`
+- `BRIDGE_AUTH_TOKEN`
 - `ACP_ALLOWED_ORIGINS`
 
 默认 allowed origins：
@@ -67,8 +67,8 @@ bridge 的认证与跨域规则来自：
 - 空 `Origin` 默认允许。
 - `:*` 表示前缀匹配，例如 `http://localhost:*`。
 - auth 使用 bearer header。
-- 如果 `ACP_AUTH_TOKEN` 为空，则接受任意非空 bearer header。
-- 如果 `ACP_AUTH_TOKEN` 非空，则必须匹配裸 token 或 `Bearer <token>`。
+- 如果 `BRIDGE_AUTH_TOKEN` 为空，则 bridge auth 默认放行。
+- 如果 `BRIDGE_AUTH_TOKEN` 非空，则必须匹配裸 token 或 `Bearer <token>`。
 
 错误行为：
 
@@ -165,7 +165,7 @@ HTTP 与 WebSocket 统一使用 JSON-RPC 2.0 结构：
 
 说明：
 
-- `bridgeOrigin` 读取 `BRIDGE_PUBLIC_BASE_URL`
+- `bridgeOrigin` 读取 `BRIDGE_SERVER_URL`
 - 默认值：`https://xworkmate-bridge.svc.plus`
 
 ## 4. Bridge JSON-RPC Methods
@@ -816,13 +816,13 @@ bridge 在 session 执行期间会通过 `session.update` 推送通知，统一 
 | 变量 | 默认值 | 作用 |
 | --- | --- | --- |
 | `ACP_LISTEN_ADDR` | `127.0.0.1:8787` | bridge listen 地址 |
-| `ACP_AUTH_TOKEN` | 空 | bridge bearer 校验 token |
+| `BRIDGE_AUTH_TOKEN` | 空 | bridge bearer 校验 token |
 | `ACP_ALLOWED_ORIGINS` | `https://xworkmate.svc.plus,http://localhost:*,http://127.0.0.1:*` | bridge allowed origins |
 | `ACP_MULTI_AGENT_ENABLED` | `true` | `acp.capabilities` 中的 `multiAgent` 开关 |
 | `ACP_MULTI_AGENT_MODEL` | `gpt-4o` | multi-agent 默认模型 |
-| `BRIDGE_PUBLIC_BASE_URL` | `https://xworkmate-bridge.svc.plus` | bootstrap health 中的 public base URL |
+| `BRIDGE_SERVER_URL` | `https://xworkmate-bridge.svc.plus` | bootstrap health 与外部调用统一使用的 bridge base URL |
 | `INTERNAL_SERVICE_TOKEN` | 空 | upstream provider / gateway 优先使用的内部服务 token |
-| `BRIDGE_AUTH_TOKEN` | 空 | `INTERNAL_SERVICE_TOKEN` 的 fallback，用于 upstream forwarding |
+| `BRIDGE_AUTH_TOKEN` | 空 | bridge 入站 bearer token；当 `INTERNAL_SERVICE_TOKEN` 为空时也作为 upstream forwarding token |
 | `IMAGE` | 空 | `/api/ping` 版本信息来源 |
 
 ### 9.2 Gemini adapter

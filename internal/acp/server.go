@@ -96,7 +96,7 @@ func NewServer() *Server {
 		gateway:         gatewayruntime.NewManager(),
 		providerCatalog: providerCatalog,
 		providerOrder:   providerOrder,
-		authService:     service.NewStaticTokenAuthService(strings.TrimSpace(shared.EnvOrDefault("ACP_AUTH_TOKEN", ""))),
+		authService:     service.NewStaticTokenAuthService(strings.TrimSpace(shared.EnvOrDefault("BRIDGE_AUTH_TOKEN", ""))),
 	}
 }
 
@@ -300,7 +300,14 @@ func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) authorized(r *http.Request) bool {
-	if s == nil || s.authService == nil {
+	if s == nil {
+		return false
+	}
+	expected := strings.TrimSpace(shared.EnvOrDefault("BRIDGE_AUTH_TOKEN", ""))
+	if expected == "" {
+		return true
+	}
+	if s.authService == nil {
 		return false
 	}
 	return s.authService.ValidateAuthorizationHeader(r.Header.Get("Authorization"))

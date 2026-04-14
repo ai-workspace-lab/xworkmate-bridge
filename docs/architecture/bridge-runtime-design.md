@@ -159,10 +159,10 @@ single-agent 主链路优先走 bridge 内建 provider catalog。`runSingleAgent
 
 ### 4.1 Auth
 
-bridge 主入口使用 `ACP_AUTH_TOKEN` 驱动的 bearer auth：
+bridge 主入口使用 `BRIDGE_AUTH_TOKEN` 驱动的 bearer auth：
 
 - 如果配置了 token，则必须完全匹配该 token 或 `Bearer <token>`
-- 如果未配置 token，则只要求存在非空 bearer header
+- 如果未配置 token，则默认放行
 
 Gemini adapter 的 auth 更宽松：
 

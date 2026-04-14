@@ -110,7 +110,26 @@ func TestHandleRPCAllowsPreflightForConfiguredOrigin(t *testing.T) {
 	}
 }
 
-func TestHandleRPCRequiresBearerAuthorization(t *testing.T) {
+func TestHandleRPCAllowsRequestsWhenBridgeAuthTokenUnset(t *testing.T) {
+	server := NewServer()
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"http://127.0.0.1/acp/rpc",
+		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"acp.capabilities"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+
+	server.HandleRPC(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200 when BRIDGE_AUTH_TOKEN is unset, got %d", recorder.Code)
+	}
+}
+
+func TestHandleRPCRequiresBearerAuthorizationWhenBridgeAuthTokenConfigured(t *testing.T) {
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
+
 	server := NewServer()
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(
@@ -192,6 +211,14 @@ func TestHandleRPCCapabilitiesStillReturnsJSONResult(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), `"providerCatalog"`) {
 		t.Fatalf("expected capabilities response, got %q", recorder.Body.String())
+	}
+}
+
+func TestAuthorizedAllowsRequestsWhenBridgeAuthTokenUnset(t *testing.T) {
+	server := NewServer()
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/acp", nil)
+	if !server.authorized(request) {
+		t.Fatal("expected requests to be authorized when BRIDGE_AUTH_TOKEN is unset")
 	}
 }
 
@@ -338,6 +365,7 @@ func mustStringList(t *testing.T, value any) []string {
 
 func TestHandleWebSocketRequiresBearerAuthorization(t *testing.T) {
 	t.Setenv("ACP_ALLOWED_ORIGINS", "https://xworkmate.svc.plus")
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
 
 	server := NewServer()
 	recorder := httptest.NewRecorder()

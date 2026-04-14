@@ -22,7 +22,7 @@ func (s *Server) HandleBridgeBootstrapHealth(w http.ResponseWriter, r *http.Requ
 }
 
 func bridgePublicBaseURL() string {
-	value := strings.TrimSpace(shared.EnvOrDefault("BRIDGE_PUBLIC_BASE_URL", "https://xworkmate-bridge.svc.plus"))
+	value := strings.TrimSpace(shared.EnvOrDefault("BRIDGE_SERVER_URL", "https://xworkmate-bridge.svc.plus"))
 	if value == "" {
 		return "https://xworkmate-bridge.svc.plus"
 	}

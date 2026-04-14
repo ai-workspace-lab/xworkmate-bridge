@@ -60,7 +60,7 @@ APP-facing bridge 主控面。负责 HTTP / WebSocket 路由、JSON-RPC method d
 - `func (s *Server) HandleBridgeBootstrapHealth(w http.ResponseWriter, r *http.Request)`
   - 参数：标准 HTTP writer/request。
   - 返回：无显式返回；输出 bridge health JSON。
-  - 副作用：读取 `BRIDGE_PUBLIC_BASE_URL`。
+  - 副作用：读取 `BRIDGE_SERVER_URL`。
   - 场景：bootstrap 自检或部署健康检查。
 
 - `func RunStdio(input io.Reader, output io.Writer)`
