@@ -68,6 +68,24 @@ if [[ -n "${AUTH_TOKEN}" ]]; then
   auth_headers+=(-H "Authorization: Bearer ${AUTH_TOKEN}")
 fi
 
+capture_http_response() {
+  local label="$1"
+  shift
+
+  local response
+  if ! response="$(curl "$@" 2>&1)"; then
+    printf '%s request failed: %s\n' "${label}" "${response}" >&2
+    return 1
+  fi
+
+  if [[ -z "${response}" ]]; then
+    printf '%s request returned an empty response\n' "${label}" >&2
+    return 1
+  fi
+
+  printf '%s\n' "${response}"
+}
+
 probe_jsonrpc_capabilities() {
   local endpoint="$1"
   local response
@@ -79,7 +97,8 @@ probe_jsonrpc_capabilities() {
   headers+=("${auth_headers[@]}")
 
   response="$(
-    curl "${curl_common[@]}" \
+    capture_http_response "capabilities ${endpoint}" \
+      "${curl_common[@]}" \
       "${headers[@]}" \
       --data '{"jsonrpc":"2.0","id":"cap-1","method":"acp.capabilities"}' \
       "${endpoint}"
@@ -113,7 +132,8 @@ jsonrpc_bridge_call() {
   headers+=("${auth_headers[@]}")
 
   response="$(
-    curl "${curl_common[@]}" \
+    capture_http_response "bridge rpc ${BASE_URL}/acp/rpc" \
+      "${curl_common[@]}" \
       "${headers[@]}" \
       --data "${payload}" \
       "${BASE_URL}/acp/rpc"
@@ -178,7 +198,7 @@ PY
 probe_safe_http_endpoint() {
   local endpoint="$1"
   local status
-  status="$(
+  if ! status="$(
     curl \
       --silent \
       --show-error \
@@ -187,8 +207,11 @@ probe_safe_http_endpoint() {
       --location \
       --max-time 20 \
       "${auth_headers[@]}" \
-      "${endpoint}"
-  )"
+      "${endpoint}" 2>&1
+  )"; then
+    printf 'HTTP probe failed for %s: %s\n' "${endpoint}" "${status}" >&2
+    return 1
+  fi
 
   case "${status}" in
     2*|3*|401|403|404|405|426)
@@ -202,7 +225,7 @@ probe_safe_http_endpoint() {
 }
 
 ping_json="$(
-  curl \
+  capture_http_response "bridge ping ${BASE_URL}/api/ping" \
     "${curl_common[@]}" \
     "${auth_headers[@]}" \
     "${BASE_URL}/api/ping"
@@ -232,7 +255,12 @@ if version and payload.get("version") != version:
     raise SystemExit(f"expected version {version!r}, got {payload.get('version')!r}")
 PY
 
-bridge_root="$(curl "${curl_common[@]}" "${auth_headers[@]}" "${BASE_URL}/")"
+bridge_root="$(
+  capture_http_response "bridge root ${BASE_URL}/" \
+    "${curl_common[@]}" \
+    "${auth_headers[@]}" \
+    "${BASE_URL}/"
+)"
 grep -qi 'xworkmate-bridge' <<<"${bridge_root}"
 
 probe_safe_http_endpoint "${OPENCLAW_HTTP_PROBE_URL}"
