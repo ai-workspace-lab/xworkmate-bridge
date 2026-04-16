@@ -278,6 +278,7 @@ func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
 		envelope := shared.ErrorEnvelope(request.ID, rpcErr.Code, rpcErr.Message)
 		if stream {
 			shared.WriteSSE(w, envelope)
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
 			if flusher != nil {
 				flusher.Flush()
 			}
@@ -289,6 +290,7 @@ func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
 	}
 	if stream {
 		shared.WriteSSE(w, shared.ResultEnvelope(request.ID, response))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 		if flusher != nil {
 			flusher.Flush()
 		}
