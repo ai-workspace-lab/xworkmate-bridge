@@ -11,6 +11,7 @@ import (
 
 func TestHTTPHandlerRootAndPingExposeRuntimeVersionInfo(t *testing.T) {
 	t.Setenv("IMAGE", "ghcr.io/x-evor/xworkmate-bridge:0123456789abcdef0123456789abcdef01234567")
+	t.Setenv("BRIDGE_AUTH_TOKEN", "")
 
 	server := NewServer()
 	handler := server.Handler()
@@ -75,6 +76,7 @@ func TestParseImageVersionInfoHandlesTaggedImageRef(t *testing.T) {
 
 func TestHandleWebSocketRejectsUnknownOrigin(t *testing.T) {
 	t.Setenv("ACP_ALLOWED_ORIGINS", "https://xworkmate.svc.plus")
+	t.Setenv("BRIDGE_AUTH_TOKEN", "")
 
 	server := NewServer()
 	recorder := httptest.NewRecorder()
@@ -93,6 +95,7 @@ func TestHandleWebSocketRejectsUnknownOrigin(t *testing.T) {
 
 func TestHandleRPCAllowsPreflightForConfiguredOrigin(t *testing.T) {
 	t.Setenv("ACP_ALLOWED_ORIGINS", "https://xworkmate.svc.plus,http://localhost:*")
+	t.Setenv("BRIDGE_AUTH_TOKEN", "")
 
 	server := NewServer()
 	recorder := httptest.NewRecorder()
@@ -110,7 +113,8 @@ func TestHandleRPCAllowsPreflightForConfiguredOrigin(t *testing.T) {
 	}
 }
 
-func TestHandleRPCAllowsRequestsWhenBridgeAuthTokenUnset(t *testing.T) {
+func TestHandleRPCRequiresAuthorizationEvenWhenBridgeAuthTokenUnset(t *testing.T) {
+	t.Setenv("BRIDGE_AUTH_TOKEN", "")
 	server := NewServer()
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(
@@ -122,8 +126,8 @@ func TestHandleRPCAllowsRequestsWhenBridgeAuthTokenUnset(t *testing.T) {
 
 	server.HandleRPC(recorder, request)
 
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("expected 200 when BRIDGE_AUTH_TOKEN is unset, got %d", recorder.Code)
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 when BRIDGE_AUTH_TOKEN is unset but no header provided, got %d", recorder.Code)
 	}
 }
 
@@ -148,6 +152,7 @@ func TestHandleRPCRequiresBearerAuthorizationWhenBridgeAuthTokenConfigured(t *te
 
 func TestHandleRPCRejectsUnknownOrigin(t *testing.T) {
 	t.Setenv("ACP_ALLOWED_ORIGINS", "https://xworkmate.svc.plus")
+	t.Setenv("BRIDGE_AUTH_TOKEN", "")
 
 	server := NewServer()
 	recorder := httptest.NewRecorder()
@@ -175,6 +180,7 @@ func TestHandleRPCRejectsUnknownOrigin(t *testing.T) {
 }
 
 func TestHandleRPCMethodErrorUsesJSONEnvelope(t *testing.T) {
+	t.Setenv("BRIDGE_AUTH_TOKEN", "")
 	server := NewServer()
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/acp/rpc", nil)
@@ -191,6 +197,7 @@ func TestHandleRPCMethodErrorUsesJSONEnvelope(t *testing.T) {
 }
 
 func TestHandleRPCCapabilitiesStillReturnsJSONResult(t *testing.T) {
+	t.Setenv("BRIDGE_AUTH_TOKEN", "")
 	server := NewServer()
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(
@@ -214,15 +221,17 @@ func TestHandleRPCCapabilitiesStillReturnsJSONResult(t *testing.T) {
 	}
 }
 
-func TestAuthorizedAllowsRequestsWhenBridgeAuthTokenUnset(t *testing.T) {
+func TestAuthorizedRejectsUnauthenticatedRequestsWhenBridgeAuthTokenUnset(t *testing.T) {
+	t.Setenv("BRIDGE_AUTH_TOKEN", "")
 	server := NewServer()
 	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/acp", nil)
-	if !server.authorized(request) {
-		t.Fatal("expected requests to be authorized when BRIDGE_AUTH_TOKEN is unset")
+	if server.authorized(request) {
+		t.Fatal("expected unauthenticated request to be rejected even if BRIDGE_AUTH_TOKEN is unset")
 	}
 }
 
 func TestHandleRPCCapabilitiesReturnsCanonicalProviderContract(t *testing.T) {
+	t.Setenv("BRIDGE_AUTH_TOKEN", "")
 	server := NewServer()
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(
@@ -301,6 +310,7 @@ func TestHandleRPCSessionStartSucceedsWithExplicitProvider(t *testing.T) {
 	defer externalServer.Close()
 
 	t.Setenv("INTERNAL_SERVICE_TOKEN", "internal-test-token")
+	t.Setenv("BRIDGE_AUTH_TOKEN", "")
 
 	server := NewServer()
 	setTestBridgeProvider(server, syncedProvider{

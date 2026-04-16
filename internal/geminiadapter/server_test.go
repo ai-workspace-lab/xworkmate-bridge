@@ -85,6 +85,7 @@ func TestHandleRPCSessionStartReturnsUpstreamResult(t *testing.T) {
 		},
 	})
 	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/acp/rpc", bytes.NewReader(body))
+	request.Header.Set("Authorization", "Bearer test-token")
 	recorder := httptest.NewRecorder()
 
 	server.HandleRPC(recorder, request)
@@ -223,7 +224,9 @@ func TestHandleWebSocketCapabilities(t *testing.T) {
 	defer httpServer.Close()
 
 	wsURL := "ws" + httpServer.URL[len("http"):]
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	header := http.Header{}
+	header.Set("Authorization", "Bearer test-token")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
 	if err != nil {
 		t.Fatalf("dial websocket: %v", err)
 	}

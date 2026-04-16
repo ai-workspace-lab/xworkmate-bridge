@@ -305,10 +305,6 @@ func (s *Server) authorized(r *http.Request) bool {
 	if s == nil {
 		return false
 	}
-	expected := strings.TrimSpace(shared.EnvOrDefault("BRIDGE_AUTH_TOKEN", ""))
-	if expected == "" {
-		return true
-	}
 	if s.authService == nil {
 		return false
 	}

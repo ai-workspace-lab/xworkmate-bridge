@@ -568,6 +568,7 @@ func TestHandleRPCRequiresExplicitBearerForExternalProvider(t *testing.T) {
 	defer externalServer.Close()
 
 	t.Setenv("INTERNAL_SERVICE_TOKEN", "synced-provider-token")
+	t.Setenv("BRIDGE_AUTH_TOKEN", "")
 	server := NewServer()
 	setTestBridgeProvider(server, syncedProvider{
 		ProviderID:          "codex",

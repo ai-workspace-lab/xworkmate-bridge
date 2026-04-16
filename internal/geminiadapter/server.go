@@ -523,12 +523,11 @@ func (s *Server) applyCORS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) authorized(r *http.Request) bool {
-	if s == nil || s.authService == nil {
-		return true
+	if s == nil {
+		return false
 	}
-	expected := strings.TrimSpace(shared.EnvOrDefault("GEMINI_ADAPTER_AUTH_TOKEN", ""))
-	if expected == "" {
-		return true
+	if s.authService == nil {
+		return false
 	}
 	return s.authService.ValidateAuthorizationHeader(r.Header.Get("Authorization"))
 }
