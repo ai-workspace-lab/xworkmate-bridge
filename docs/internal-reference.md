@@ -12,7 +12,7 @@
 
 ### 包职责
 
-APP-facing bridge 主控面。负责 HTTP / WebSocket 路由、JSON-RPC method dispatch、session / thread 队列、routing resolve、single-agent / multi-agent / gateway 执行分流，以及 provider / gateway runtime 桥接。
+APP-facing bridge 主控面。该模块已全面切换至 **JSON-RPC 2.0** 作为默认协议。负责 HTTP / WebSocket 路由、JSON-RPC method dispatch、session / thread 队列、routing resolve、single-agent / multi-agent / gateway 执行分流，以及 provider / gateway runtime 桥接。
 
 ### 主要输入 / 输出
 
@@ -546,8 +546,8 @@ HTTP handler 适配层，把 `service` 层认证能力暴露为简单 HTTP endpo
   - 参数：writer、payload。
   - 副作用：按 SSE `data: ...` 形式写出。
 
-- `func ResultEnvelope(id any, result map[string]any) map[string]any`
-- `func ErrorEnvelope(id any, code int, message string) map[string]any`
+- `func ResultEnvelope(id any, result map[string]any) map[string]any` (已升级为混合模式，支持 JSON-RPC 2.0 规范同时兼顾 legacy APP 字段)
+- `func ErrorEnvelope(id any, code int, message string) map[string]any` (已升级为混合模式，确保 401 等错误能以 JSON 格式被 legacy APP 解析)
 - `func NotificationEnvelope(method string, params map[string]any) map[string]any`
 - `func ErrorResponse(id any, code int, message string) map[string]any`
 - `func ToolTextResult(id any, content string) map[string]any`

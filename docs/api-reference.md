@@ -78,7 +78,7 @@ bridge 的认证与跨域规则来自：
 
 ### 2.4 JSON-RPC envelope
 
-HTTP 与 WebSocket 统一使用 JSON-RPC 2.0 结构：
+HTTP 与 WebSocket 统一使用 **JSON-RPC 2.0** 作为默认通信协议。为了兼容旧版 XWorkmate APP，所有的响应报文均采用混合模式（Hybrid Mode），同时包含 JSON-RPC 2.0 字段与 legacy 扩展字段：
 
 ```json
 {
@@ -95,7 +95,17 @@ HTTP 与 WebSocket 统一使用 JSON-RPC 2.0 结构：
 {
   "jsonrpc": "2.0",
   "id": "req-1",
-  "result": {}
+  "result": {
+    "success": true,
+    "output": "..."
+  },
+  "ok": true,
+  "type": "res",
+  "payload": {
+    "success": true,
+    "output": "..."
+  },
+  "seq": 0
 }
 ```
 
@@ -108,9 +118,15 @@ HTTP 与 WebSocket 统一使用 JSON-RPC 2.0 结构：
   "error": {
     "code": -32601,
     "message": "unknown method: ..."
-  }
+  },
+  "ok": false,
+  "type": "res",
+  "payload": null,
+  "seq": 0
 }
 ```
+
+
 
 ### 2.5 HTTP streaming
 
@@ -300,7 +316,7 @@ HTTP 与 WebSocket 统一使用 JSON-RPC 2.0 结构：
 
 返回结构：
 
-- 与 `session.start` 相同；bridge 会复用 session 历史，尤其在 multi-agent 与 Gemini adapter 路径中。
+- 与 `session.start` 相同；bridge 会复用 session 历史（历史记录会以 `USER: ` 和 `ASSISTANT: ` 前缀进行上下文包裹），尤其在 multi-agent 与 Gemini adapter 路径中。
 
 失败条件：
 
