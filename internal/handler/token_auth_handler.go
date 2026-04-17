@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"xworkmate-bridge/internal/shared"
 	"xworkmate-bridge/internal/service"
 )
 
@@ -17,13 +18,24 @@ func NewTokenAuthHandler(service *service.StaticTokenAuthService) *TokenAuthHand
 
 func (h *TokenAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.service == nil {
-		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(shared.ErrorEnvelope(nil, -32000, "auth service unavailable"))
 		return
 	}
 	token := r.Header.Get("Authorization")
 	if !h.service.ValidateAuthorizationHeader(token) {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		// Return JSON error instead of plain text to satisfy Flutter's expectation
+		_ = json.NewEncoder(w).Encode(shared.ErrorEnvelope(nil, -32001, "unauthorized"))
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"jsonrpc": "2.0",
+		"ok":      true,
+		"type":    "res",
+		"payload": map[string]any{"authenticated": true},
+	})
 }

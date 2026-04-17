@@ -10,6 +10,7 @@ import (
 
 type RPCRequest struct {
 	JSONRPC string         `json:"jsonrpc,omitempty"`
+	Type    string         `json:"type,omitempty"`
 	ID      any            `json:"id,omitempty"`
 	Method  string         `json:"method,omitempty"`
 	Params  map[string]any `json:"params,omitempty"`
@@ -49,17 +50,25 @@ func ResultEnvelope(id any, result map[string]any) map[string]any {
 		"jsonrpc": "2.0",
 		"id":      id,
 		"result":  result,
+		// Backward compatibility with legacy GatewayRuntime
+		"type":    "res",
+		"ok":      true,
+		"payload": result,
 	}
 }
 
 func ErrorEnvelope(id any, code int, message string) map[string]any {
+	errPayload := map[string]any{
+		"code":    code,
+		"message": message,
+	}
 	return map[string]any{
 		"jsonrpc": "2.0",
 		"id":      id,
-		"error": map[string]any{
-			"code":    code,
-			"message": message,
-		},
+		"error":   errPayload,
+		// Backward compatibility with legacy GatewayRuntime
+		"type":    "res",
+		"ok":      false,
 	}
 }
 
@@ -68,41 +77,32 @@ func NotificationEnvelope(method string, params map[string]any) map[string]any {
 		"jsonrpc": "2.0",
 		"method":  method,
 		"params":  params,
+		// Backward compatibility with legacy GatewayRuntime
+		"type":    "event",
+		"event":   method,
+		"payload": params,
 	}
 }
 
 func ErrorResponse(id any, code int, message string) map[string]any {
-	return map[string]any{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"error": map[string]any{
-			"code":    code,
-			"message": message,
-		},
-	}
+	return ErrorEnvelope(id, code, message)
 }
 
 func ToolTextResult(id any, content string) map[string]any {
-	return map[string]any{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"result": map[string]any{
-			"content": []map[string]any{
-				{"type": "text", "text": content},
-			},
+	result := map[string]any{
+		"content": []map[string]any{
+			{"type": "text", "text": content},
 		},
 	}
+	return ResultEnvelope(id, result)
 }
 
 func ToolErrorResult(id any, err error) map[string]any {
-	return map[string]any{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"result": map[string]any{
-			"content": []map[string]any{
-				{"type": "text", "text": fmt.Sprintf("Error: %v", err)},
-			},
-			"isError": true,
+	result := map[string]any{
+		"content": []map[string]any{
+			{"type": "text", "text": fmt.Sprintf("Error: %v", err)},
 		},
+		"isError": true,
 	}
+	return ResultEnvelope(id, result)
 }

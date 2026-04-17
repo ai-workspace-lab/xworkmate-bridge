@@ -178,15 +178,35 @@ func AugmentPromptWithAttachments(prompt string, params map[string]any) string {
 	return builder.String()
 }
 
-func ComposeHistoryPrompt(history []string) string {
-	if len(history) == 0 {
-		return ""
-	}
+func ComposeHistoryPrompt(history any) string {
 	var builder strings.Builder
-	for index, turn := range history {
-		_, _ = fmt.Fprintf(&builder, "## User Turn %d\n", index+1)
-		builder.WriteString(turn)
-		builder.WriteString("\n\n")
+	switch h := history.(type) {
+	case []string:
+		if len(h) == 0 {
+			return ""
+		}
+		for index, turn := range h {
+			_, _ = fmt.Fprintf(&builder, "## Turn %d\n", index+1)
+			builder.WriteString(turn)
+			builder.WriteString("\n\n")
+		}
+	case []map[string]string:
+		if len(h) == 0 {
+			return ""
+		}
+		turn := 1
+		for _, msg := range h {
+			role := msg["role"]
+			content := msg["content"]
+			if role == "user" {
+				_, _ = fmt.Fprintf(&builder, "## User Turn %d\n", turn)
+				turn++
+			} else {
+				builder.WriteString("## Assistant Response\n")
+			}
+			builder.WriteString(content)
+			builder.WriteString("\n\n")
+		}
 	}
 	return strings.TrimSpace(builder.String())
 }
