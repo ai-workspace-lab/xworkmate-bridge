@@ -54,6 +54,7 @@ func ResultEnvelope(id any, result map[string]any) map[string]any {
 		"type":    "res",
 		"ok":      true,
 		"payload": result,
+		"seq":     0,
 	}
 }
 
@@ -69,6 +70,8 @@ func ErrorEnvelope(id any, code int, message string) map[string]any {
 		// Backward compatibility with legacy GatewayRuntime
 		"type":    "res",
 		"ok":      false,
+		"payload": nil,
+		"seq":     0,
 	}
 }
 
@@ -81,6 +84,7 @@ func NotificationEnvelope(method string, params map[string]any) map[string]any {
 		"type":    "event",
 		"event":   method,
 		"payload": params,
+		"seq":     0,
 	}
 }
 
