@@ -7,11 +7,12 @@ import (
 	"xworkmate-bridge/internal/shared"
 )
 
+// 默认生产端点（仅作为最后的回退）
 const (
-	productionGatewayEndpointURL  = "https://xworkmate-bridge.svc.plus/gateway/openclaw/"
-	productionCodexEndpointURL    = "https://xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc"
-	productionOpenCodeEndpointURL = "https://xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc"
-	productionGeminiEndpointURL   = "https://xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc"
+	defaultGatewayURL  = "https://xworkmate-bridge.svc.plus/gateway/openclaw/"
+	defaultCodexURL    = "https://xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc"
+	defaultOpenCodeURL = "https://xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc"
+	defaultGeminiURL   = "https://xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc"
 )
 
 func bridgeUpstreamAuthorizationHeader() string {
@@ -20,6 +21,8 @@ func bridgeUpstreamAuthorizationHeader() string {
 
 func newProductionProviderCatalog() (map[string]syncedProvider, []string) {
 	authorizationHeader := bridgeUpstreamAuthorizationHeader()
+
+	// 全面支持通过环境变量配置端点
 	catalog := map[string]syncedProvider{
 		"codex": {
 			Provider: router.Provider{
@@ -27,7 +30,7 @@ func newProductionProviderCatalog() (map[string]syncedProvider, []string) {
 				Label:      "Codex",
 				Targets:    []string{router.ExecutionTargetAgent},
 			},
-			Endpoint:            strings.TrimSpace(shared.EnvOrDefault("OPENCLAW_CODEX_URL", productionCodexEndpointURL)),
+			Endpoint:            strings.TrimSpace(shared.EnvOrDefault("OPENCLAW_CODEX_URL", defaultCodexURL)),
 			AuthorizationHeader: authorizationHeader,
 		},
 		"opencode": {
@@ -36,7 +39,7 @@ func newProductionProviderCatalog() (map[string]syncedProvider, []string) {
 				Label:      "OpenCode",
 				Targets:    []string{router.ExecutionTargetAgent},
 			},
-			Endpoint:            strings.TrimSpace(shared.EnvOrDefault("OPENCLAW_OPENCODE_URL", productionOpenCodeEndpointURL)),
+			Endpoint:            strings.TrimSpace(shared.EnvOrDefault("OPENCLAW_OPENCODE_URL", defaultOpenCodeURL)),
 			AuthorizationHeader: authorizationHeader,
 		},
 		"gemini": {
@@ -45,7 +48,7 @@ func newProductionProviderCatalog() (map[string]syncedProvider, []string) {
 				Label:      "Gemini",
 				Targets:    []string{router.ExecutionTargetAgent},
 			},
-			Endpoint:            strings.TrimSpace(shared.EnvOrDefault("OPENCLAW_GEMINI_URL", productionGeminiEndpointURL)),
+			Endpoint:            strings.TrimSpace(shared.EnvOrDefault("OPENCLAW_GEMINI_URL", defaultGeminiURL)),
 			AuthorizationHeader: authorizationHeader,
 		},
 	}
@@ -78,4 +81,21 @@ func availableExecutionTargets(
 		result = append(result, "gateway")
 	}
 	return result
+}
+
+// 获取上游 Gateway 报告地址
+func resolveGatewayReportedRemoteAddress(server *Server, request any) string {
+	// 优先使用环境变量配置
+	rawURL := strings.TrimSpace(shared.EnvOrDefault("OPENCLAW_GATEWAY_URL", defaultGatewayURL))
+	if strings.Contains(rawURL, "://") {
+		parts := strings.Split(rawURL, "://")
+		if len(parts) > 1 {
+			hostPath := strings.Split(parts[1], "/")[0]
+			if !strings.Contains(hostPath, ":") {
+				return hostPath + ":443"
+			}
+			return hostPath
+		}
+	}
+	return "xworkmate-bridge.svc.plus:443"
 }
