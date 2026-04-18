@@ -105,13 +105,6 @@ func (s *Server) syncedProviderByID(providerID string) (syncedProvider, bool) {
 	return p, ok
 }
 
-func providerLabel(provider syncedProvider) string {
-	if provider.Label != "" {
-		return provider.Label
-	}
-	return provider.ProviderID
-}
-
 func (s *Server) availableProviderCatalog() []Provider {
 	s.mu.Lock()
 	defer s.mu.Unlock()
