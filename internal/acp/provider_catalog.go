@@ -1,13 +1,15 @@
 package acp
 
 import (
+	"os"
 	"strings"
 
+	"gopkg.in/yaml.v3"
 	"xworkmate-bridge/internal/router"
 	"xworkmate-bridge/internal/shared"
 )
 
-// 默认生产端点（仅作为最后的回退）
+// 默认生产端点
 const (
 	defaultGatewayURL  = "https://xworkmate-bridge.svc.plus/gateway/openclaw/"
 	defaultCodexURL    = "https://xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc"
@@ -15,14 +17,44 @@ const (
 	defaultGeminiURL   = "https://xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc"
 )
 
+type BridgeConfig struct {
+	Upstream struct {
+		GatewayURL  string `yaml:"gateway_url"`
+		CodexURL    string `yaml:"codex_url"`
+		OpenCodeURL string `yaml:"opencode_url"`
+		GeminiURL   string `yaml:"gemini_url"`
+	} `yaml:"upstream"`
+}
+
+func loadBridgeConfig() *BridgeConfig {
+	config := &BridgeConfig{}
+	configPath := shared.EnvOrDefault("BRIDGE_CONFIG_PATH", "config.yaml")
+
+	if _, err := os.Stat(configPath); err == nil {
+		data, err := os.ReadFile(configPath)
+		if err == nil {
+			_ = yaml.Unmarshal(data, config)
+		}
+	}
+	return config
+}
+
+func resolveURL(yamlVal, envKey, defaultVal string) string {
+	val := strings.TrimSpace(yamlVal)
+	if val != "" {
+		return val
+	}
+	return strings.TrimSpace(shared.EnvOrDefault(envKey, defaultVal))
+}
+
 func bridgeUpstreamAuthorizationHeader() string {
 	return strings.TrimSpace(shared.EnvOrDefault("BRIDGE_AUTH_TOKEN", ""))
 }
 
 func newProductionProviderCatalog() (map[string]syncedProvider, []string) {
+	config := loadBridgeConfig()
 	authorizationHeader := bridgeUpstreamAuthorizationHeader()
 
-	// 全面支持通过环境变量配置端点
 	catalog := map[string]syncedProvider{
 		"codex": {
 			Provider: router.Provider{
@@ -30,7 +62,7 @@ func newProductionProviderCatalog() (map[string]syncedProvider, []string) {
 				Label:      "Codex",
 				Targets:    []string{router.ExecutionTargetAgent},
 			},
-			Endpoint:            strings.TrimSpace(shared.EnvOrDefault("OPENCLAW_CODEX_URL", defaultCodexURL)),
+			Endpoint:            resolveURL(config.Upstream.CodexURL, "OPENCLAW_CODEX_URL", defaultCodexURL),
 			AuthorizationHeader: authorizationHeader,
 		},
 		"opencode": {
@@ -39,7 +71,7 @@ func newProductionProviderCatalog() (map[string]syncedProvider, []string) {
 				Label:      "OpenCode",
 				Targets:    []string{router.ExecutionTargetAgent},
 			},
-			Endpoint:            strings.TrimSpace(shared.EnvOrDefault("OPENCLAW_OPENCODE_URL", defaultOpenCodeURL)),
+			Endpoint:            resolveURL(config.Upstream.OpenCodeURL, "OPENCLAW_OPENCODE_URL", defaultOpenCodeURL),
 			AuthorizationHeader: authorizationHeader,
 		},
 		"gemini": {
@@ -48,7 +80,7 @@ func newProductionProviderCatalog() (map[string]syncedProvider, []string) {
 				Label:      "Gemini",
 				Targets:    []string{router.ExecutionTargetAgent},
 			},
-			Endpoint:            strings.TrimSpace(shared.EnvOrDefault("OPENCLAW_GEMINI_URL", defaultGeminiURL)),
+			Endpoint:            resolveURL(config.Upstream.GeminiURL, "OPENCLAW_GEMINI_URL", defaultGeminiURL),
 			AuthorizationHeader: authorizationHeader,
 		},
 	}
@@ -83,10 +115,10 @@ func availableExecutionTargets(
 	return result
 }
 
-// 获取上游 Gateway 报告地址
 func resolveGatewayReportedRemoteAddress(server *Server, request any) string {
-	// 优先使用环境变量配置
-	rawURL := strings.TrimSpace(shared.EnvOrDefault("OPENCLAW_GATEWAY_URL", defaultGatewayURL))
+	config := loadBridgeConfig()
+	rawURL := resolveURL(config.Upstream.GatewayURL, "OPENCLAW_GATEWAY_URL", defaultGatewayURL)
+
 	if strings.Contains(rawURL, "://") {
 		parts := strings.Split(rawURL, "://")
 		if len(parts) > 1 {
