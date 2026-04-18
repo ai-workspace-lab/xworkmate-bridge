@@ -265,7 +265,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BRIDGE_SERVER_URL: https://xworkmate-bridge.svc.plus
-      OPENCLAW_URL: wss://openclaw.svc.plus
+      OPENCLAW_URL: https://xworkmate-bridge.svc.plus/gateway/openclaw/
       CODEX_RPC_URL: https://acp-server.svc.plus/codex/acp/rpc
       OPENCODE_RPC_URL: https://acp-server.svc.plus/opencode/acp/rpc
       GEMINI_RPC_URL: https://acp-server.svc.plus/gemini/acp/rpc

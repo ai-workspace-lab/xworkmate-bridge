@@ -53,7 +53,7 @@ if [[ "${tag}" =~ ^[0-9a-f]{40}$ ]]; then
 fi
 
 BASE_URL="$(normalize_url "${BRIDGE_SERVER_URL:-${2:-https://xworkmate-bridge.svc.plus}}")"
-OPENCLAW_HTTP_PROBE_URL="$(websocket_probe_url "${OPENCLAW_URL:-${3:-wss://openclaw.svc.plus}}")"
+OPENCLAW_HTTP_PROBE_URL="$(websocket_probe_url "${OPENCLAW_URL:-${3:-https://xworkmate-bridge.svc.plus/gateway/openclaw/}}")"
 CODEX_RPC_URL="$(normalize_url "${CODEX_RPC_URL:-${4:-https://acp-server.svc.plus/codex/acp/rpc}}")"
 OPENCODE_RPC_URL="$(normalize_url "${OPENCODE_RPC_URL:-${5:-https://acp-server.svc.plus/opencode/acp/rpc}}")"
 GEMINI_RPC_URL="$(normalize_url "${GEMINI_RPC_URL:-${6:-https://acp-server.svc.plus/gemini/acp/rpc}}")"
