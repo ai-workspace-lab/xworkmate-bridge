@@ -132,10 +132,15 @@ func TestHandleVaultKVToolListsSecretKeys(t *testing.T) {
 }
 
 func TestHandleVaultKVToolRequiresEnvironment(t *testing.T) {
+	// Explicitly clear relevant environment variables to ensure we test the validation logic
+	t.Setenv("VAULT_SERVER_URL", "")
+	t.Setenv("VAULT_SERVER_ROOT_ACCESS_TOKEN", "")
+
 	_, err := HandleVaultKVTool(map[string]any{
 		"operation": "read",
 		"path":      "apps/demo",
 	})
+	// We want to catch the specific validation error message
 	if err == nil || !strings.Contains(err.Error(), "VAULT_SERVER_URL") {
 		t.Fatalf("expected missing environment error, got %v", err)
 	}

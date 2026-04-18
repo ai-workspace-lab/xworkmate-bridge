@@ -185,9 +185,21 @@ func ComposeHistoryPrompt(history any) string {
 		if len(h) == 0 {
 			return ""
 		}
-		for index, turn := range h {
-			_, _ = fmt.Fprintf(&builder, "## Turn %d\n", index+1)
-			builder.WriteString(turn)
+		turn := 1
+		for _, turnText := range h {
+			if strings.HasPrefix(turnText, "ASSISTANT: ") {
+				builder.WriteString("## Assistant Response\n")
+				builder.WriteString(strings.TrimPrefix(turnText, "ASSISTANT: "))
+			} else if strings.HasPrefix(turnText, "USER: ") {
+				_, _ = fmt.Fprintf(&builder, "## User Turn %d\n", turn)
+				builder.WriteString(strings.TrimPrefix(turnText, "USER: "))
+				turn++
+			} else {
+				// Default to User Turn if no prefix matches (for tests and legacy compatibility)
+				_, _ = fmt.Fprintf(&builder, "## User Turn %d\n", turn)
+				builder.WriteString(turnText)
+				turn++
+			}
 			builder.WriteString("\n\n")
 		}
 	case []map[string]string:

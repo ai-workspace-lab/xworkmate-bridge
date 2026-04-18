@@ -20,7 +20,7 @@ func TestResolveGatewayReportedRemoteAddressUsesBuiltInOpenClawEndpoint(t *testi
 		},
 	})
 
-	const want = "openclaw.svc.plus:443"
+	const want = "xworkmate-bridge.svc.plus:443"
 	if got != want {
 		t.Fatalf("resolveGatewayReportedRemoteAddress() = %q, want %q", got, want)
 	}
@@ -42,7 +42,7 @@ func TestResolveGatewayReportedRemoteAddressNormalizesExplicitPublicRemoteHost(
 		},
 	})
 
-	const want = "openclaw.svc.plus:443"
+	const want = "xworkmate-bridge.svc.plus:443"
 	if got != want {
 		t.Fatalf("resolveGatewayReportedRemoteAddress() = %q, want %q", got, want)
 	}

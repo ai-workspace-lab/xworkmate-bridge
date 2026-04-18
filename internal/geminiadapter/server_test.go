@@ -157,7 +157,8 @@ func TestHandleSessionMessageReusesAdapterLocalHistory(t *testing.T) {
 			}
 			return "first-reply", nil
 		}
-		expected := "## User Turn 1\nFirst turn\n\n## User Turn 2\nSecond turn"
+		// Match the format from shared.ComposeHistoryPrompt with ASSISTANT: prefix added in server.go
+		expected := "## User Turn 1\nFirst turn\n\n## Assistant Response\nfirst-reply\n\n## User Turn 2\nSecond turn"
 		if prompt != expected {
 			t.Fatalf("unexpected second prompt %q", prompt)
 		}

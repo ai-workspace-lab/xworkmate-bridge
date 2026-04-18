@@ -391,7 +391,7 @@ func (s *Server) handleCompatSessionRequest(method string, params map[string]any
 	}
 
 	sessionsHistory := append([]string(nil), state.history...)
-	sessionsHistory = append(sessionsHistory, taskPrompt)
+	sessionsHistory = append(sessionsHistory, "USER: "+taskPrompt)
 	composedPrompt := shared.ComposeHistoryPrompt(sessionsHistory)
 	output, err := s.sessionRunner(context.Background(), model, composedPrompt, workingDirectory)
 	if err != nil {
@@ -409,7 +409,7 @@ func (s *Server) handleCompatSessionRequest(method string, params map[string]any
 		state = &adapterSession{}
 		s.sessions[sessionID] = state
 	}
-	state.history = sessionsHistory
+	state.history = append(sessionsHistory, "ASSISTANT: "+output)
 	state.model = model
 	state.workingDirectory = workingDirectory
 	state.lastOutput = output
