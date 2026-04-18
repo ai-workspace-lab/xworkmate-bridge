@@ -1,42 +1,26 @@
 # Example configuration for xworkmate-bridge public ingress and provider sync.
-# The bridge itself validates inbound requests with:
-#   Authorization: Bearer ${BRIDGE_AUTH_TOKEN}
-# Each external provider can also carry its own outbound Authorization header.
+#
+# Usage:
+#   BRIDGE_CONFIG_PATH=config.yaml ./xworkmate-bridge serve
 
+# Upstream provider endpoints
+# Priority: YAML > Environment Variable (e.g. OPENCLAW_CODEX_URL) > Default Constants
+upstream:
+  gateway_url: "https://xworkmate-bridge.svc.plus/gateway/openclaw/"
+  codex_url: "https://xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc"
+  opencode_url: "https://xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc"
+  gemini_url: "https://xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc"
+
+# Legacy/Reference structure (Normally managed via code constants or environment)
 bridge:
   listenAddr: 127.0.0.1:8787
-  authToken: ${BRIDGE_AUTH_TOKEN}
+  # Token should be set via BRIDGE_AUTH_TOKEN env for security
   allowedOrigins:
     - https://xworkmate.svc.plus
     - http://localhost:*
     - http://127.0.0.1:*
 
-providers:
-  - providerId: openclaw
-    label: OpenClaw
-    endpoint: wss://openclaw.svc.plus
-    authorizationHeader: Bearer ${OPENCLAW_AUTH_TOKEN}
-    enabled: true
-
-  - providerId: codex
-    label: Codex
-    endpoint: https://acp-server.svc.plus/codex/acp/rpc
-    authorizationHeader: Bearer ${CODEX_AUTH_TOKEN}
-    enabled: true
-
-  - providerId: opencode
-    label: OpenCode
-    endpoint: https://acp-server.svc.plus/opencode/acp/rpc
-    authorizationHeader: Bearer ${OPENCODE_AUTH_TOKEN}
-    enabled: true
-
-  - providerId: gemini
-    label: Gemini
-    endpoint: https://acp-server.svc.plus/gemini/acp/rpc
-    authorizationHeader: Bearer ${GEMINI_AUTH_TOKEN}
-    enabled: true
-
 notes:
   - The bridge reads its own auth token from BRIDGE_AUTH_TOKEN.
-  - The provider catalog is normally synced through xworkmate.providers.sync.
-  - session.message should resend routing on follow-up turns for codex and opencode.
+  - Upstream URLs can include sub-paths which will be preserved during WebSocket handshake.
+  - Multi-agent and Single-agent modes will use these endpoints to delegate tasks.
