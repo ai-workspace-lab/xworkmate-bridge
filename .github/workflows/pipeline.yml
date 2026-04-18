@@ -266,9 +266,9 @@ jobs:
     env:
       BRIDGE_SERVER_URL: https://xworkmate-bridge.svc.plus
       OPENCLAW_URL: https://xworkmate-bridge.svc.plus/gateway/openclaw/
-      CODEX_RPC_URL: https://acp-server.svc.plus/codex/acp/rpc
-      OPENCODE_RPC_URL: https://acp-server.svc.plus/opencode/acp/rpc
-      GEMINI_RPC_URL: https://acp-server.svc.plus/gemini/acp/rpc
+      CODEX_RPC_URL: https://xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc
+      OPENCODE_RPC_URL: https://xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc
+      GEMINI_RPC_URL: https://xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc
       INTERNAL_SERVICE_TOKEN: ${{ secrets.INTERNAL_SERVICE_TOKEN }}
     steps:
       - name: Checkout
