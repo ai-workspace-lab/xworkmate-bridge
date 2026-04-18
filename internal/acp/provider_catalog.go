@@ -5,17 +5,24 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
-	"xworkmate-bridge/internal/router"
 	"xworkmate-bridge/internal/shared"
 )
 
 // 默认生产端点
 const (
-	defaultGatewayURL  = "https://xworkmate-bridge.svc.plus/gateway/openclaw/"
-	defaultCodexURL    = "https://xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc"
-	defaultOpenCodeURL = "https://xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc"
-	defaultGeminiURL   = "https://xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc"
+	productionGatewayEndpointURL  = "https://xworkmate-bridge.svc.plus/gateway/openclaw/"
+	productionCodexEndpointURL    = "https://xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc"
+	productionOpenCodeEndpointURL = "https://xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc"
+	productionGeminiEndpointURL   = "https://xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc"
 )
+
+type syncedProvider struct {
+	ProviderID          string
+	Label               string
+	Endpoint            string
+	AuthorizationHeader string
+	Enabled             bool
+}
 
 type BridgeConfig struct {
 	Upstream struct {
@@ -48,7 +55,16 @@ func resolveURL(yamlVal, envKey, defaultVal string) string {
 }
 
 func bridgeUpstreamAuthorizationHeader() string {
-	return strings.TrimSpace(shared.EnvOrDefault("BRIDGE_AUTH_TOKEN", ""))
+	// Original logic used firstNonEmptyString and normalizeAuthorizationHeader
+	// but let's keep it simple and match expected "Bearer token" if it exists.
+	token := strings.TrimSpace(shared.EnvOrDefault("BRIDGE_AUTH_TOKEN", ""))
+	if token == "" {
+		token = strings.TrimSpace(shared.EnvOrDefault("INTERNAL_SERVICE_TOKEN", ""))
+	}
+	if token != "" && !strings.HasPrefix(strings.ToLower(token), "bearer ") {
+		return "Bearer " + token
+	}
+	return token
 }
 
 func newProductionProviderCatalog() (map[string]syncedProvider, []string) {
@@ -57,44 +73,93 @@ func newProductionProviderCatalog() (map[string]syncedProvider, []string) {
 
 	catalog := map[string]syncedProvider{
 		"codex": {
-			Provider: router.Provider{
-				ProviderID: "codex",
-				Label:      "Codex",
-				Targets:    []string{router.ExecutionTargetAgent},
-			},
-			Endpoint:            resolveURL(config.Upstream.CodexURL, "OPENCLAW_CODEX_URL", defaultCodexURL),
+			ProviderID:          "codex",
+			Label:               "Codex",
+			Endpoint:            resolveURL(config.Upstream.CodexURL, "OPENCLAW_CODEX_URL", productionCodexEndpointURL),
 			AuthorizationHeader: authorizationHeader,
+			Enabled:             true,
 		},
 		"opencode": {
-			Provider: router.Provider{
-				ProviderID: "opencode",
-				Label:      "OpenCode",
-				Targets:    []string{router.ExecutionTargetAgent},
-			},
-			Endpoint:            resolveURL(config.Upstream.OpenCodeURL, "OPENCLAW_OPENCODE_URL", defaultOpenCodeURL),
+			ProviderID:          "opencode",
+			Label:               "OpenCode",
+			Endpoint:            resolveURL(config.Upstream.OpenCodeURL, "OPENCLAW_OPENCODE_URL", productionOpenCodeEndpointURL),
 			AuthorizationHeader: authorizationHeader,
+			Enabled:             true,
 		},
 		"gemini": {
-			Provider: router.Provider{
-				ProviderID: "gemini",
-				Label:      "Gemini",
-				Targets:    []string{router.ExecutionTargetAgent},
-			},
-			Endpoint:            resolveURL(config.Upstream.GeminiURL, "OPENCLAW_GEMINI_URL", defaultGeminiURL),
+			ProviderID:          "gemini",
+			Label:               "Gemini",
+			Endpoint:            resolveURL(config.Upstream.GeminiURL, "OPENCLAW_GEMINI_URL", productionGeminiEndpointURL),
 			AuthorizationHeader: authorizationHeader,
+			Enabled:             true,
 		},
 	}
 	order := []string{"codex", "opencode", "gemini"}
 	return catalog, order
 }
 
-func availableGatewayProviderCatalog() []router.Provider {
-	return []router.Provider{
+func (s *Server) syncedProviderByID(providerID string) (syncedProvider, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.providerCatalog[providerID]
+	return p, ok
+}
+
+func providerLabel(provider syncedProvider) string {
+	if provider.Label != "" {
+		return provider.Label
+	}
+	return provider.ProviderID
+}
+
+func (s *Server) availableProviderCatalog() []Provider {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	
+	var catalog []Provider
+	for _, id := range s.providerOrder {
+		if p, ok := s.providerCatalog[id]; ok && p.Enabled {
+			catalog = append(catalog, Provider{
+				ProviderID: p.ProviderID,
+				Label:      p.Label,
+				Targets:    []string{"agent"},
+			})
+		}
+	}
+	return catalog
+}
+
+func (s *Server) availableProviders() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	
+	var providers []string
+	for _, id := range s.providerOrder {
+		if p, ok := s.providerCatalog[id]; ok && p.Enabled {
+			providers = append(providers, p.ProviderID)
+		}
+	}
+	return providers
+}
+
+type ProviderDisplay struct {
+	LogoEmoji string `json:"logoEmoji,omitempty"`
+}
+
+type Provider struct {
+	ProviderID      string           `json:"providerId"`
+	Label           string           `json:"label"`
+	Targets         []string         `json:"targets"`
+	ProviderDisplay *ProviderDisplay `json:"providerDisplay,omitempty"`
+}
+
+func availableGatewayProviderCatalog() []Provider {
+	return []Provider{
 		{
-			ProviderId: "openclaw",
+			ProviderID: "openclaw",
 			Label:      "OpenClaw",
-			Targets:    []string{router.ExecutionTargetGateway},
-			ProviderDisplay: &router.ProviderDisplay{
+			Targets:    []string{"gateway"},
+			ProviderDisplay: &ProviderDisplay{
 				LogoEmoji: "🦞",
 			},
 		},
@@ -102,8 +167,8 @@ func availableGatewayProviderCatalog() []router.Provider {
 }
 
 func availableExecutionTargets(
-	providerCatalog map[string]syncedProvider,
-	gatewayProviders []router.Provider,
+	providerCatalog []Provider,
+	gatewayProviders []Provider,
 ) []string {
 	result := make([]string, 0, 2)
 	if len(providerCatalog) > 0 {
@@ -113,21 +178,4 @@ func availableExecutionTargets(
 		result = append(result, "gateway")
 	}
 	return result
-}
-
-func resolveGatewayReportedRemoteAddress(server *Server, request any) string {
-	config := loadBridgeConfig()
-	rawURL := resolveURL(config.Upstream.GatewayURL, "OPENCLAW_GATEWAY_URL", defaultGatewayURL)
-
-	if strings.Contains(rawURL, "://") {
-		parts := strings.Split(rawURL, "://")
-		if len(parts) > 1 {
-			hostPath := strings.Split(parts[1], "/")[0]
-			if !strings.Contains(hostPath, ":") {
-				return hostPath + ":443"
-			}
-			return hostPath
-		}
-	}
-	return "xworkmate-bridge.svc.plus:443"
 }
