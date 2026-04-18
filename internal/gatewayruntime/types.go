@@ -22,6 +22,7 @@ type Endpoint struct {
 	Host string
 	Port int
 	TLS  bool
+	Path string
 }
 
 type PackageInfo struct {

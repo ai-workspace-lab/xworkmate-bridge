@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	productionGatewayEndpointURL  = "wss://openclaw.svc.plus"
+	productionGatewayEndpointURL  = "https://xworkmate-bridge.svc.plus/gateway/openclaw/"
 	productionCodexEndpointURL    = "https://acp-server.svc.plus/codex/acp/rpc"
 	productionOpenCodeEndpointURL = "https://acp-server.svc.plus/opencode/acp/rpc"
 	productionGeminiEndpointURL   = "https://acp-server.svc.plus/gemini/acp/rpc"
