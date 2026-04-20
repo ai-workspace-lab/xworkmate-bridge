@@ -2,7 +2,6 @@ package acp
 
 import (
 	"os"
-	"strings"
 	"testing"
 )
 

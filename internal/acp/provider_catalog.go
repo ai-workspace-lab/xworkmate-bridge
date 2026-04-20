@@ -8,6 +8,13 @@ import (
 	"xworkmate-bridge/internal/shared"
 )
 
+// Default production endpoints for XWorkmate managed bridge environment.
+// Note: While single-agent providers now require explicit config, 
+// the gateway endpoint may still have a default for baseline connectivity.
+const (
+	productionGatewayEndpointURL = "https://xworkmate-bridge.svc.plus/gateway/openclaw/"
+)
+
 type syncedProvider struct {
 	ProviderID          string
 	Label               string

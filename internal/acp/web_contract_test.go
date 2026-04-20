@@ -13,6 +13,7 @@ func TestHTTPHandlerRootAndPingExposeRuntimeVersionInfo(t *testing.T) {
 	t.Setenv("IMAGE", "ghcr.io/x-evor/xworkmate-bridge:0123456789abcdef0123456789abcdef01234567")
 	t.Setenv("BRIDGE_AUTH_TOKEN", "")
 
+	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
 	handler := server.Handler()
 
@@ -78,6 +79,7 @@ func TestHandleWebSocketRejectsUnknownOrigin(t *testing.T) {
 	t.Setenv("ACP_ALLOWED_ORIGINS", "https://xworkmate.svc.plus")
 	t.Setenv("BRIDGE_AUTH_TOKEN", "")
 
+	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/acp", nil)
@@ -97,6 +99,7 @@ func TestHandleRPCAllowsPreflightForConfiguredOrigin(t *testing.T) {
 	t.Setenv("ACP_ALLOWED_ORIGINS", "https://xworkmate.svc.plus,http://localhost:*")
 	t.Setenv("BRIDGE_AUTH_TOKEN", "")
 
+	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodOptions, "http://127.0.0.1/acp/rpc", nil)
@@ -115,6 +118,7 @@ func TestHandleRPCAllowsPreflightForConfiguredOrigin(t *testing.T) {
 
 func TestHandleRPCRequiresAuthorizationEvenWhenBridgeAuthTokenUnset(t *testing.T) {
 	t.Setenv("BRIDGE_AUTH_TOKEN", "")
+	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(
@@ -134,6 +138,7 @@ func TestHandleRPCRequiresAuthorizationEvenWhenBridgeAuthTokenUnset(t *testing.T
 func TestHandleRPCRequiresBearerAuthorizationWhenBridgeAuthTokenConfigured(t *testing.T) {
 	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
 
+	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(
@@ -154,6 +159,7 @@ func TestHandleRPCRejectsUnknownOrigin(t *testing.T) {
 	t.Setenv("ACP_ALLOWED_ORIGINS", "https://xworkmate.svc.plus")
 	t.Setenv("BRIDGE_AUTH_TOKEN", "")
 
+	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(
@@ -181,6 +187,7 @@ func TestHandleRPCRejectsUnknownOrigin(t *testing.T) {
 
 func TestHandleRPCMethodErrorUsesJSONEnvelope(t *testing.T) {
 	t.Setenv("BRIDGE_AUTH_TOKEN", "")
+	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/acp/rpc", nil)
@@ -198,6 +205,7 @@ func TestHandleRPCMethodErrorUsesJSONEnvelope(t *testing.T) {
 
 func TestHandleRPCCapabilitiesStillReturnsJSONResult(t *testing.T) {
 	t.Setenv("BRIDGE_AUTH_TOKEN", "")
+	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(
@@ -223,6 +231,7 @@ func TestHandleRPCCapabilitiesStillReturnsJSONResult(t *testing.T) {
 
 func TestAuthorizedRejectsUnauthenticatedRequestsWhenBridgeAuthTokenUnset(t *testing.T) {
 	t.Setenv("BRIDGE_AUTH_TOKEN", "")
+	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
 	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/acp", nil)
 	if server.authorized(request) {
@@ -232,6 +241,7 @@ func TestAuthorizedRejectsUnauthenticatedRequestsWhenBridgeAuthTokenUnset(t *tes
 
 func TestHandleRPCCapabilitiesReturnsCanonicalProviderContract(t *testing.T) {
 	t.Setenv("BRIDGE_AUTH_TOKEN", "")
+	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(
@@ -254,6 +264,7 @@ func TestHandleRPCCapabilitiesReturnsCanonicalProviderContract(t *testing.T) {
 	}
 
 	result := asMap(envelope["result"])
+	if got := result["singleAgent"]; got != true { t.Fatalf("expected singleAgent true, got %v", got) }
 	availableTargets := mustStringList(t, result["availableExecutionTargets"])
 	if !reflect.DeepEqual(availableTargets, []string{"agent", "gateway"}) {
 		t.Fatalf("expected canonical execution targets, got %#v", availableTargets)
@@ -312,6 +323,7 @@ func TestHandleRPCSessionStartSucceedsWithExplicitProvider(t *testing.T) {
 	t.Setenv("INTERNAL_SERVICE_TOKEN", "internal-test-token")
 	t.Setenv("BRIDGE_AUTH_TOKEN", "")
 
+	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
 	setTestBridgeProvider(server, syncedProvider{
 		ProviderID:          "opencode",
@@ -377,6 +389,7 @@ func TestHandleWebSocketRequiresBearerAuthorization(t *testing.T) {
 	t.Setenv("ACP_ALLOWED_ORIGINS", "https://xworkmate.svc.plus")
 	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
 
+	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/acp", nil)

@@ -14,7 +14,7 @@ func setTestBridgeProvider(server *Server, provider syncedProvider) {
 		server.providerCatalog = map[string]syncedProvider{}
 	}
 	server.providerCatalog[provider.ProviderID] = provider
-	
+
 	found := false
 	for _, id := range server.providerOrder {
 		if id == provider.ProviderID {
@@ -28,6 +28,8 @@ func setTestBridgeProvider(server *Server, provider syncedProvider) {
 }
 
 func TestCapabilitiesExposeBuiltInProductionProviderCatalog(t *testing.T) {
+	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
+
 	server := NewServer()
 	response, err := server.handleRequest(shared.RPCRequest{
 		Method: "acp.capabilities",
@@ -80,7 +82,7 @@ func TestProductionProviderCatalogFallsBackToBridgeAuthToken(t *testing.T) {
 	if !ok {
 		t.Fatal("missing codex")
 	}
-	
+
 	if got := p.AuthorizationHeader; got != "Bearer bridge-token" {
 		t.Fatalf("expected bearer header, got %q", got)
 	}
