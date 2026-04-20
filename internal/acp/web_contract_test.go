@@ -264,18 +264,20 @@ func TestHandleRPCCapabilitiesReturnsCanonicalProviderContract(t *testing.T) {
 	}
 
 	result := asMap(envelope["result"])
-	if got := result["singleAgent"]; got != true { t.Fatalf("expected singleAgent true, got %v", got) }
+	if got := result["singleAgent"]; got != true {
+		t.Fatalf("expected singleAgent true, got %v", got)
+	}
 	availableTargets := mustStringList(t, result["availableExecutionTargets"])
 	if !reflect.DeepEqual(availableTargets, []string{"agent", "gateway"}) {
 		t.Fatalf("expected canonical execution targets, got %#v", availableTargets)
 	}
 
 	providerCatalog := mustObjectList(t, result["providerCatalog"])
-	if len(providerCatalog) != 3 {
-		t.Fatalf("expected 3 providers, got %#v", providerCatalog)
+	if len(providerCatalog) != 4 {
+		t.Fatalf("expected 4 providers, got %#v", providerCatalog)
 	}
-	wantAgentIDs := []string{"codex", "opencode", "gemini"}
-	wantAgentLabels := []string{"Codex", "OpenCode", "Gemini"}
+	wantAgentIDs := []string{"codex", "opencode", "gemini", "hermes"}
+	wantAgentLabels := []string{"Codex", "OpenCode", "Gemini", "Hermes"}
 	for index, wantID := range wantAgentIDs {
 		if got := providerCatalog[index]["providerId"]; got != wantID {
 			t.Fatalf("expected provider %q at index %d, got %#v", wantID, index, providerCatalog)

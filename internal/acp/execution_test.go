@@ -16,9 +16,10 @@ func TestResolveSingleAgentForwardEndpointFromExampleConfig(t *testing.T) {
 	}
 
 	expectedEndpoints := map[string]string{
-		"codex":    "https://xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc",
-		"opencode": "https://xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc",
-		"gemini":   "https://xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc",
+		"codex":    "http://127.0.0.1:9001/acp/rpc",
+		"opencode": "http://127.0.0.1:38992/acp/rpc",
+		"gemini":   "http://127.0.0.1:8791/acp/rpc",
+		"hermes":   "http://127.0.0.1:3920/acp/rpc",
 	}
 
 	for _, id := range order {
@@ -32,7 +33,7 @@ func TestResolveSingleAgentForwardEndpointFromExampleConfig(t *testing.T) {
 			if !provider.Enabled {
 				t.Errorf("Provider %s should be enabled in example config", id)
 			}
-			
+
 			want := expectedEndpoints[id]
 			got := resolveSingleAgentForwardEndpoint(provider)
 			if got != want {

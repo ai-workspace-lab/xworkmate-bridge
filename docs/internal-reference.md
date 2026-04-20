@@ -10,6 +10,17 @@
 
 ## internal/acp
 
+### 核心真源映射 (Core Service Mapping)
+
+为确保高性能与就绪性可靠性，本包默认配置直连以下核心真源。开发与维护时应确保这些端口在宿主机 `127.0.0.1` 保持可用：
+
+| 规范服务名 | 监听端口 | 协议模式 | 关键职责 |
+| :--- | :--- | :--- | :--- |
+| **`acp-codex.service`** | `9001` | HTTP | Codex 核心 ACP 控制面 |
+| **`acp-opencode.service`** | `38992` | HTTP | Opencode 核心 ACP 控制面 |
+| **`acp-gemini.service`** | `8791` | HTTP | Gemini 协议适配器 (protocol-adapter) |
+| **`openclaw-gateway.service`** | `18789` | WS | OpenClaw 独立网关运行时 |
+
 ### 包职责
 
 APP-facing bridge 主控面。该模块已全面切换至 **JSON-RPC 2.0** 作为默认协议。负责 HTTP / WebSocket 路由、JSON-RPC method dispatch、session / thread 队列、routing resolve、single-agent / multi-agent / gateway 执行分流，以及 provider / gateway runtime 桥接。

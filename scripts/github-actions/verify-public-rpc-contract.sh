@@ -122,10 +122,10 @@ if not isinstance(provider_catalog, list):
 if not isinstance(gateway_providers, list):
     raise SystemExit("gatewayProviders is missing or invalid")
 
-expected_agent_ids = ["codex", "opencode", "gemini"]
-expected_agent_labels = ["Codex", "OpenCode", "Gemini"]
+expected_agent_ids = ["codex", "opencode", "gemini", "hermes"]
+expected_agent_labels = ["Codex", "OpenCode", "Gemini", "Hermes"]
 if len(provider_catalog) != len(expected_agent_ids):
-    raise SystemExit(f"expected 3 agent providers, got {provider_catalog!r}")
+    raise SystemExit(f"expected 4 agent providers, got {provider_catalog!r}")
 
 for index, (provider_id, label) in enumerate(zip(expected_agent_ids, expected_agent_labels)):
     item = provider_catalog[index]

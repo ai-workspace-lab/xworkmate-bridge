@@ -278,6 +278,7 @@ jobs:
       CODEX_RPC_URL: https://xworkmate-bridge.svc.plus/acp-server/codex
       OPENCODE_RPC_URL: https://xworkmate-bridge.svc.plus/acp-server/opencode
       GEMINI_RPC_URL: https://xworkmate-bridge.svc.plus/acp-server/gemini
+      HERMES_RPC_URL: https://xworkmate-bridge.svc.plus/acp-server/hermes
       INTERNAL_SERVICE_TOKEN: ${{ secrets.INTERNAL_SERVICE_TOKEN }}
     steps:
       - name: Checkout
@@ -286,7 +287,7 @@ jobs:
       - name: Validate deployed endpoints
         env:
           BRIDGE_AUTH_TOKEN: ${{ env.INTERNAL_SERVICE_TOKEN }}
-        run: bash ./scripts/github-actions/validate-deploy.sh "${{ needs.build.outputs.service_image_ref }}" "${BRIDGE_SERVER_URL}" "${OPENCLAW_URL}" "${CODEX_RPC_URL}" "${OPENCODE_RPC_URL}" "${GEMINI_RPC_URL}"
+        run: bash ./scripts/github-actions/validate-deploy.sh "${{ needs.build.outputs.service_image_ref }}" "${BRIDGE_SERVER_URL}" "${OPENCLAW_URL}" "${CODEX_RPC_URL}" "${OPENCODE_RPC_URL}" "${GEMINI_RPC_URL}" "${HERMES_RPC_URL}"
 
       - name: Validate public ACP contract
         env:

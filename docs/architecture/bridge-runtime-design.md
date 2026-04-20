@@ -18,7 +18,7 @@
   │ Bridge   │ xworkmate-bridge.svc.plus/                     │ 127.0.0.1:8787           │ Docker 容器 │
   │ OpenClaw │ xworkmate-bridge.svc.plus/gateway/openclaw/    │ 127.0.0.1:18789          │ 主机进程    │
   │ Codex    │ xworkmate-bridge.svc.plus/acp-server/codex/    │ acp-server-codex:3911    │ Docker 容器 │
-  │ OpenCode │ xworkmate-bridge.svc.plus/acp-server/opencode/ │ acp-server-opencode:3910 │ Docker 容器 │
+  │ OpenCode │ http://127.0.0.1:38992/acp/rpc                  │ acp-opencode:38992       │ Docker 容器 │
   │ Gemini   │ xworkmate-bridge.svc.plus/acp-server/gemini/   │ acp-server-gemini:3912   │ Docker 容器 
 
 

@@ -49,8 +49,8 @@ Missing bearer auth returns a JSON-RPC error envelope with code `-32001`.
 
 The ingress returned `200 OK` on all public routes after re-apply, and the deployment response confirmed the active upstream mappings:
 
-- `codex` -> `127.0.0.1:9010`
-- `opencode` -> `127.0.0.1:3910`
+- `codex` -> `127.0.0.1:9001`
+- `opencode` -> `127.0.0.1:38992`
 - `gemini` -> `127.0.0.1:8791`
 - `openclaw` -> `127.0.0.1:18789` (Host process)
 

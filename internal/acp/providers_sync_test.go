@@ -56,8 +56,8 @@ func TestCapabilitiesExposeBuiltInProductionProviderCatalog(t *testing.T) {
 		}
 	}
 
-	if len(catalog) < 3 {
-		t.Fatalf("expected at least 3 production providers, got %d", len(catalog))
+	if len(catalog) < 4 {
+		t.Fatalf("expected at least 4 production providers, got %d", len(catalog))
 	}
 
 	providers := make(map[string]Provider)
@@ -70,6 +70,12 @@ func TestCapabilitiesExposeBuiltInProductionProviderCatalog(t *testing.T) {
 	}
 	if _, ok := providers["opencode"]; !ok {
 		t.Error("missing opencode provider")
+	}
+	if _, ok := providers["gemini"]; !ok {
+		t.Error("missing gemini provider")
+	}
+	if _, ok := providers["hermes"]; !ok {
+		t.Error("missing hermes provider")
 	}
 }
 

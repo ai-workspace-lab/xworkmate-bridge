@@ -10,7 +10,7 @@ import (
 
 // Default production endpoints for XWorkmate managed bridge environment.
 const (
-	productionGatewayEndpointURL = "https://xworkmate-bridge.svc.plus/gateway/openclaw/"
+	productionGatewayEndpointURL = "ws://127.0.0.1:18789/"
 )
 
 type syncedProvider struct {
@@ -27,6 +27,7 @@ type BridgeConfig struct {
 		CodexURL    string `yaml:"codex_url"`
 		OpenCodeURL string `yaml:"opencode_url"`
 		GeminiURL   string `yaml:"gemini_url"`
+		HermesURL   string `yaml:"hermes_url"`
 	} `yaml:"upstream"`
 }
 
@@ -83,21 +84,28 @@ func newProductionProviderCatalog() (map[string]syncedProvider, []string) {
 			label:      "Codex",
 			yaml:       config.Upstream.CodexURL,
 			envKeys:    []string{"CODEX_RPC_URL"},
-			defaultURL: "https://xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc",
+			defaultURL: "http://127.0.0.1:9001/acp/rpc",
 		},
 		{
 			id:         "opencode",
 			label:      "OpenCode",
 			yaml:       config.Upstream.OpenCodeURL,
 			envKeys:    []string{"OPENCODE_RPC_URL"},
-			defaultURL: "https://xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc",
+			defaultURL: "http://127.0.0.1:38992/acp/rpc",
 		},
 		{
 			id:         "gemini",
 			label:      "Gemini",
 			yaml:       config.Upstream.GeminiURL,
 			envKeys:    []string{"GEMINI_RPC_URL"},
-			defaultURL: "https://xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc",
+			defaultURL: "http://127.0.0.1:8791/acp/rpc",
+		},
+		{
+			id:         "hermes",
+			label:      "Hermes",
+			yaml:       config.Upstream.HermesURL,
+			envKeys:    []string{"HERMES_RPC_URL"},
+			defaultURL: "http://127.0.0.1:3920/acp/rpc",
 		},
 	}
 
@@ -133,10 +141,15 @@ func (s *Server) availableProviderCatalog() []Provider {
 	var catalog []Provider
 	for _, id := range s.providerOrder {
 		if p, ok := s.providerCatalog[id]; ok && p.Enabled {
+			category := "native"
+			if id == "gemini" || id == "hermes" {
+				category = "protocol-adapter"
+			}
 			catalog = append(catalog, Provider{
 				ProviderID: p.ProviderID,
 				Label:      p.Label,
 				Targets:    []string{"agent"},
+				Category:   category,
 			})
 		}
 	}
@@ -164,6 +177,7 @@ type Provider struct {
 	ProviderID      string           `json:"providerId"`
 	Label           string           `json:"label"`
 	Targets         []string         `json:"targets"`
+	Category        string           `json:"category,omitempty"`
 	ProviderDisplay *ProviderDisplay `json:"providerDisplay,omitempty"`
 }
 

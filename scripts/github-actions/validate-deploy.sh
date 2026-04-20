@@ -57,6 +57,7 @@ OPENCLAW_BASE_URL="$(normalize_url "${OPENCLAW_URL:-${3:-${BASE_URL}/gateway/ope
 CODEX_BASE_URL="$(normalize_url "${CODEX_RPC_URL:-${4:-${BASE_URL}/acp-server/codex/acp/rpc}}")"
 OPENCODE_BASE_URL="$(normalize_url "${OPENCODE_RPC_URL:-${5:-${BASE_URL}/acp-server/opencode/acp/rpc}}")"
 GEMINI_BASE_URL="$(normalize_url "${GEMINI_RPC_URL:-${6:-${BASE_URL}/acp-server/gemini/acp/rpc}}")"
+HERMES_BASE_URL="$(normalize_url "${HERMES_RPC_URL:-${7:-${BASE_URL}/acp-server/hermes/acp/rpc}}")"
 AUTH_TOKEN="${BRIDGE_AUTH_TOKEN:-${INTERNAL_SERVICE_TOKEN:-${7:-}}}"
 
 ensure_rpc_path() {
@@ -72,6 +73,7 @@ OPENCLAW_HTTP_PROBE_URL="$(websocket_probe_url "${OPENCLAW_BASE_URL}")"
 CODEX_RPC_ENDPOINT="$(ensure_rpc_path "${CODEX_BASE_URL}")"
 OPENCODE_RPC_ENDPOINT="$(ensure_rpc_path "${OPENCODE_BASE_URL}")"
 GEMINI_RPC_ENDPOINT="$(ensure_rpc_path "${GEMINI_BASE_URL}")"
+HERMES_RPC_ENDPOINT="$(ensure_rpc_path "${HERMES_BASE_URL}")"
 
 fast_http_curl_common=(
   --silent
@@ -382,3 +384,4 @@ run_with_retry "capabilities ${GEMINI_RPC_ENDPOINT}" 3 5 "${RETRYABLE_TRANSPORT}
 run_with_retry "bridge provider probe codex" 3 10 "${RETRYABLE_TRANSPORT}" probe_bridge_provider_probe_once "codex"
 run_with_retry "bridge provider probe opencode" 3 10 "${RETRYABLE_TRANSPORT}" probe_bridge_provider_probe_once "opencode"
 run_with_retry "bridge provider probe gemini" 3 10 "${RETRYABLE_TRANSPORT}" probe_bridge_provider_probe_once "gemini"
+run_with_retry "bridge provider probe hermes" 3 10 "${RETRYABLE_TRANSPORT}" probe_bridge_provider_probe_once "hermes"

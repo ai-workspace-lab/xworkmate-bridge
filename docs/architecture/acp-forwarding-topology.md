@@ -141,18 +141,23 @@ Important distinction:
   `https://xworkmate-bridge.svc.plus/gateway/openclaw/`
 ## Production Truth
 
-当前 production forwarding 事实：
+当前 production forwarding 事实（内部直连架构）：
 
 - canonical app-facing origin: `https://xworkmate-bridge.svc.plus`
 - canonical app-facing ACP paths:
   - `POST /acp/rpc`
   - `GET /acp`
-- current built-in single-agent provider catalog:
-  - `codex`
-  - `opencode`
-  - `gemini`
-- current production gateway forwarding target:
-  - `openclaw -> https://xworkmate-bridge.svc.plus/gateway/openclaw/`
+
+### 核心真源映射 (Final Source of Truth)
+
+为了消除冗余层（Bridge-on-Bridge）并提高就绪性响应速度，中心 Bridge 已配置为绕过 9010/3910 转发层，直接对接各核心服务端口：
+
+| 服务名 | 核心端口 | 协议路径 | 角色定义 |
+| :--- | :--- | :--- | :--- |
+| **`openclaw-gateway.service`** | **`18789`** | **`ws://127.0.0.1:18789/`** | **OpenClaw 独立网关服务（不使用 /acp）** |
+| **`acp-codex.service`** | **`9001`** | **`http://127.0.0.1:9001/acp/rpc`** | **Codex 核心 ACP 实现** |
+| **`acp-opencode.service`** | **`38992`** | **`http://127.0.0.1:38992/acp/rpc`** | **Opencode 核心 ACP 实现** |
+| **`acp-gemini.service`** | **`8791`** | **`http://127.0.0.1:8791/acp/rpc`** | **Gemini 协议转换适配器 (Category: protocol-adapter)** |
 
 对 app 而言：
 

@@ -151,6 +151,10 @@ case "${scenario}" in
           printf '{"jsonrpc":"2.0","result":{"success":true,"providerId":"gemini","capabilities":{"providers":["gemini"]}}}\n'
           exit 0
         fi
+        if [[ "${data}" == *'"providerId":"hermes"'* ]]; then
+          printf '{"jsonrpc":"2.0","result":{"success":true,"providerId":"hermes","capabilities":{"providers":["hermes"]}}}\n'
+          exit 0
+        fi
         printf 'unexpected bridge probe payload in retry-success scenario: %s\n' "${data}" >&2
         exit 1
         ;;
@@ -194,6 +198,7 @@ run_validate_capture() {
     CODEX_RPC_URL="https://xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc" \
     OPENCODE_RPC_URL="https://xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc" \
     GEMINI_RPC_URL="https://xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc" \
+    HERMES_RPC_URL="https://xworkmate-bridge.svc.plus/acp-server/hermes/acp/rpc" \
     INTERNAL_SERVICE_TOKEN="test-token" \
     bash "${SCRIPT_PATH}" "${IMAGE_REF}" 2>&1
   )"
