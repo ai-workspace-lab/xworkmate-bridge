@@ -211,6 +211,9 @@ func resolveContainerReachableEndpoint(endpoint string) string {
 	if trimmed == "" {
 		return ""
 	}
+	if !runningInsideContainer() {
+		return trimmed
+	}
 	parsed, err := url.Parse(trimmed)
 	if err != nil {
 		return trimmed
@@ -255,6 +258,20 @@ func containerDefaultGatewayAddress() string {
 		return fmt.Sprintf("%d.%d.%d.%d", b0, b1, b2, b3)
 	}
 	return ""
+}
+
+func runningInsideContainer() bool {
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		return true
+	}
+	data, err := os.ReadFile("/proc/1/cgroup")
+	if err != nil {
+		return false
+	}
+	text := strings.ToLower(string(data))
+	return strings.Contains(text, "docker") ||
+		strings.Contains(text, "kubepods") ||
+		strings.Contains(text, "containerd")
 }
 
 func parseHexByte(raw string) (int, error) {
