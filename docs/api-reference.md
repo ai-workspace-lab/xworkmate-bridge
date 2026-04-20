@@ -7,6 +7,7 @@
 - `xworkmate-go-core serve` 暴露的 bridge HTTP / WebSocket API
 - `xworkmate-go-core acp-stdio` 暴露的 stdio ACP bridge
 - `xworkmate-go-core gemini-acp-adapter` 暴露的 Gemini adapter HTTP / WebSocket API
+- `xworkmate-go-core hermes-acp-adapter` 暴露的 Hermes adapter HTTP / WebSocket API
 - `main.go` 默认模式下 `toolbridge.Run` 暴露的本地工具桥协议
 
 不覆盖：
@@ -23,6 +24,7 @@
 | Bridge HTTP / WS | `./build/bin/xworkmate-go-core serve` | 启动 canonical bridge，对外暴露 `/acp/rpc` 与 `/acp`，并附带健康检查。 |
 | ACP stdio | `./build/bin/xworkmate-go-core acp-stdio` | 通过 stdin/stdout 提供 ACP bridge。 |
 | Gemini adapter | `./build/bin/xworkmate-go-core gemini-acp-adapter` | 把 Gemini CLI / Gemini ACP stdio 封装成 HTTP / WebSocket ACP 服务。 |
+| Hermes adapter | `./build/bin/xworkmate-go-core hermes-acp-adapter` | 把 Hermes stdio ACP 封装成 HTTP / WebSocket ACP 服务。 |
 | Tool bridge | `./build/bin/xworkmate-go-core` | 默认模式；暴露本地工具桥协议，不挂 bridge HTTP 路由。 |
 
 ## 2. Bridge `serve` Mode

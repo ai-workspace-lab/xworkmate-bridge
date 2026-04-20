@@ -19,7 +19,8 @@
 | **`acp-codex.service`** | `9001` | HTTP | Codex 核心 ACP 控制面 |
 | **`acp-opencode.service`** | `38992` | HTTP | Opencode 核心 ACP 控制面 |
 | **`acp-gemini.service`** | `8791` | HTTP | Gemini 协议适配器 (protocol-adapter) |
-| **`openclaw-gateway.service`** | `18789` | WS | OpenClaw 独立网关运行时 |
+| **`acp-hermes.service`** | `3920` | HTTP | Hermes 协议适配器 (stdio ACP adapter) |
+| **`openclaw-gateway.service`** | `18789` | WS | OpenClaw 独立部署网关运行时，映射到 `127.0.0.1:18789` |
 
 ### 包职责
 

@@ -39,7 +39,7 @@ flowchart TD
     B6["xworkmate.gateway.*"]
     B7["bridge-owned provider catalog"]
     B8["bridge-owned routing"]
-    B9["bridge-owned gateway runtime"]
+  B9["bridge-owned gateway runtime"]
 
     A3 --> B1
     A3 --> B2
@@ -58,16 +58,19 @@ flowchart TD
     C1["https://xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc"]
     C2["https://xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc"]
     C3["https://xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc"]
-    C4["https://xworkmate-bridge.svc.plus/gateway/openclaw/"]
+    C4["https://xworkmate-bridge.svc.plus/acp-server/hermes/acp/rpc"]
+    C5["https://xworkmate-bridge.svc.plus/gateway/openclaw/"]
   end
 
   B7 --> C1
   B7 --> C2
   B7 --> C3
+  B7 --> C4
   B8 --> C1
   B8 --> C2
   B8 --> C3
-  B9 --> C4
+  B8 --> C4
+  B9 --> C5
 ```
 ## Three-Layer View
 
@@ -93,6 +96,7 @@ flowchart LR
         CAP1["codex"]
         CAP2["opencode"]
         CAP3["gemini"]
+        CAP4["hermes"]
 
         GW["Bridge-owned gateway routing"]
         GW1["gatewayProviderId=openclaw"]
@@ -101,6 +105,7 @@ flowchart LR
         CAP --> CAP1
         CAP --> CAP2
         CAP --> CAP3
+        CAP --> CAP4
 
         BRIDGE --> GW
         GW --> GW1
@@ -110,7 +115,8 @@ flowchart LR
         U1["https://xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc"]
         U2["https://xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc"]
         U3["https://xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc"]
-        U4["https://xworkmate-bridge.svc.plus/gateway/openclaw/<br/>reported as xworkmate-bridge.svc.plus:443"]
+        U4["https://xworkmate-bridge.svc.plus/acp-server/hermes/acp/rpc"]
+        U5["https://xworkmate-bridge.svc.plus/gateway/openclaw/<br/>reported as xworkmate-bridge.svc.plus:443"]
     end
 
     APPMETHODS --> BRIDGE
@@ -118,7 +124,8 @@ flowchart LR
     CAP1 --> U1
     CAP2 --> U2
     CAP3 --> U3
-    GW1 --> U4
+    CAP4 --> U4
+    GW1 --> U5
 ```
 
 Important distinction:
@@ -132,7 +139,7 @@ Important distinction:
 - `acp.capabilities` is the single APP-facing source for task dialog modes and
   target-scoped provider catalogs
 - `providerCatalog` currently advertises the ACP single-agent providers:
-  `codex`, `opencode`, and `gemini`
+  `codex`, `opencode`, `gemini`, and `hermes`
 - `gatewayProviders` currently advertises the gateway-scoped providers, such as
   `openclaw`
 - `availableExecutionTargets` tells the app which first-level task dialog modes
@@ -150,14 +157,15 @@ Important distinction:
 
 ### 核心真源映射 (Final Source of Truth)
 
-为了消除冗余层（Bridge-on-Bridge）并提高就绪性响应速度，中心 Bridge 已配置为绕过 9010/3910 转发层，直接对接各核心服务端口：
+为了消除冗余层（Bridge-on-Bridge）并提高就绪性响应速度，中心 Bridge 已配置为绕过旧的 9010/3910 转发层，直接对接各核心服务端口：
 
 | 服务名 | 核心端口 | 协议路径 | 角色定义 |
 | :--- | :--- | :--- | :--- |
-| **`openclaw-gateway.service`** | **`18789`** | **`ws://127.0.0.1:18789/`** | **OpenClaw 独立网关服务（不使用 /acp）** |
+| **`openclaw-gateway.service`** | **`18789`** | **`ws://127.0.0.1:18789/`** | **OpenClaw 独立部署网关服务（不使用 /acp）** |
 | **`acp-codex.service`** | **`9001`** | **`http://127.0.0.1:9001/acp/rpc`** | **Codex 核心 ACP 实现** |
 | **`acp-opencode.service`** | **`38992`** | **`http://127.0.0.1:38992/acp/rpc`** | **Opencode 核心 ACP 实现** |
 | **`acp-gemini.service`** | **`8791`** | **`http://127.0.0.1:8791/acp/rpc`** | **Gemini 协议转换适配器 (Category: protocol-adapter)** |
+| **`acp-hermes.service`** | **`3920`** | **`http://127.0.0.1:3920/acp/rpc`** | **Hermes 协议转换适配器 (Category: protocol-adapter)** |
 
 对 app 而言：
 
@@ -169,6 +177,12 @@ Important distinction:
 
 - app traffic reaches upstream ACP and gateway services only through the bridge
 - app does not call `xworkmate-bridge.svc.plus/acp-server/*` or `xworkmate-bridge.svc.plus/gateway/openclaw/` directly
+- `openclaw-gateway` is an independently deployed runtime mapped to `127.0.0.1:18789`
+- internal provider routes remain bridge-owned validation targets:
+  - `xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc`
+  - `xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc`
+  - `xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc`
+  - `xworkmate-bridge.svc.plus/acp-server/hermes/acp/rpc`
 - upstream auth stays bridge-internal:
   - `Authorization: Bearer $INTERNAL_SERVICE_TOKEN`
 - `acp.capabilities` is the provider / capability discovery source

@@ -32,6 +32,7 @@ Verified public HTTP JSON-RPC endpoints:
 - Codex: `https://xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc`
 - OpenCode: `https://xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc`
 - Gemini: `https://xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc`
+- Hermes: `https://xworkmate-bridge.svc.plus/acp-server/hermes/acp/rpc`
 - OpenClaw: `https://xworkmate-bridge.svc.plus/gateway/openclaw/`
 
 The `.../acp` path remains reserved for WebSocket ACP.
@@ -52,6 +53,7 @@ The ingress returned `200 OK` on all public routes after re-apply, and the deplo
 - `codex` -> `127.0.0.1:9001`
 - `opencode` -> `127.0.0.1:38992`
 - `gemini` -> `127.0.0.1:8791`
+- `hermes` -> `127.0.0.1:3920`
 - `openclaw` -> `127.0.0.1:18789` (Host process)
 
 ### Codex
@@ -200,7 +202,7 @@ For single-agent task execution:
 
 ### Provider-specific notes
 
-- `codex`, `opencode`, and `gemini` are all now verified public task paths.
+- `codex`, `opencode`, `gemini`, and `hermes` are all now verified public task paths.
 - `gemini` still depends on the adapter compatibility layer, not a native upstream Gemini ACP conversation method.
 - For multi-turn flows, apps should preserve and resend `routing` on every `session.message`.
 - `codex` and `opencode` currently require explicit `routing` on follow-up turns.

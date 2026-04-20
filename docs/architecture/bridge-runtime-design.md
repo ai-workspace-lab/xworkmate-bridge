@@ -11,15 +11,17 @@
 | `serve` | `acp.Serve` | 启动 bridge HTTP / WebSocket 服务，对外暴露 `/acp/rpc` 与 `/acp`，并附带健康检查路由。 |
 | `acp-stdio` | `acp.RunStdio` | 启动 stdio ACP bridge，适合被宿主进程以 stdin/stdout 驱动。 |
 | `gemini-acp-adapter` | `geminiadapter.Serve` | 启动 Gemini 专用 ACP adapter，把 Gemini CLI 包装成 ACP HTTP / WebSocket 服务。 |
+| `hermes-acp-adapter` | `hermesadapter.Serve` | 启动 Hermes 专用 ACP adapter，把 Hermes stdio ACP 包装成 ACP HTTP / WebSocket 服务。 |
 | 默认模式 | `toolbridge.Run` | 启动 MCP 风格的本地工具桥，暴露 `chat`、`claude_review`、`vault_kv` 等工具。 |
 
   ｜服务     │ 外部入口 (HTTPS/WSS)                           │ 后端转发目标 (Local)     │ 部署方式    │
   ├──────────┼────────────────────────────────────────────────┼──────────────────────────┼─────────────┤
-  │ Bridge   │ xworkmate-bridge.svc.plus/                     │ 127.0.0.1:8787           │ Docker 容器 │
-  │ OpenClaw │ xworkmate-bridge.svc.plus/gateway/openclaw/    │ 127.0.0.1:18789          │ 主机进程    │
-  │ Codex    │ xworkmate-bridge.svc.plus/acp-server/codex/    │ acp-server-codex:3911    │ Docker 容器 │
-  │ OpenCode │ http://127.0.0.1:38992/acp/rpc                  │ acp-opencode:38992       │ Docker 容器 │
-  │ Gemini   │ xworkmate-bridge.svc.plus/acp-server/gemini/   │ acp-server-gemini:3912   │ Docker 容器 
+  │ Bridge   │ xworkmate-bridge.svc.plus/                     │ 127.0.0.1:8787           │ 主机进程    │
+  │ OpenClaw │ xworkmate-bridge.svc.plus/gateway/openclaw/    │ 127.0.0.1:18789          │ 独立部署    │
+  │ Codex    │ xworkmate-bridge.svc.plus/acp-server/codex/    │ 127.0.0.1:9001           │ 主机进程    │
+  │ OpenCode │ xworkmate-bridge.svc.plus/acp-server/opencode/ │ 127.0.0.1:38992          │ 主机进程    │
+  │ Gemini   │ xworkmate-bridge.svc.plus/acp-server/gemini/   │ 127.0.0.1:8791           │ 主机进程    │
+  │ Hermes   │ xworkmate-bridge.svc.plus/acp-server/hermes/   │ 127.0.0.1:3920           │ 主机进程    │
 
 
 设计含义：
@@ -27,6 +29,7 @@
 - `main.go` 不承载业务决策，只做模式分发。
 - APP-facing canonical bridge 只由 `serve` 模式提供。
 - `gemini-acp-adapter` 是独立 adapter，而不是 bridge 主入口的一部分。
+- `hermes-acp-adapter` 也是独立 adapter，不是 bridge 主入口的一部分。
 - 默认工具桥是本地工具执行面，不参与 APP-facing canonical path。
 
 ## 2. 系统边界
@@ -50,6 +53,7 @@ single-agent provider 目录由 [internal/acp/provider_catalog.go](../../interna
 - `codex`
 - `opencode`
 - `gemini`
+- `hermes`
 
 这些 provider 的 endpoint 和 auth 归 bridge 所有。APP 只通过 `/acp/rpc` 和 `/acp` 与 bridge 交互，不直接依赖 provider-specific public URL。
 
