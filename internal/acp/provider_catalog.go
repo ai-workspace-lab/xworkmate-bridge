@@ -84,7 +84,7 @@ func newProductionProviderCatalog() (map[string]syncedProvider, []string) {
 			label:      "Codex",
 			yaml:       config.Upstream.CodexURL,
 			envKeys:    []string{"CODEX_RPC_URL"},
-			defaultURL: "http://127.0.0.1:9001/acp/rpc",
+			defaultURL: "ws://127.0.0.1:9001/acp",
 		},
 		{
 			id:         "opencode",
