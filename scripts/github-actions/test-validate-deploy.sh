@@ -109,7 +109,7 @@ case "${scenario}" in
       https://xworkmate-bridge.svc.plus/)
         printf 'xworkmate-bridge is running\n'
         ;;
-      https://acp-server.svc.plus/*/acp/rpc)
+      https://xworkmate-bridge.svc.plus/acp-server/*/acp/rpc)
         printf '{"jsonrpc":"2.0","result":{"providers":["ok"]}}\n'
         ;;
       https://xworkmate-bridge.svc.plus/acp/rpc)
@@ -135,7 +135,7 @@ case "${scenario}" in
       https://xworkmate-bridge.svc.plus/)
         printf 'xworkmate-bridge is running\n'
         ;;
-      https://acp-server.svc.plus/*/acp/rpc)
+      https://xworkmate-bridge.svc.plus/acp-server/*/acp/rpc)
         printf '{"jsonrpc":"2.0","result":{"providers":["ok"]}}\n'
         ;;
       https://xworkmate-bridge.svc.plus/acp/rpc)
@@ -191,9 +191,9 @@ run_validate_capture() {
     FAKE_CURL_STATE_DIR="${RUN_STATE_DIR}" \
     BRIDGE_SERVER_URL="https://xworkmate-bridge.svc.plus" \
     OPENCLAW_URL="wss://openclaw.svc.plus" \
-    CODEX_RPC_URL="https://acp-server.svc.plus/codex/acp/rpc" \
-    OPENCODE_RPC_URL="https://acp-server.svc.plus/opencode/acp/rpc" \
-    GEMINI_RPC_URL="https://acp-server.svc.plus/gemini/acp/rpc" \
+    CODEX_RPC_URL="https://xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc" \
+    OPENCODE_RPC_URL="https://xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc" \
+    GEMINI_RPC_URL="https://xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc" \
     INTERNAL_SERVICE_TOKEN="test-token" \
     bash "${SCRIPT_PATH}" "${IMAGE_REF}" 2>&1
   )"

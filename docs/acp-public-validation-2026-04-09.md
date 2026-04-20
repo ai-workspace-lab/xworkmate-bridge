@@ -2,10 +2,10 @@
 
 This document records the post-deployment validation of the bridge public
 origin at `xworkmate-bridge.svc.plus` and the independent upstream ACP ingress
-at `acp-server.svc.plus`.
+at `xworkmate-bridge.svc.plus/acp-server`.
 
 For APP integration, the canonical public contract remains the bridge origin
-and the `.../acp/rpc` path on that origin. The direct `acp-server.svc.plus`
+and the `.../acp/rpc` path on that origin. The direct `xworkmate-bridge.svc.plus/acp-server`
 URLs in this document are upstream validation targets, not the preferred APP
 entry points.
 
@@ -29,9 +29,9 @@ Recommended APP-facing endpoint:
 
 Verified public HTTP JSON-RPC endpoints:
 
-- Codex: `https://acp-server.svc.plus/codex/acp/rpc`
-- OpenCode: `https://acp-server.svc.plus/opencode/acp/rpc`
-- Gemini: `https://acp-server.svc.plus/gemini/acp/rpc`
+- Codex: `https://xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc`
+- OpenCode: `https://xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc`
+- Gemini: `https://xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc`
 
 The `.../acp` path remains reserved for WebSocket ACP.
 

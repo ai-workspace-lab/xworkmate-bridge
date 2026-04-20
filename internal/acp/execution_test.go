@@ -1,8 +1,49 @@
 package acp
 
-import "testing"
+import (
+	"os"
+	"strings"
+	"testing"
+)
 
-func TestResolveSingleAgentForwardEndpoint(t *testing.T) {
+func TestResolveSingleAgentForwardEndpointFromExampleConfig(t *testing.T) {
+	// Set the config path to example/config.yaml relative to this test file
+	os.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
+	defer os.Unsetenv("BRIDGE_CONFIG_PATH")
+
+	catalog, order := newProductionProviderCatalog()
+	if len(order) == 0 {
+		t.Fatal("Expected non-empty provider order from example/config.yaml")
+	}
+
+	expectedEndpoints := map[string]string{
+		"codex":    "https://xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc",
+		"opencode": "https://xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc",
+		"gemini":   "https://xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc",
+	}
+
+	for _, id := range order {
+		id := id
+		t.Run(id, func(t *testing.T) {
+			provider, ok := catalog[id]
+			if !ok {
+				t.Errorf("Provider %s missing from catalog", id)
+				return
+			}
+			if !provider.Enabled {
+				t.Errorf("Provider %s should be enabled in example config", id)
+			}
+			
+			want := expectedEndpoints[id]
+			got := resolveSingleAgentForwardEndpoint(provider)
+			if got != want {
+				t.Errorf("resolveSingleAgentForwardEndpoint(%s) = %q, want %q (from example config)", id, got, want)
+			}
+		})
+	}
+}
+
+func TestResolveSingleAgentForwardEndpointManual(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -13,26 +54,10 @@ func TestResolveSingleAgentForwardEndpoint(t *testing.T) {
 		{
 			name: "preserves upstream endpoint",
 			provider: syncedProvider{
-				ProviderID: "opencode",
-				Endpoint:   "https://acp-server.svc.plus/opencode/acp/rpc",
+				ProviderID: "custom",
+				Endpoint:   "https://upstream-provider.example.com/acp/rpc",
 			},
-			want: "https://acp-server.svc.plus/opencode/acp/rpc",
-		},
-		{
-			name: "does not rewrite bridge endpoint placeholder for codex",
-			provider: syncedProvider{
-				ProviderID: "codex",
-				Endpoint:   "https://xworkmate-bridge.svc.plus",
-			},
-			want: "https://xworkmate-bridge.svc.plus",
-		},
-		{
-			name: "does not rewrite bridge endpoint placeholder for gemini",
-			provider: syncedProvider{
-				ProviderID: "gemini",
-				Endpoint:   "https://xworkmate-bridge.svc.plus",
-			},
-			want: "https://xworkmate-bridge.svc.plus",
+			want: "https://upstream-provider.example.com/acp/rpc",
 		},
 	}
 

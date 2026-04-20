@@ -55,9 +55,9 @@ flowchart TD
   end
 
   subgraph UPSTREAM["Independent upstream services"]
-    C1["https://acp-server.svc.plus/codex/acp/rpc"]
-    C2["https://acp-server.svc.plus/opencode/acp/rpc"]
-    C3["https://acp-server.svc.plus/gemini/acp/rpc"]
+    C1["https://xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc"]
+    C2["https://xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc"]
+    C3["https://xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc"]
     C4["wss://openclaw.svc.plus"]
   end
 
@@ -107,9 +107,9 @@ flowchart LR
     end
 
     subgraph L3["上游视角"]
-        U1["https://acp-server.svc.plus/codex/acp/rpc"]
-        U2["https://acp-server.svc.plus/opencode/acp/rpc"]
-        U3["https://acp-server.svc.plus/gemini/acp/rpc"]
+        U1["https://xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc"]
+        U2["https://xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc"]
+        U3["https://xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc"]
         U4["wss://openclaw.svc.plus<br/>reported as openclaw.svc.plus:443"]
     end
 
@@ -163,7 +163,7 @@ Important distinction:
 ## Invariants
 
 - app traffic reaches upstream ACP and gateway services only through the bridge
-- app does not call `acp-server.svc.plus/*` or `openclaw.svc.plus` directly
+- app does not call `xworkmate-bridge.svc.plus/acp-server/*` or `openclaw.svc.plus` directly
 - upstream auth stays bridge-internal:
   - `Authorization: Bearer $INTERNAL_SERVICE_TOKEN`
 - `acp.capabilities` is the provider / capability discovery source
