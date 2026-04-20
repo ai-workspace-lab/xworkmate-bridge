@@ -2,12 +2,12 @@
 set -euo pipefail
 
 BASE_URL="${BRIDGE_SERVER_URL:-https://xworkmate-bridge.svc.plus}"
-AUTH_TOKEN="${BRIDGE_AUTH_TOKEN:-${INTERNAL_SERVICE_TOKEN:-}}"
+AUTH_TOKEN="${BRIDGE_AUTH_TOKEN:-}"
 HTTP_TIMEOUT_SECONDS="${HTTP_TIMEOUT_SECONDS:-30}"
 RPC_TIMEOUT_SECONDS="${RPC_TIMEOUT_SECONDS:-90}"
 
 if [[ -z "${AUTH_TOKEN}" ]]; then
-  echo "BRIDGE_AUTH_TOKEN or INTERNAL_SERVICE_TOKEN is required" >&2
+  echo "BRIDGE_AUTH_TOKEN is required" >&2
   exit 1
 fi
 

@@ -32,7 +32,7 @@ type BridgeConfig struct {
 
 func loadBridgeConfig() *BridgeConfig {
 	config := &BridgeConfig{}
-	configPath := shared.EnvOrDefault("BRIDGE_CONFIG_PATH", "config.yaml")
+	configPath := shared.EnvOrDefault("BRIDGE_CONFIG_PATH", "/app/config.yaml")
 
 	if _, err := os.Stat(configPath); err == nil {
 		data, err := os.ReadFile(configPath)
@@ -43,7 +43,7 @@ func loadBridgeConfig() *BridgeConfig {
 	return config
 }
 
-func resolveURL(yamlVal string, envKeys ...string) string {
+func resolveURL(yamlVal string, defaultVal string, envKeys ...string) string {
 	val := strings.TrimSpace(yamlVal)
 	if val != "" {
 		return val
@@ -53,7 +53,7 @@ func resolveURL(yamlVal string, envKeys ...string) string {
 			return v
 		}
 	}
-	return ""
+	return defaultVal
 }
 
 func bridgeUpstreamAuthorizationHeader() string {
@@ -105,10 +105,7 @@ func newProductionProviderCatalog() (map[string]syncedProvider, []string) {
 	var order []string
 
 	for _, p := range providers {
-		endpoint := resolveURL(p.yaml, p.envKeys...)
-		if endpoint == "" {
-			endpoint = p.defaultURL
-		}
+		endpoint := resolveURL(p.yaml, p.defaultURL, p.envKeys...)
 		catalog[p.id] = syncedProvider{
 			ProviderID:          p.id,
 			Label:               p.label,
