@@ -71,16 +71,34 @@ func newProductionProviderCatalog() (map[string]syncedProvider, []string) {
 	config := loadBridgeConfig()
 	authorizationHeader := bridgeUpstreamAuthorizationHeader()
 
-	// Map both legacy OPENCLAW_*_URL and new *_RPC_URL patterns for compatibility
 	providers := []struct {
-		id      string
-		label   string
-		yaml    string
-		envKeys []string
+		id         string
+		label      string
+		yaml       string
+		envKeys    []string
+		defaultURL string
 	}{
-		{"codex", "Codex", config.Upstream.CodexURL, []string{"CODEX_RPC_URL", "OPENCLAW_CODEX_URL"}},
-		{"opencode", "OpenCode", config.Upstream.OpenCodeURL, []string{"OPENCODE_RPC_URL", "OPENCLAW_OPENCODE_URL"}},
-		{"gemini", "Gemini", config.Upstream.GeminiURL, []string{"GEMINI_RPC_URL", "OPENCLAW_GEMINI_URL"}},
+		{
+			id:         "codex",
+			label:      "Codex",
+			yaml:       config.Upstream.CodexURL,
+			envKeys:    []string{"CODEX_RPC_URL"},
+			defaultURL: "https://xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc",
+		},
+		{
+			id:         "opencode",
+			label:      "OpenCode",
+			yaml:       config.Upstream.OpenCodeURL,
+			envKeys:    []string{"OPENCODE_RPC_URL"},
+			defaultURL: "https://xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc",
+		},
+		{
+			id:         "gemini",
+			label:      "Gemini",
+			yaml:       config.Upstream.GeminiURL,
+			envKeys:    []string{"GEMINI_RPC_URL"},
+			defaultURL: "https://xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc",
+		},
 	}
 
 	catalog := make(map[string]syncedProvider)
@@ -88,6 +106,9 @@ func newProductionProviderCatalog() (map[string]syncedProvider, []string) {
 
 	for _, p := range providers {
 		endpoint := resolveURL(p.yaml, p.envKeys...)
+		if endpoint == "" {
+			endpoint = p.defaultURL
+		}
 		catalog[p.id] = syncedProvider{
 			ProviderID:          p.id,
 			Label:               p.label,

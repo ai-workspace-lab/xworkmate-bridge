@@ -58,7 +58,7 @@ flowchart TD
     C1["https://xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc"]
     C2["https://xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc"]
     C3["https://xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc"]
-    C4["wss://openclaw.svc.plus"]
+    C4["https://xworkmate-bridge.svc.plus/gateway/openclaw/"]
   end
 
   B7 --> C1
@@ -110,7 +110,7 @@ flowchart LR
         U1["https://xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc"]
         U2["https://xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc"]
         U3["https://xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc"]
-        U4["wss://openclaw.svc.plus<br/>reported as openclaw.svc.plus:443"]
+        U4["https://xworkmate-bridge.svc.plus/gateway/openclaw/<br/>reported as xworkmate-bridge.svc.plus:443"]
     end
 
     APPMETHODS --> BRIDGE
@@ -138,7 +138,7 @@ Important distinction:
 - `availableExecutionTargets` tells the app which first-level task dialog modes
   are currently available
 - for `gatewayProviderId=openclaw`, the bridge rewrites the upstream target to
-  `wss://openclaw.svc.plus`
+  `https://xworkmate-bridge.svc.plus/gateway/openclaw/`
 ## Production Truth
 
 当前 production forwarding 事实：
@@ -152,7 +152,7 @@ Important distinction:
   - `opencode`
   - `gemini`
 - current production gateway forwarding target:
-  - `openclaw -> wss://openclaw.svc.plus`
+  - `openclaw -> https://xworkmate-bridge.svc.plus/gateway/openclaw/`
 
 对 app 而言：
 
@@ -163,7 +163,7 @@ Important distinction:
 ## Invariants
 
 - app traffic reaches upstream ACP and gateway services only through the bridge
-- app does not call `xworkmate-bridge.svc.plus/acp-server/*` or `openclaw.svc.plus` directly
+- app does not call `xworkmate-bridge.svc.plus/acp-server/*` or `xworkmate-bridge.svc.plus/gateway/openclaw/` directly
 - upstream auth stays bridge-internal:
   - `Authorization: Bearer $INTERNAL_SERVICE_TOKEN`
 - `acp.capabilities` is the provider / capability discovery source

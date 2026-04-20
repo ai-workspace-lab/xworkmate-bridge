@@ -13,6 +13,15 @@
 | `gemini-acp-adapter` | `geminiadapter.Serve` | 启动 Gemini 专用 ACP adapter，把 Gemini CLI 包装成 ACP HTTP / WebSocket 服务。 |
 | 默认模式 | `toolbridge.Run` | 启动 MCP 风格的本地工具桥，暴露 `chat`、`claude_review`、`vault_kv` 等工具。 |
 
+  ｜服务     │ 外部入口 (HTTPS/WSS)                           │ 后端转发目标 (Local)     │ 部署方式    │
+  ├──────────┼────────────────────────────────────────────────┼──────────────────────────┼─────────────┤
+  │ Bridge   │ xworkmate-bridge.svc.plus/                     │ 127.0.0.1:8787           │ Docker 容器 │
+  │ OpenClaw │ xworkmate-bridge.svc.plus/gateway/openclaw/    │ 127.0.0.1:18789          │ 主机进程    │
+  │ Codex    │ xworkmate-bridge.svc.plus/acp-server/codex/    │ acp-server-codex:3911    │ Docker 容器 │
+  │ OpenCode │ xworkmate-bridge.svc.plus/acp-server/opencode/ │ acp-server-opencode:3910 │ Docker 容器 │
+  │ Gemini   │ xworkmate-bridge.svc.plus/acp-server/gemini/   │ acp-server-gemini:3912   │ Docker 容器 
+
+
 设计含义：
 
 - `main.go` 不承载业务决策，只做模式分发。

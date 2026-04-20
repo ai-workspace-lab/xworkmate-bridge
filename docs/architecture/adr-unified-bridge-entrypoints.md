@@ -127,7 +127,7 @@ Use these terms consistently:
 
 - `canonical app-facing path`: `/acp/rpc` and `/acp`
 - `gateway runtime method family`: `xworkmate.gateway.*`
-- `independent upstream service`: `xworkmate-bridge.svc.plus/acp-server/*`, `wss://openclaw.svc.plus`
+- `independent upstream service`: `xworkmate-bridge.svc.plus/acp-server/*`, `xworkmate-bridge.svc.plus/gateway/openclaw/`
 - `bridge-owned routing`: provider / gateway selection performed inside bridge
 - `routing metadata`: execution target and resolved provider/gateway identifiers returned to the app
 

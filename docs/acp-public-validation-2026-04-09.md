@@ -32,6 +32,7 @@ Verified public HTTP JSON-RPC endpoints:
 - Codex: `https://xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc`
 - OpenCode: `https://xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc`
 - Gemini: `https://xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc`
+- OpenClaw: `https://xworkmate-bridge.svc.plus/gateway/openclaw/`
 
 The `.../acp` path remains reserved for WebSocket ACP.
 
@@ -46,11 +47,12 @@ Missing bearer auth returns a JSON-RPC error envelope with code `-32001`.
 
 ## Public Validation Results
 
-The ingress returned `200 OK` on all three public routes after re-apply, and the deployment response confirmed the active upstream mappings:
+The ingress returned `200 OK` on all public routes after re-apply, and the deployment response confirmed the active upstream mappings:
 
 - `codex` -> `127.0.0.1:9010`
 - `opencode` -> `127.0.0.1:3910`
 - `gemini` -> `127.0.0.1:8791`
+- `openclaw` -> `127.0.0.1:18789` (Host process)
 
 ### Codex
 

@@ -36,7 +36,7 @@ func TestResolveGatewayReportedRemoteAddressNormalizesExplicitPublicRemoteHost(
 	got := resolveGatewayReportedRemoteAddress(server, gatewayruntime.ConnectRequest{
 		Mode: "openclaw",
 		Endpoint: gatewayruntime.Endpoint{
-			Host: "openclaw.svc.plus",
+			Host: "xworkmate-bridge.svc.plus",
 			Port: 443,
 			TLS:  true,
 		},

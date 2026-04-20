@@ -74,8 +74,9 @@ func applyProductionGatewayRouting(
 	if strings.TrimSpace(strings.ToLower(request.Mode)) != "openclaw" {
 		return request
 	}
+	// Route through the unified bridge ingress
 	request.Endpoint = gatewayruntime.Endpoint{
-		Host: "openclaw.svc.plus",
+		Host: "xworkmate-bridge.svc.plus",
 		Port: 443,
 		TLS:  true,
 	}

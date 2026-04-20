@@ -25,7 +25,7 @@ func TestManagerConnectUsesReportedRemoteAddressInSnapshot(t *testing.T) {
 			Port: server.Port(),
 			TLS:  false,
 		},
-		ReportedRemoteAddress: "openclaw.svc.plus:443",
+		ReportedRemoteAddress: "xworkmate-bridge.svc.plus:443",
 		ConnectAuthMode:       "shared-token",
 		ConnectAuthFields:     []string{"token"},
 		ConnectAuthSources:    []string{"shared:form"},
@@ -54,7 +54,7 @@ func TestManagerConnectUsesReportedRemoteAddressInSnapshot(t *testing.T) {
 		t.Fatalf("expected connect success, got %#v", result.Error)
 	}
 
-	if got := result.Snapshot["remoteAddress"]; got != "openclaw.svc.plus:443" {
+	if got := result.Snapshot["remoteAddress"]; got != "xworkmate-bridge.svc.plus:443" {
 		t.Fatalf("expected reported remote address, got %#v", got)
 	}
 }

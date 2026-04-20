@@ -54,9 +54,9 @@ fi
 
 BASE_URL="$(normalize_url "${BRIDGE_SERVER_URL:-${2:-https://xworkmate-bridge.svc.plus}}")"
 OPENCLAW_BASE_URL="$(normalize_url "${OPENCLAW_URL:-${3:-${BASE_URL}/gateway/openclaw}}")"
-CODEX_BASE_URL="$(normalize_url "${CODEX_RPC_URL:-${4:-${BASE_URL}/acp-server/codex}}")"
-OPENCODE_BASE_URL="$(normalize_url "${OPENCODE_RPC_URL:-${5:-${BASE_URL}/acp-server/opencode}}")"
-GEMINI_BASE_URL="$(normalize_url "${GEMINI_RPC_URL:-${6:-${BASE_URL}/acp-server/gemini}}")"
+CODEX_BASE_URL="$(normalize_url "${CODEX_RPC_URL:-${4:-${BASE_URL}/acp-server/codex/acp/rpc}}")"
+OPENCODE_BASE_URL="$(normalize_url "${OPENCODE_RPC_URL:-${5:-${BASE_URL}/acp-server/opencode/acp/rpc}}")"
+GEMINI_BASE_URL="$(normalize_url "${GEMINI_RPC_URL:-${6:-${BASE_URL}/acp-server/gemini/acp/rpc}}")"
 AUTH_TOKEN="${BRIDGE_AUTH_TOKEN:-${INTERNAL_SERVICE_TOKEN:-${7:-}}}"
 
 ensure_rpc_path() {

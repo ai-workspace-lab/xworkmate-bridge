@@ -213,11 +213,9 @@ func reconcileCodex(
 	}
 	state.DiscoveredMCPCount = discovered
 	state.ManagedMCPCount = len(managedServers)
-	if strings.TrimSpace(aiGatewayURL) != "" {
-		state.Detail = "LLM API uses launch-scoped defaults for collaboration runs."
-	} else {
-		state.Detail = "LLM API not configured."
-	}
+	state.Detail = "Codex public base URL: https://xworkmate-bridge.svc.plus/acp-server/codex\n" +
+		"Preferred WebSocket endpoint: https://xworkmate-bridge.svc.plus/acp-server/codex/acp\n" +
+		"Compatibility HTTP RPC endpoint: https://xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc"
 	return state
 }
 
@@ -246,8 +244,15 @@ func reconcileCLIListTarget(
 	}
 	state.DiscoveredMCPCount = discovered
 	state.ManagedMCPCount = len(enabledServers(config.ManagedMCPServers))
-	state.Detail = "MCP discovery uses `" + strings.Join(command, " ") +
-		"`; LLM API stays launch-scoped."
+
+	if targetID == "gemini" {
+		state.Detail = "Gemini public base URL: https://xworkmate-bridge.svc.plus/acp-server/gemini\n" +
+			"Preferred WebSocket endpoint: https://xworkmate-bridge.svc.plus/acp-server/gemini/acp\n" +
+			"Compatibility HTTP RPC endpoint: https://xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc"
+	} else {
+		state.Detail = "MCP discovery uses `" + strings.Join(command, " ") +
+			"`; LLM API stays launch-scoped."
+	}
 	return state
 }
 
@@ -286,7 +291,9 @@ func reconcileOpencode(config Config, opencodeHome string) MountTargetState {
 	}
 	state.DiscoveredMCPCount = discovered
 	state.ManagedMCPCount = len(managedServers)
-	state.Detail = "Managed MCP config is preserved in ~/.opencode/config.toml."
+	state.Detail = "OpenCode public base URL: https://xworkmate-bridge.svc.plus/acp-server/opencode\n" +
+		"Preferred WebSocket endpoint: https://xworkmate-bridge.svc.plus/acp-server/opencode/acp\n" +
+		"Compatibility HTTP RPC endpoint: https://xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc"
 	return state
 }
 
