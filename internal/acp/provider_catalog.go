@@ -9,8 +9,6 @@ import (
 )
 
 // Default production endpoints for XWorkmate managed bridge environment.
-// Note: While single-agent providers now require explicit config, 
-// the gateway endpoint may still have a default for baseline connectivity.
 const (
 	productionGatewayEndpointURL = "https://xworkmate-bridge.svc.plus/gateway/openclaw/"
 )
@@ -45,12 +43,17 @@ func loadBridgeConfig() *BridgeConfig {
 	return config
 }
 
-func resolveURL(yamlVal, envKey string) string {
+func resolveURL(yamlVal string, envKeys ...string) string {
 	val := strings.TrimSpace(yamlVal)
 	if val != "" {
 		return val
 	}
-	return strings.TrimSpace(shared.EnvOrDefault(envKey, ""))
+	for _, key := range envKeys {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func bridgeUpstreamAuthorizationHeader() string {
@@ -68,22 +71,23 @@ func newProductionProviderCatalog() (map[string]syncedProvider, []string) {
 	config := loadBridgeConfig()
 	authorizationHeader := bridgeUpstreamAuthorizationHeader()
 
+	// Map both legacy OPENCLAW_*_URL and new *_RPC_URL patterns for compatibility
 	providers := []struct {
-		id     string
-		label  string
-		yaml   string
-		envKey string
+		id      string
+		label   string
+		yaml    string
+		envKeys []string
 	}{
-		{"codex", "Codex", config.Upstream.CodexURL, "OPENCLAW_CODEX_URL"},
-		{"opencode", "OpenCode", config.Upstream.OpenCodeURL, "OPENCLAW_OPENCODE_URL"},
-		{"gemini", "Gemini", config.Upstream.GeminiURL, "OPENCLAW_GEMINI_URL"},
+		{"codex", "Codex", config.Upstream.CodexURL, []string{"CODEX_RPC_URL", "OPENCLAW_CODEX_URL"}},
+		{"opencode", "OpenCode", config.Upstream.OpenCodeURL, []string{"OPENCODE_RPC_URL", "OPENCLAW_OPENCODE_URL"}},
+		{"gemini", "Gemini", config.Upstream.GeminiURL, []string{"GEMINI_RPC_URL", "OPENCLAW_GEMINI_URL"}},
 	}
 
 	catalog := make(map[string]syncedProvider)
 	var order []string
 
 	for _, p := range providers {
-		endpoint := resolveURL(p.yaml, p.envKey)
+		endpoint := resolveURL(p.yaml, p.envKeys...)
 		catalog[p.id] = syncedProvider{
 			ProviderID:          p.id,
 			Label:               p.label,
