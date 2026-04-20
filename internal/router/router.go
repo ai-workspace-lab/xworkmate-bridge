@@ -255,6 +255,9 @@ func resolveProvider(
 		if containsProvider(availableProviders, explicitProviderID) {
 			return explicitProviderID, false, "", ""
 		}
+		if len(availableProviders) == 1 {
+			return availableProviders[0], false, "", ""
+		}
 		return "", true, "PROVIDER_UNAVAILABLE", "explicit provider is unavailable"
 	}
 

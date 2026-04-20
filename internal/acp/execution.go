@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"mime"
 	"net/http"
 	"net/url"
@@ -286,9 +287,19 @@ func requestExternalACPHTTP(
 	defer func() {
 		_ = response.Body.Close()
 	}()
+
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 1024))
+		return nil, fmt.Errorf(
+			"external ACP HTTP request failed (%d): %s",
+			response.StatusCode,
+			strings.TrimSpace(string(body)),
+		)
+	}
+
 	var decoded map[string]any
 	if err := json.NewDecoder(response.Body).Decode(&decoded); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to decode external ACP response: %w", err)
 	}
 	if errPayload := asMap(decoded["error"]); len(errPayload) > 0 {
 		return nil, fmt.Errorf(
