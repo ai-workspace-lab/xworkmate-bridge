@@ -53,11 +53,25 @@ if [[ "${tag}" =~ ^[0-9a-f]{40}$ ]]; then
 fi
 
 BASE_URL="$(normalize_url "${BRIDGE_SERVER_URL:-${2:-https://xworkmate-bridge.svc.plus}}")"
-OPENCLAW_HTTP_PROBE_URL="$(websocket_probe_url "${OPENCLAW_URL:-${3:-https://xworkmate-bridge.svc.plus/gateway/openclaw/}}")"
-CODEX_RPC_URL="$(normalize_url "${CODEX_RPC_URL:-${4:-https://acp-server.svc.plus/codex/acp/rpc}}")"
-OPENCODE_RPC_URL="$(normalize_url "${OPENCODE_RPC_URL:-${5:-https://acp-server.svc.plus/opencode/acp/rpc}}")"
-GEMINI_RPC_URL="$(normalize_url "${GEMINI_RPC_URL:-${6:-https://acp-server.svc.plus/gemini/acp/rpc}}")"
+OPENCLAW_BASE_URL="$(normalize_url "${OPENCLAW_URL:-${3:-${BASE_URL}/gateway/openclaw}}")"
+CODEX_BASE_URL="$(normalize_url "${CODEX_RPC_URL:-${4:-${BASE_URL}/acp-server/codex}}")"
+OPENCODE_BASE_URL="$(normalize_url "${OPENCODE_RPC_URL:-${5:-${BASE_URL}/acp-server/opencode}}")"
+GEMINI_BASE_URL="$(normalize_url "${GEMINI_RPC_URL:-${6:-${BASE_URL}/acp-server/gemini}}")"
 AUTH_TOKEN="${BRIDGE_AUTH_TOKEN:-${INTERNAL_SERVICE_TOKEN:-${7:-}}}"
+
+ensure_rpc_path() {
+  local url="$1"
+  if [[ "${url}" == */acp/rpc ]]; then
+    printf '%s\n' "${url}"
+  else
+    printf '%s/acp/rpc\n' "${url%/}"
+  fi
+}
+
+OPENCLAW_HTTP_PROBE_URL="$(websocket_probe_url "${OPENCLAW_BASE_URL}")"
+CODEX_RPC_ENDPOINT="$(ensure_rpc_path "${CODEX_BASE_URL}")"
+OPENCODE_RPC_ENDPOINT="$(ensure_rpc_path "${OPENCODE_BASE_URL}")"
+GEMINI_RPC_ENDPOINT="$(ensure_rpc_path "${GEMINI_BASE_URL}")"
 
 fast_http_curl_common=(
   --silent
@@ -358,9 +372,13 @@ run_with_retry "bridge ping ${BASE_URL}/api/ping" 6 5 "${RETRYABLE_TRANSPORT},${
 probe_bridge_root
 
 probe_safe_http_endpoint "${OPENCLAW_HTTP_PROBE_URL}"
-run_with_retry "capabilities ${CODEX_RPC_URL}" 3 5 "${RETRYABLE_TRANSPORT}" probe_jsonrpc_capabilities_once "${CODEX_RPC_URL}"
-run_with_retry "capabilities ${OPENCODE_RPC_URL}" 3 5 "${RETRYABLE_TRANSPORT}" probe_jsonrpc_capabilities_once "${OPENCODE_RPC_URL}"
-run_with_retry "capabilities ${GEMINI_RPC_URL}" 3 5 "${RETRYABLE_TRANSPORT}" probe_jsonrpc_capabilities_once "${GEMINI_RPC_URL}"
+probe_safe_http_endpoint "${CODEX_BASE_URL}"
+probe_safe_http_endpoint "${OPENCODE_BASE_URL}"
+probe_safe_http_endpoint "${GEMINI_BASE_URL}"
+
+run_with_retry "capabilities ${CODEX_RPC_ENDPOINT}" 3 5 "${RETRYABLE_TRANSPORT}" probe_jsonrpc_capabilities_once "${CODEX_RPC_ENDPOINT}"
+run_with_retry "capabilities ${OPENCODE_RPC_ENDPOINT}" 3 5 "${RETRYABLE_TRANSPORT}" probe_jsonrpc_capabilities_once "${OPENCODE_RPC_ENDPOINT}"
+run_with_retry "capabilities ${GEMINI_RPC_ENDPOINT}" 3 5 "${RETRYABLE_TRANSPORT}" probe_jsonrpc_capabilities_once "${GEMINI_RPC_ENDPOINT}"
 run_with_retry "bridge provider probe codex" 3 10 "${RETRYABLE_TRANSPORT}" probe_bridge_provider_probe_once "codex"
 run_with_retry "bridge provider probe opencode" 3 10 "${RETRYABLE_TRANSPORT}" probe_bridge_provider_probe_once "opencode"
 run_with_retry "bridge provider probe gemini" 3 10 "${RETRYABLE_TRANSPORT}" probe_bridge_provider_probe_once "gemini"

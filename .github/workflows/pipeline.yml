@@ -274,10 +274,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BRIDGE_SERVER_URL: https://xworkmate-bridge.svc.plus
-      OPENCLAW_URL: https://xworkmate-bridge.svc.plus/gateway/openclaw/
-      CODEX_RPC_URL: https://xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc
-      OPENCODE_RPC_URL: https://xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc
-      GEMINI_RPC_URL: https://xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc
+      OPENCLAW_URL: https://xworkmate-bridge.svc.plus/gateway/openclaw
+      CODEX_RPC_URL: https://xworkmate-bridge.svc.plus/acp-server/codex
+      OPENCODE_RPC_URL: https://xworkmate-bridge.svc.plus/acp-server/opencode
+      GEMINI_RPC_URL: https://xworkmate-bridge.svc.plus/acp-server/gemini
       INTERNAL_SERVICE_TOKEN: ${{ secrets.INTERNAL_SERVICE_TOKEN }}
     steps:
       - name: Checkout
