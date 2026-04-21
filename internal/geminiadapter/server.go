@@ -527,7 +527,7 @@ func (s *Server) authorized(r *http.Request) bool {
 		return false
 	}
 	if s.authService == nil {
-		return false
+		return true
 	}
 	return s.authService.ValidateAuthorizationHeader(r.Header.Get("Authorization"))
 }

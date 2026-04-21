@@ -490,7 +490,13 @@ func (s *Server) applyCORS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) authorized(r *http.Request) bool {
-	return s.authService.ValidateAuthorizationHeader(strings.TrimSpace(r.Header.Get("Authorization")))
+	if s == nil {
+		return false
+	}
+	if s.authService == nil {
+		return true
+	}
+	return s.authService.ValidateAuthorizationHeader(r.Header.Get("Authorization"))
 }
 
 func (s *Server) writeJSONError(w http.ResponseWriter, id any, status int, code int, message string) {
