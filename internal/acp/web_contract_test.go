@@ -442,7 +442,7 @@ func TestHandleRPCCapabilitiesReturnsCanonicalProviderContract(t *testing.T) {
 
 func TestHandleRPCSessionStartSucceedsWithExplicitProvider(t *testing.T) {
 	externalServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get("Authorization"); got != "Bearer internal-test-token" {
+		if got := r.Header.Get("Authorization"); got != "Bearer bridge-test-token" {
 			t.Fatalf("unexpected auth header: %q", got)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -457,8 +457,7 @@ func TestHandleRPCSessionStartSucceedsWithExplicitProvider(t *testing.T) {
 	}))
 	defer externalServer.Close()
 
-	t.Setenv("INTERNAL_SERVICE_TOKEN", "internal-test-token")
-	t.Setenv("BRIDGE_AUTH_TOKEN", "")
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
 
 	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
@@ -466,7 +465,7 @@ func TestHandleRPCSessionStartSucceedsWithExplicitProvider(t *testing.T) {
 		ProviderID:          "opencode",
 		Label:               "OpenCode",
 		Endpoint:            externalServer.URL,
-		AuthorizationHeader: "Bearer internal-test-token",
+		AuthorizationHeader: "Bearer bridge-test-token",
 		Enabled:             true,
 	})
 
@@ -477,7 +476,7 @@ func TestHandleRPCSessionStartSucceedsWithExplicitProvider(t *testing.T) {
 		strings.NewReader(`{"jsonrpc":"2.0","id":"task-1","method":"session.start","params":{"sessionId":"s1","threadId":"t1","taskPrompt":"Reply with exactly pong","workingDirectory":"`+t.TempDir()+`","routing":{"routingMode":"explicit","explicitExecutionTarget":"singleAgent","explicitProviderId":"opencode"}}}`),
 	)
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Authorization", "Bearer bridge-token")
+	request.Header.Set("Authorization", "Bearer bridge-test-token")
 
 	server.HandleRPC(recorder, request)
 

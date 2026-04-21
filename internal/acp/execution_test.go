@@ -16,10 +16,10 @@ func TestResolveSingleAgentForwardEndpointFromExampleConfig(t *testing.T) {
 	}
 
 	expectedEndpoints := map[string]string{
-		"codex":    "http://127.0.0.1:9001/acp/rpc",
-		"opencode": "http://127.0.0.1:38992/acp/rpc",
-		"gemini":   "http://127.0.0.1:8791/acp/rpc",
-		"hermes":   "http://127.0.0.1:3920/acp/rpc",
+		"codex":    "ws://127.0.0.1:9001/acp",
+		"opencode": "http://127.0.0.1:38992",
+		"gemini":   "http://127.0.0.1:8791",
+		"hermes":   "http://127.0.0.1:3920",
 	}
 
 	for _, id := range order {

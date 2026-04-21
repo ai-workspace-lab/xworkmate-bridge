@@ -54,26 +54,22 @@ fi
 
 BASE_URL="$(normalize_url "${BRIDGE_SERVER_URL:-${2:-https://xworkmate-bridge.svc.plus}}")"
 OPENCLAW_BASE_URL="$(normalize_url "${OPENCLAW_URL:-${3:-${BASE_URL}/gateway/openclaw}}")"
-CODEX_BASE_URL="$(normalize_url "${CODEX_RPC_URL:-${4:-${BASE_URL}/acp-server/codex/acp/rpc}}")"
-OPENCODE_BASE_URL="$(normalize_url "${OPENCODE_RPC_URL:-${5:-${BASE_URL}/acp-server/opencode/acp/rpc}}")"
-GEMINI_BASE_URL="$(normalize_url "${GEMINI_RPC_URL:-${6:-${BASE_URL}/acp-server/gemini/acp/rpc}}")"
-HERMES_BASE_URL="$(normalize_url "${HERMES_RPC_URL:-${7:-${BASE_URL}/acp-server/hermes/acp/rpc}}")"
-AUTH_TOKEN="${BRIDGE_AUTH_TOKEN:-${INTERNAL_SERVICE_TOKEN:-${7:-}}}"
+CODEX_BASE_URL="$(normalize_url "${CODEX_RPC_URL:-${4:-${BASE_URL}/acp-server/codex}}")"
+OPENCODE_BASE_URL="$(normalize_url "${OPENCODE_RPC_URL:-${5:-${BASE_URL}/acp-server/opencode}}")"
+GEMINI_BASE_URL="$(normalize_url "${GEMINI_RPC_URL:-${6:-${BASE_URL}/acp-server/gemini}}")"
+HERMES_BASE_URL="$(normalize_url "${HERMES_RPC_URL:-${7:-${BASE_URL}/acp-server/hermes}}")"
+AUTH_TOKEN="${BRIDGE_AUTH_TOKEN:?BRIDGE_AUTH_TOKEN is required}"
 
-ensure_rpc_path() {
+append_rpc_path() {
   local url="$1"
-  if [[ "${url}" == */acp/rpc ]]; then
-    printf '%s\n' "${url}"
-  else
-    printf '%s/acp/rpc\n' "${url%/}"
-  fi
+  printf '%s/acp/rpc\n' "${url%/}"
 }
 
 OPENCLAW_HTTP_PROBE_URL="$(websocket_probe_url "${OPENCLAW_BASE_URL}")"
-CODEX_RPC_ENDPOINT="$(ensure_rpc_path "${CODEX_BASE_URL}")"
-OPENCODE_RPC_ENDPOINT="$(ensure_rpc_path "${OPENCODE_BASE_URL}")"
-GEMINI_RPC_ENDPOINT="$(ensure_rpc_path "${GEMINI_BASE_URL}")"
-HERMES_RPC_ENDPOINT="$(ensure_rpc_path "${HERMES_BASE_URL}")"
+CODEX_RPC_ENDPOINT="$(append_rpc_path "${CODEX_BASE_URL}")"
+OPENCODE_RPC_ENDPOINT="$(append_rpc_path "${OPENCODE_BASE_URL}")"
+GEMINI_RPC_ENDPOINT="$(append_rpc_path "${GEMINI_BASE_URL}")"
+HERMES_RPC_ENDPOINT="$(append_rpc_path "${HERMES_BASE_URL}")"
 
 fast_http_curl_common=(
   --silent

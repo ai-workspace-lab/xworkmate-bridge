@@ -112,6 +112,12 @@ case "${scenario}" in
       https://xworkmate-bridge.svc.plus/acp-server/*/acp/rpc)
         printf '{"jsonrpc":"2.0","result":{"providers":["ok"]}}\n'
         ;;
+      https://xworkmate-bridge.svc.plus/acp-server/*)
+        printf '{"jsonrpc":"2.0","result":{"providers":["ok"]}}\n'
+        ;;
+      https://xworkmate-bridge.svc.plus/gateway/openclaw)
+        printf '{"jsonrpc":"2.0","result":{"providers":["ok"]}}\n'
+        ;;
       https://xworkmate-bridge.svc.plus/acp/rpc)
         printf 'curl: (28) Operation timed out after 20001 milliseconds with 0 bytes received\n' >&2
         exit 1
@@ -136,6 +142,12 @@ case "${scenario}" in
         printf 'xworkmate-bridge is running\n'
         ;;
       https://xworkmate-bridge.svc.plus/acp-server/*/acp/rpc)
+        printf '{"jsonrpc":"2.0","result":{"providers":["ok"]}}\n'
+        ;;
+      https://xworkmate-bridge.svc.plus/acp-server/*)
+        printf '{"jsonrpc":"2.0","result":{"providers":["ok"]}}\n'
+        ;;
+      https://xworkmate-bridge.svc.plus/gateway/openclaw)
         printf '{"jsonrpc":"2.0","result":{"providers":["ok"]}}\n'
         ;;
       https://xworkmate-bridge.svc.plus/acp/rpc)
@@ -194,12 +206,12 @@ run_validate_capture() {
     FAKE_CURL_SCENARIO="${scenario}" \
     FAKE_CURL_STATE_DIR="${RUN_STATE_DIR}" \
     BRIDGE_SERVER_URL="https://xworkmate-bridge.svc.plus" \
-    OPENCLAW_URL="wss://openclaw.svc.plus" \
-    CODEX_RPC_URL="https://xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc" \
-    OPENCODE_RPC_URL="https://xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc" \
-    GEMINI_RPC_URL="https://xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc" \
-    HERMES_RPC_URL="https://xworkmate-bridge.svc.plus/acp-server/hermes/acp/rpc" \
-    INTERNAL_SERVICE_TOKEN="test-token" \
+    OPENCLAW_URL="https://xworkmate-bridge.svc.plus/gateway/openclaw" \
+    CODEX_RPC_URL="https://xworkmate-bridge.svc.plus/acp-server/codex" \
+    OPENCODE_RPC_URL="https://xworkmate-bridge.svc.plus/acp-server/opencode" \
+    GEMINI_RPC_URL="https://xworkmate-bridge.svc.plus/acp-server/gemini" \
+    HERMES_RPC_URL="https://xworkmate-bridge.svc.plus/acp-server/hermes" \
+    BRIDGE_AUTH_TOKEN="test-token" \
     bash "${SCRIPT_PATH}" "${IMAGE_REF}" 2>&1
   )"
   RUN_STATUS=$?

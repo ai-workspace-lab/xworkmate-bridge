@@ -59,9 +59,6 @@ func resolveURL(yamlVal string, defaultVal string, envKeys ...string) string {
 
 func bridgeUpstreamAuthorizationHeader() string {
 	token := strings.TrimSpace(shared.EnvOrDefault("BRIDGE_AUTH_TOKEN", ""))
-	if token == "" {
-		token = strings.TrimSpace(shared.EnvOrDefault("INTERNAL_SERVICE_TOKEN", ""))
-	}
 	if token != "" && !strings.HasPrefix(strings.ToLower(token), "bearer ") {
 		return "Bearer " + token
 	}
@@ -91,21 +88,21 @@ func newProductionProviderCatalog() (map[string]syncedProvider, []string) {
 			label:      "OpenCode",
 			yaml:       config.Upstream.OpenCodeURL,
 			envKeys:    []string{"OPENCODE_RPC_URL"},
-			defaultURL: "http://127.0.0.1:38992/acp/rpc",
+			defaultURL: "http://127.0.0.1:38992",
 		},
 		{
 			id:         "gemini",
 			label:      "Gemini",
 			yaml:       config.Upstream.GeminiURL,
 			envKeys:    []string{"GEMINI_RPC_URL"},
-			defaultURL: "http://127.0.0.1:8791/acp/rpc",
+			defaultURL: "http://127.0.0.1:8791",
 		},
 		{
 			id:         "hermes",
 			label:      "Hermes",
 			yaml:       config.Upstream.HermesURL,
 			envKeys:    []string{"HERMES_RPC_URL"},
-			defaultURL: "http://127.0.0.1:3920/acp/rpc",
+			defaultURL: "http://127.0.0.1:3920",
 		},
 	}
 

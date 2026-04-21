@@ -108,3 +108,18 @@ func TestProductionProviderCatalogPrefersDedicatedBridgeAuthToken(t *testing.T) 
 		t.Fatalf("expected dedicated bearer header, got %q", got)
 	}
 }
+
+func TestProductionProviderCatalogIgnoresInternalServiceToken(t *testing.T) {
+	t.Setenv("BRIDGE_AUTH_TOKEN", "")
+	t.Setenv("INTERNAL_SERVICE_TOKEN", "legacy-token")
+
+	catalog, _ := newProductionProviderCatalog()
+	p, ok := catalog["codex"]
+	if !ok {
+		t.Fatal("missing codex")
+	}
+
+	if got := p.AuthorizationHeader; got != "" {
+		t.Fatalf("expected empty auth header when BRIDGE_AUTH_TOKEN is unset, got %q", got)
+	}
+}
