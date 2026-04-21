@@ -272,14 +272,14 @@ func TestHandleRPCAllowsUnauthenticatedRequestsWhenBridgeAuthTokenUnset(t *testi
 
 func TestHandleRPCRequiresBearerAuthorizationWhenBridgeAuthTokenConfigured(t *testing.T) {
 	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
-
 	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
 	recorder := httptest.NewRecorder()
+	// session.start is a protected method that requires authentication
 	request := httptest.NewRequest(
 		http.MethodPost,
 		"http://127.0.0.1/acp/rpc",
-		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"acp.capabilities"}`),
+		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"session.start","params":{"sessionId":"test"}}`),
 	)
 	request.Header.Set("Content-Type", "application/json")
 

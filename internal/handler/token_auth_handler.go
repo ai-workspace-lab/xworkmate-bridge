@@ -24,18 +24,17 @@ func (h *TokenAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token := r.Header.Get("Authorization")
-	if !h.service.ValidateAuthorizationHeader(token) {
+	if h.service.ValidateAuthorizationHeader(token) {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		// Return JSON error instead of plain text to satisfy Flutter's expectation
-		_ = json.NewEncoder(w).Encode(shared.ErrorEnvelope(nil, -32001, "unauthorized"))
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"ok":      true,
+			"type":    "res",
+			"payload": map[string]any{"authenticated": true},
+		})
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"jsonrpc": "2.0",
-		"ok":      true,
-		"type":    "res",
-		"payload": map[string]any{"authenticated": true},
-	})
+	w.WriteHeader(http.StatusUnauthorized)
+	_ = json.NewEncoder(w).Encode(shared.ErrorEnvelope(nil, -32001, "unauthorized"))
 }

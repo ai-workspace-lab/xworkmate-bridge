@@ -21,8 +21,8 @@ func TestTokenAuthHandlerServeHTTP(t *testing.T) {
 	}
 }
 
-func TestTokenAuthHandlerRejectsMissingBearer(t *testing.T) {
-	h := NewTokenAuthHandler(service.NewStaticTokenAuthService(""))
+func TestTokenAuthHandlerRejectsUnauthorized(t *testing.T) {
+	h := NewTokenAuthHandler(service.NewStaticTokenAuthService("secret"))
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
 

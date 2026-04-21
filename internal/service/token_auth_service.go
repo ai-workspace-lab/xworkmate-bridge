@@ -13,7 +13,11 @@ func NewStaticTokenAuthService(expectedToken string) *StaticTokenAuthService {
 }
 
 func (s *StaticTokenAuthService) ValidateToken(token string) bool {
-	return s.ValidateAuthorizationHeader(token)
+	token = strings.TrimSpace(token)
+	if s.expectedToken == "" {
+		return true
+	}
+	return token == s.expectedToken
 }
 
 func (s *StaticTokenAuthService) ValidateAuthorizationHeader(header string) bool {
