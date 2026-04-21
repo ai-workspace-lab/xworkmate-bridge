@@ -121,15 +121,21 @@ func (s *Server) Handler() http.Handler {
 			_, _ = w.Write([]byte("xworkmate-bridge is running"))
 		case "/api/ping":
 			info := parseImageVersionInfo(os.Getenv("IMAGE"))
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]any{
+			resp := map[string]any{
 				"status":  "ok",
 				"image":   info.ImageRef,
 				"tag":     info.Tag,
 				"commit":  info.Commit,
 				"version": info.Version,
-			})
+			}
+			body, err := json.Marshal(resp)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(body)
 		case "/bridge/bootstrap/health":
 			s.HandleBridgeBootstrapHealth(w, r)
 		case "/acp/rpc":

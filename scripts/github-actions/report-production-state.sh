@@ -18,24 +18,54 @@ normalize_url() {
 
 base_url="$(normalize_url "${BASE_URL}")"
 
-ping_json="$(
-  curl \
-    --silent \
-    --show-error \
-    --fail \
-    --location \
-    --max-time 20 \
-    "${base_url}/api/ping"
-)"
+ping_url="${base_url}/api/ping"
+ping_json=""
+attempts=6
+sleep_seconds=5
+
+for ((attempt = 1; attempt <= attempts; attempt += 1)); do
+  if ping_json="$(
+    curl \
+      --silent \
+      --show-error \
+      --fail \
+      --location \
+      --max-time 20 \
+      "${ping_url}"
+  )"; then
+    if [[ -n "${ping_json}" ]]; then
+      break
+    fi
+  fi
+
+  if (( attempt == attempts )); then
+    echo "failed to probe bridge ping at ${ping_url} after ${attempts} attempts" >&2
+    exit 1
+  fi
+
+  echo "bridge ping at ${ping_url} attempt ${attempt}/${attempts} failed; retrying in ${sleep_seconds}s" >&2
+  sleep "${sleep_seconds}"
+done
 
 PING_JSON="${ping_json}" python3 - <<'PY'
 import json
 import os
+import sys
 
-payload = json.loads(os.environ["PING_JSON"])
+ping_json = os.environ.get("PING_JSON", "")
+if not ping_json:
+    print("empty ping response", file=sys.stderr)
+    sys.exit(1)
+
+try:
+    payload = json.loads(ping_json)
+except json.JSONDecodeError as exc:
+    print(f"bridge ping returned invalid JSON: {exc}\nBody: {ping_json!r}", file=sys.stderr)
+    sys.exit(1)
 
 if payload.get("status") != "ok":
-    raise SystemExit("production ping status not ok")
+    print("production ping status not ok", file=sys.stderr)
+    sys.exit(1)
 
 deployed_image = str(payload.get("image", "")).strip()
 deployed_tag = str(payload.get("tag", "")).strip()

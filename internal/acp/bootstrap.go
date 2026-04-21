@@ -13,12 +13,19 @@ func (s *Server) HandleBridgeBootstrapHealth(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	resp := map[string]any{
 		"ok":           true,
 		"bridgeOrigin": bridgePublicBaseURL(),
 		"issuedBy":     "xworkmate-bridge",
-	})
+	}
+	body, err := json.Marshal(resp)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
 }
 
 func bridgePublicBaseURL() string {
