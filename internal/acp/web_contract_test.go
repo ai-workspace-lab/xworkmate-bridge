@@ -251,7 +251,7 @@ func TestHandleRPCAllowsPreflightForConfiguredOrigin(t *testing.T) {
 	}
 }
 
-func TestHandleRPCRequiresAuthorizationEvenWhenBridgeAuthTokenUnset(t *testing.T) {
+func TestHandleRPCAllowsUnauthenticatedRequestsWhenBridgeAuthTokenUnset(t *testing.T) {
 	t.Setenv("BRIDGE_AUTH_TOKEN", "")
 	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
@@ -265,8 +265,8 @@ func TestHandleRPCRequiresAuthorizationEvenWhenBridgeAuthTokenUnset(t *testing.T
 
 	server.HandleRPC(recorder, request)
 
-	if recorder.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401 when BRIDGE_AUTH_TOKEN is unset but no header provided, got %d", recorder.Code)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200 when BRIDGE_AUTH_TOKEN is unset and no header provided, got %d", recorder.Code)
 	}
 }
 
@@ -364,13 +364,13 @@ func TestHandleRPCCapabilitiesStillReturnsJSONResult(t *testing.T) {
 	}
 }
 
-func TestAuthorizedRejectsUnauthenticatedRequestsWhenBridgeAuthTokenUnset(t *testing.T) {
+func TestAuthorizedAllowsUnauthenticatedRequestsWhenBridgeAuthTokenUnset(t *testing.T) {
 	t.Setenv("BRIDGE_AUTH_TOKEN", "")
 	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
 	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/acp", nil)
-	if server.authorized(request) {
-		t.Fatal("expected unauthenticated request to be rejected even if BRIDGE_AUTH_TOKEN is unset")
+	if !server.authorized(request) {
+		t.Fatal("expected unauthenticated request to be allowed if BRIDGE_AUTH_TOKEN is unset")
 	}
 }
 

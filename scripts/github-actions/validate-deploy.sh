@@ -292,8 +292,12 @@ probe_safe_http_endpoint() {
   fi
 
   case "${status}" in
-    2*|3*|401|403|404|405|426)
+    2*|3*|404|405|426)
       return 0
+      ;;
+    401|403)
+      printf 'Authentication failure (HTTP %s) for %s\n' "${status}" "${endpoint}" >&2
+      return 1
       ;;
     *)
       printf 'Unexpected HTTP status %s for %s\n' "${status}" "${endpoint}" >&2
