@@ -8,13 +8,11 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"strconv"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -203,83 +201,7 @@ func (s *Server) probeExternalProvider(
 }
 
 func resolveSingleAgentForwardEndpoint(provider syncedProvider) string {
-	return resolveContainerReachableEndpoint(strings.TrimSpace(provider.Endpoint))
-}
-
-func resolveContainerReachableEndpoint(endpoint string) string {
-	trimmed := strings.TrimSpace(endpoint)
-	if trimmed == "" {
-		return ""
-	}
-	if !runningInsideContainer() {
-		return trimmed
-	}
-	parsed, err := url.Parse(trimmed)
-	if err != nil {
-		return trimmed
-	}
-	host := strings.TrimSpace(parsed.Hostname())
-	if host != "127.0.0.1" && host != "localhost" {
-		return trimmed
-	}
-	gatewayHost := containerDefaultGatewayAddress()
-	if gatewayHost == "" {
-		return trimmed
-	}
-	parsed.Host = net.JoinHostPort(gatewayHost, parsed.Port())
-	return parsed.String()
-}
-
-func containerDefaultGatewayAddress() string {
-	data, err := os.ReadFile("/proc/net/route")
-	if err != nil {
-		return ""
-	}
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines[1:] {
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
-			continue
-		}
-		if fields[1] != "00000000" {
-			continue
-		}
-		gatewayHex := fields[2]
-		if len(gatewayHex) != 8 {
-			continue
-		}
-		b0, err0 := parseHexByte(gatewayHex[6:8])
-		b1, err1 := parseHexByte(gatewayHex[4:6])
-		b2, err2 := parseHexByte(gatewayHex[2:4])
-		b3, err3 := parseHexByte(gatewayHex[0:2])
-		if err0 != nil || err1 != nil || err2 != nil || err3 != nil {
-			continue
-		}
-		return fmt.Sprintf("%d.%d.%d.%d", b0, b1, b2, b3)
-	}
-	return ""
-}
-
-func runningInsideContainer() bool {
-	if _, err := os.Stat("/.dockerenv"); err == nil {
-		return true
-	}
-	data, err := os.ReadFile("/proc/1/cgroup")
-	if err != nil {
-		return false
-	}
-	text := strings.ToLower(string(data))
-	return strings.Contains(text, "docker") ||
-		strings.Contains(text, "kubepods") ||
-		strings.Contains(text, "containerd")
-}
-
-func parseHexByte(raw string) (int, error) {
-	value, err := strconv.ParseUint(raw, 16, 8)
-	if err != nil {
-		return 0, err
-	}
-	return int(value), nil
+	return strings.TrimSpace(provider.Endpoint)
 }
 
 func sanitizeExternalACPParams(method string, params map[string]any) map[string]any {
