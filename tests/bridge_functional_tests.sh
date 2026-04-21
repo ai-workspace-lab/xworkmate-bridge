@@ -9,7 +9,7 @@ set -e
 
 # 配置区域
 BRIDGE_URL="${BRIDGE_SERVER_URL:-https://xworkmate-bridge.svc.plus}"
-AUTH_TOKEN="${BRIDGE_AUTH_TOKEN:-uTvryFvAbz6M5sRtmTaSTQY6otLZ95hneBsWqXu+35I=}"
+AUTH_TOKEN="${BRIDGE_AUTH_TOKEN:-}"
 SESSION_ID_GEMINI="test-gemini-$(date +%s)"
 SESSION_ID_OPENCODE="test-opencode-$(date +%s)"
 RUNTIME_ID="test-runtime-$(date +%s)"
@@ -27,6 +27,11 @@ log_step() { echo -e "\n${BOLD}>>> STEP: $1${NC}"; }
 # 检查依赖
 if ! command -v jq &> /dev/null; then
     log_err "本脚本依赖 'jq'，请先安装。"
+    exit 1
+fi
+
+if [ -z "$AUTH_TOKEN" ]; then
+    log_err "请通过 BRIDGE_AUTH_TOKEN 环境变量传入测试 token。"
     exit 1
 fi
 
