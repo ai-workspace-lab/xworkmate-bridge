@@ -59,12 +59,31 @@ unauthorized_status="$(
     --max-time "${HTTP_TIMEOUT_SECONDS}" \
     -H 'Accept: application/json' \
     -H 'Content-Type: application/json' \
-    --data '{"jsonrpc":"2.0","id":"cap-unauthorized","method":"acp.capabilities"}' \
+    --data '{"jsonrpc":"2.0","id":"cap-public","method":"acp.capabilities"}' \
     "${resolved_base_url}/acp/rpc"
 )"
 
-if [[ "${unauthorized_status}" != "401" ]]; then
-  echo "expected unauthorized capabilities request to return 401, got ${unauthorized_status}" >&2
+if [[ "${unauthorized_status}" != "200" ]]; then
+  echo "expected public capabilities request to return 200, got ${unauthorized_status}" >&2
+  exit 1
+fi
+
+unauthorized_session_status="$(
+  curl \
+    --silent \
+    --show-error \
+    --output /dev/null \
+    --write-out '%{http_code}' \
+    --location \
+    --max-time "${HTTP_TIMEOUT_SECONDS}" \
+    -H 'Accept: application/json' \
+    -H 'Content-Type: application/json' \
+    --data '{"jsonrpc":"2.0","id":"session-unauthorized","method":"session.start","params":{"sessionId":"test"}}' \
+    "${resolved_base_url}/acp/rpc"
+)"
+
+if [[ "${unauthorized_session_status}" != "401" ]]; then
+  echo "expected unauthorized session.start request to return 401, got ${unauthorized_session_status}" >&2
   exit 1
 fi
 

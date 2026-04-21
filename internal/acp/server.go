@@ -1,6 +1,7 @@
 package acp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -263,20 +264,29 @@ func (s *Server) HandleProviderRPC(w http.ResponseWriter, r *http.Request, provi
 		)
 		return
 	}
-	if !s.authorized(r) {
-		s.writeJSONError(
-			w,
-			nil,
-			http.StatusUnauthorized,
-			-32001,
-			"missing bearer authorization",
-		)
-		return
-	}
 	payload, err := io.ReadAll(r.Body)
 	if err != nil {
 		s.writeJSONError(w, nil, http.StatusBadRequest, -32600, "invalid body")
 		return
+	}
+	r.Body = io.NopCloser(bytes.NewBuffer(payload))
+
+	if !s.authorized(r) {
+		var temp struct {
+			Method string `json:"method"`
+		}
+		_ = json.Unmarshal(payload, &temp)
+		method := strings.TrimSpace(temp.Method)
+		if method != "acp.capabilities" && method != "health" {
+			s.writeJSONError(
+				w,
+				nil,
+				http.StatusUnauthorized,
+				-32001,
+				"missing bearer authorization",
+			)
+			return
+		}
 	}
 	request, err := shared.DecodeRPCRequest(payload)
 	if err != nil {
@@ -403,20 +413,29 @@ func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
-	if !s.authorized(r) {
-		s.writeJSONError(
-			w,
-			nil,
-			http.StatusUnauthorized,
-			-32001,
-			"missing bearer authorization",
-		)
-		return
-	}
 	payload, err := io.ReadAll(r.Body)
 	if err != nil {
 		s.writeJSONError(w, nil, http.StatusBadRequest, -32600, "invalid body")
 		return
+	}
+	r.Body = io.NopCloser(bytes.NewBuffer(payload))
+
+	if !s.authorized(r) {
+		var temp struct {
+			Method string `json:"method"`
+		}
+		_ = json.Unmarshal(payload, &temp)
+		method := strings.TrimSpace(temp.Method)
+		if method != "acp.capabilities" && method != "health" {
+			s.writeJSONError(
+				w,
+				nil,
+				http.StatusUnauthorized,
+				-32001,
+				"missing bearer authorization",
+			)
+			return
+		}
 	}
 	request, err := shared.DecodeRPCRequest(payload)
 	if err != nil {
