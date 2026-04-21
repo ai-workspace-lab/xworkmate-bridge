@@ -18,14 +18,11 @@ func (s *StaticTokenAuthService) ValidateToken(token string) bool {
 
 func (s *StaticTokenAuthService) ValidateAuthorizationHeader(header string) bool {
 	header = strings.TrimSpace(header)
+	if s.expectedToken == "" {
+		return true
+	}
 	if header == "" {
 		return false
-	}
-	if s.expectedToken == "" {
-		if !strings.HasPrefix(strings.ToLower(header), "bearer ") {
-			return false
-		}
-		return strings.TrimSpace(header[len("Bearer "):]) != ""
 	}
 	if header == s.expectedToken {
 		return true
