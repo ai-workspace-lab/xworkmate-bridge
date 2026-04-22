@@ -144,6 +144,17 @@ func ResolveProviderCommand(
 			"-p",
 			prompt,
 		}
+	case "hermes":
+		binary := strings.TrimSpace(EnvOrDefault("ACP_HERMES_BIN", "hermes"))
+		if strings.TrimSpace(model) == "" {
+			return binary, []string{"-p", prompt}
+		}
+		return binary, []string{
+			"--model",
+			strings.TrimSpace(model),
+			"-p",
+			prompt,
+		}
 	default:
 		return "", nil
 	}

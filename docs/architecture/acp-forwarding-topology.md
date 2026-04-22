@@ -16,7 +16,7 @@ See also:
 - `assistant` surface 进入 ACP control-plane：`acp.capabilities`、`xworkmate.routing.resolve`、`session.*`
 - `settings` surface 进入 gateway runtime / connection flow：`acp.capabilities`、`xworkmate.gateway.*`
 
-不管 bridge 内部还保留哪些 provider / gateway mode / capability flag，app-facing 公共入口都只有 bridge origin。
+不管 bridge 内部还保留哪些 provider / gateway mode / capability flag，app-facing 公共入口都只有 bridge origin；`/acp-server/*` 和 `/gateway/openclaw` 属于 bridge-owned routing facts，不是 app-owned truth。
 
 ## Topology
 
