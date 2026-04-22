@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type rpcClient interface {
@@ -34,6 +36,7 @@ type stdioRPCClient struct {
 	cmd                 *exec.Cmd
 	stdin               io.WriteCloser
 	stdout              *bufio.Reader
+	stdoutPipe          io.ReadCloser
 	stderr              io.ReadCloser
 	nextID              atomic.Int64
 	initialized         bool
@@ -127,6 +130,7 @@ func (c *stdioRPCClient) ensureStartedLocked() error {
 	}
 	c.cmd = cmd
 	c.stdin = stdin
+	c.stdoutPipe = stdout
 	c.stdout = bufio.NewReader(stdout)
 	c.stderr = stderr
 	return nil
@@ -148,6 +152,7 @@ func (c *stdioRPCClient) closeLocked() error {
 	c.cmd = nil
 	c.stdin = nil
 	c.stdout = nil
+	c.stdoutPipe = nil
 	c.stderr = nil
 	c.initialized = false
 	c.initResult = initializeResult{}
@@ -186,6 +191,7 @@ func (c *stdioRPCClient) callLocked(method string, params map[string]any) (map[s
 		}
 		if responseID, _ := response["id"].(string); responseID != "" {
 			if responseID == requestID {
+				c.drainNotificationsLocked(2 * time.Second)
 				return response, nil
 			}
 			continue
@@ -194,4 +200,45 @@ func (c *stdioRPCClient) callLocked(method string, params map[string]any) (map[s
 			handler(response)
 		}
 	}
+}
+
+func (c *stdioRPCClient) drainNotificationsLocked(timeout time.Duration) {
+	if c.stdoutPipe == nil || timeout <= 0 {
+		return
+	}
+	if deadlineSetter, ok := c.stdoutPipe.(interface{ SetReadDeadline(time.Time) error }); ok {
+		_ = deadlineSetter.SetReadDeadline(time.Now().Add(timeout))
+		defer func() {
+			_ = deadlineSetter.SetReadDeadline(time.Time{})
+		}()
+	}
+	for {
+		line, err := c.stdout.ReadBytes('\n')
+		if err != nil {
+			if isTimeoutError(err) {
+				return
+			}
+			return
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(line, &payload); err != nil {
+			continue
+		}
+		if strings.TrimSpace(fmt.Sprint(payload["id"])) != "" {
+			continue
+		}
+		if handler := c.notificationHandler; handler != nil {
+			handler(payload)
+		}
+	}
+}
+
+func isTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "timeout")
 }
