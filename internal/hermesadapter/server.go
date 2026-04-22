@@ -485,17 +485,57 @@ func extractHermesSessionUpdateText(notification map[string]any) string {
 	if len(update) == 0 {
 		update = payload
 	}
-	for _, key := range []string{"text", "message", "content", "delta"} {
-		if text := strings.TrimSpace(shared.StringArg(update, key, "")); text != "" {
-			if updateKind := strings.TrimSpace(shared.StringArg(update, "sessionUpdate", "")); updateKind == "" || updateKind == "agent_message_chunk" || updateKind == "agent_message_text" {
-				return text
-			}
+	if updateKind := strings.TrimSpace(shared.StringArg(update, "sessionUpdate", "")); updateKind == "" || updateKind == "agent_message_chunk" || updateKind == "agent_message_text" {
+		if text := extractHermesTextValue(update); text != "" {
+			return text
+		}
+		if text := extractHermesTextValue(payload); text != "" {
+			return text
 		}
 	}
-	if text := strings.TrimSpace(shared.StringArg(payload, "text", "")); text != "" {
-		return text
-	}
 	return ""
+}
+
+func extractHermesTextValue(value any) string {
+	switch v := value.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case map[string]any:
+		var builder strings.Builder
+		for _, key := range []string{"text", "message", "content", "delta", "value"} {
+			if text := extractHermesTextValue(v[key]); text != "" {
+				if builder.Len() > 0 {
+					builder.WriteString(" ")
+				}
+				builder.WriteString(text)
+			}
+		}
+		if builder.Len() > 0 {
+			return strings.TrimSpace(builder.String())
+		}
+		for key, child := range v {
+			if key == "text" || key == "message" || key == "content" || key == "delta" || key == "value" || key == "sessionId" || key == "session_id" || key == "sessionUpdate" || key == "session_update" {
+				continue
+			}
+			if text := extractHermesTextValue(child); text != "" {
+				if builder.Len() > 0 {
+					builder.WriteString(" ")
+				}
+				builder.WriteString(text)
+			}
+		}
+		return strings.TrimSpace(builder.String())
+	case []any:
+		var parts []string
+		for _, child := range v {
+			if text := extractHermesTextValue(child); text != "" {
+				parts = append(parts, text)
+			}
+		}
+		return strings.TrimSpace(strings.Join(parts, " "))
+	default:
+		return ""
+	}
 }
 
 func asMap(value any) map[string]any {
