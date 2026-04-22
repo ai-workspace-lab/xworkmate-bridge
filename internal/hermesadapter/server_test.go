@@ -2,7 +2,6 @@ package hermesadapter
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -64,15 +63,16 @@ func TestHandleRPCSessionStartReturnsUpstreamResult(t *testing.T) {
 	stub = &stubClient{initResult: initializeResult{ProtocolVersion: 1}}
 	stub.callFn = func(method string, params map[string]any) (map[string]any, error) {
 		switch method {
-		case "new_session":
+		case "session/new":
 			return map[string]any{
 				"result": map[string]any{
 					"sessionId": "upstream-session-1",
 				},
 			}, nil
-		case "prompt":
+		case "session/prompt":
 			if stub.notificationHandler != nil {
 				stub.notificationHandler(map[string]any{
+					"method": "session/update",
 					"params": map[string]any{
 						"update": map[string]any{
 							"sessionUpdate": "agent_message_chunk",
@@ -91,7 +91,7 @@ func TestHandleRPCSessionStartReturnsUpstreamResult(t *testing.T) {
 		}
 	}
 	server := NewServer(stub)
-	server.upstreamMethod = "prompt"
+	server.upstreamMethod = "session/prompt"
 
 	body, _ := json.Marshal(shared.RPCRequest{
 		JSONRPC: "2.0",
@@ -119,8 +119,8 @@ func TestHandleRPCSessionStartReturnsUpstreamResult(t *testing.T) {
 	if got := result["output"]; got != "hello" {
 		t.Fatalf("expected output hello, got %#v", result)
 	}
-	if len(stub.methods) != 2 || stub.methods[0] != "new_session" || stub.methods[1] != "prompt" {
-		t.Fatalf("expected new_session then prompt, got %#v", stub.methods)
+	if len(stub.methods) != 2 || stub.methods[0] != "session/new" || stub.methods[1] != "session/prompt" {
+		t.Fatalf("expected session/new then session/prompt, got %#v", stub.methods)
 	}
 }
 
@@ -129,13 +129,13 @@ func TestHandleRPCSessionStartRejectsEmptyUpstreamResponse(t *testing.T) {
 	stub = &stubClient{initResult: initializeResult{ProtocolVersion: 1}}
 	stub.callFn = func(method string, params map[string]any) (map[string]any, error) {
 		switch method {
-		case "new_session":
+		case "session/new":
 			return map[string]any{
 				"result": map[string]any{
 					"sessionId": "upstream-session-1",
 				},
 			}, nil
-		case "prompt":
+		case "session/prompt":
 			return map[string]any{
 				"result": map[string]any{},
 			}, nil
@@ -144,7 +144,7 @@ func TestHandleRPCSessionStartRejectsEmptyUpstreamResponse(t *testing.T) {
 		}
 	}
 	server := NewServer(stub)
-	server.upstreamMethod = "prompt"
+	server.upstreamMethod = "session/prompt"
 
 	body, _ := json.Marshal(shared.RPCRequest{
 		JSONRPC: "2.0",
@@ -177,38 +177,10 @@ func TestHandleRPCSessionStartRejectsEmptyUpstreamResponse(t *testing.T) {
 	}
 }
 
-func TestHandleSessionStartFallsBackToPromptRunner(t *testing.T) {
-	stub := &stubClient{initResult: initializeResult{ProtocolVersion: 1}}
-	server := NewServer(stub)
-	server.upstreamMethod = ""
-	server.sessionRunner = func(ctx context.Context, model, prompt, workingDirectory string) (string, error) {
-		if workingDirectory != "/tmp/demo" {
-			t.Fatalf("expected workingDirectory /tmp/demo, got %q", workingDirectory)
-		}
-		expectedPrompt := "## User Turn 1\nReply with exactly pong"
-		if prompt != expectedPrompt {
-			t.Fatalf("unexpected prompt %q", prompt)
-		}
-		return "pong", nil
-	}
-
-	result := server.handleRequest(shared.RPCRequest{
-		Method: "session.start",
-		Params: map[string]any{
-			"sessionId":        "s1",
-			"taskPrompt":       "Reply with exactly pong",
-			"workingDirectory": "/tmp/demo",
-		},
-	})
-	if got := result["output"]; got != "pong" {
-		t.Fatalf("expected output pong, got %#v", result)
-	}
-}
-
-func TestNewServerDefaultsHermesToUpstreamPrompt(t *testing.T) {
+func TestNewServerDefaultsHermesToSessionPrompt(t *testing.T) {
 	server := NewServer(&stubClient{})
-	if got := server.upstreamMethod; got != "session.start" {
-		t.Fatalf("expected default upstream method session.start, got %q", got)
+	if got := server.upstreamMethod; got != "session/prompt" {
+		t.Fatalf("expected default upstream method session/prompt, got %q", got)
 	}
 }
 
