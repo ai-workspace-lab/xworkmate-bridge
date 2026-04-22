@@ -207,8 +207,8 @@ func TestHandleSessionStartFallsBackToPromptRunner(t *testing.T) {
 
 func TestNewServerDefaultsHermesToUpstreamPrompt(t *testing.T) {
 	server := NewServer(&stubClient{})
-	if got := server.upstreamMethod; got != "prompt" {
-		t.Fatalf("expected default upstream method prompt, got %q", got)
+	if got := server.upstreamMethod; got != "session.start" {
+		t.Fatalf("expected default upstream method session.start, got %q", got)
 	}
 }
 
