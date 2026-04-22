@@ -95,6 +95,7 @@ func TestHandleRPCSessionStartReturnsUpstreamResult(t *testing.T) {
 func TestHandleSessionStartFallsBackToPromptRunner(t *testing.T) {
 	stub := &stubClient{initResult: initializeResult{ProtocolVersion: 1}}
 	server := NewServer(stub)
+	server.upstreamMethod = ""
 	server.sessionRunner = func(ctx context.Context, model, prompt, workingDirectory string) (string, error) {
 		if workingDirectory != "/tmp/demo" {
 			t.Fatalf("expected workingDirectory /tmp/demo, got %q", workingDirectory)
@@ -116,6 +117,13 @@ func TestHandleSessionStartFallsBackToPromptRunner(t *testing.T) {
 	})
 	if got := result["output"]; got != "pong" {
 		t.Fatalf("expected output pong, got %#v", result)
+	}
+}
+
+func TestNewServerDefaultsHermesToUpstreamSessionStart(t *testing.T) {
+	server := NewServer(&stubClient{})
+	if got := server.upstreamMethod; got != "session.start" {
+		t.Fatalf("expected default upstream method session.start, got %q", got)
 	}
 }
 
