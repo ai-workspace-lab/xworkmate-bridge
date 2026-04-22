@@ -15,6 +15,7 @@ import (
 type rpcClient interface {
 	Initialize() (initializeResult, error)
 	Call(method string, params map[string]any) (map[string]any, error)
+	SetNotificationHandler(func(map[string]any))
 	Close() error
 }
 
@@ -25,18 +26,19 @@ type initializeResult struct {
 }
 
 type stdioRPCClient struct {
-	mu              sync.Mutex
-	command         string
-	args            []string
-	env             []string
-	protocolVersion int
-	cmd             *exec.Cmd
-	stdin           io.WriteCloser
-	stdout          *bufio.Reader
-	stderr          io.ReadCloser
-	nextID          atomic.Int64
-	initialized     bool
-	initResult      initializeResult
+	mu                  sync.Mutex
+	command             string
+	args                []string
+	env                 []string
+	protocolVersion     int
+	cmd                 *exec.Cmd
+	stdin               io.WriteCloser
+	stdout              *bufio.Reader
+	stderr              io.ReadCloser
+	nextID              atomic.Int64
+	initialized         bool
+	initResult          initializeResult
+	notificationHandler func(map[string]any)
 }
 
 func newStdioRPCClient(command string, args []string, env []string, protocolVersion int) *stdioRPCClient {
@@ -91,6 +93,12 @@ func (c *stdioRPCClient) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.closeLocked()
+}
+
+func (c *stdioRPCClient) SetNotificationHandler(handler func(map[string]any)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.notificationHandler = handler
 }
 
 func (c *stdioRPCClient) ensureStartedLocked() error {
@@ -161,19 +169,29 @@ func (c *stdioRPCClient) callLocked(method string, params map[string]any) (map[s
 	if _, err := c.stdin.Write(append(encoded, '\n')); err != nil {
 		return nil, err
 	}
-	line, err := c.stdout.ReadBytes('\n')
-	if err != nil {
-		if stderr, stderrErr := io.ReadAll(c.stderr); stderrErr == nil {
-			trimmed := strings.TrimSpace(string(stderr))
-			if trimmed != "" {
-				return nil, fmt.Errorf("hermes acp read failed: %s", trimmed)
+	for {
+		line, err := c.stdout.ReadBytes('\n')
+		if err != nil {
+			if stderr, stderrErr := io.ReadAll(c.stderr); stderrErr == nil {
+				trimmed := strings.TrimSpace(string(stderr))
+				if trimmed != "" {
+					return nil, fmt.Errorf("hermes acp read failed: %s", trimmed)
+				}
 			}
+			return nil, err
 		}
-		return nil, err
+		var response map[string]any
+		if err := json.Unmarshal(line, &response); err != nil {
+			return nil, fmt.Errorf("decode hermes acp response: %w", err)
+		}
+		if responseID, _ := response["id"].(string); responseID != "" {
+			if responseID == requestID {
+				return response, nil
+			}
+			continue
+		}
+		if handler := c.notificationHandler; handler != nil {
+			handler(response)
+		}
 	}
-	var response map[string]any
-	if err := json.Unmarshal(line, &response); err != nil {
-		return nil, fmt.Errorf("decode hermes acp response: %w", err)
-	}
-	return response, nil
 }

@@ -48,6 +48,7 @@ type adapterSession struct {
 	history            []string
 	model              string
 	workingDirectory   string
+	upstreamSessionID  string
 	lastOutput         string
 	lastUpstreamMethod string
 }
@@ -111,7 +112,7 @@ func NewServer(client rpcClient) *Server {
 		providerID:     strings.TrimSpace(shared.EnvOrDefault("HERMES_ADAPTER_PROVIDER_ID", defaultProviderID)),
 		providerLabel:  strings.TrimSpace(shared.EnvOrDefault("HERMES_ADAPTER_PROVIDER_LABEL", defaultLabel)),
 		allowedOrigins: parseAllowedOrigins(strings.TrimSpace(shared.EnvOrDefault("HERMES_ADAPTER_ALLOWED_ORIGINS", "https://xworkmate.svc.plus,http://localhost:*,http://127.0.0.1:*"))),
-		upstreamMethod: strings.TrimSpace(shared.EnvOrDefault("HERMES_ADAPTER_UPSTREAM_METHOD", "session.start")),
+		upstreamMethod: strings.TrimSpace(shared.EnvOrDefault("HERMES_ADAPTER_UPSTREAM_METHOD", "prompt")),
 		sessionRunner: func(ctx context.Context, model, prompt, workingDirectory string) (string, error) {
 			return shared.RunProviderCommand(
 				ctx,
@@ -272,12 +273,15 @@ func (s *Server) handleSessionRequest(method string, params map[string]any) map[
 	}
 	upstreamMethod := s.upstreamMethod
 	if upstreamMethod != "" {
-		return s.handleConfiguredUpstreamSessionRequest(upstreamMethod, params)
+		return s.handleConfiguredUpstreamSessionRequest(method, upstreamMethod, params)
 	}
 	return s.handleCompatSessionRequest(method, params)
 }
 
-func (s *Server) handleConfiguredUpstreamSessionRequest(upstreamMethod string, params map[string]any) map[string]any {
+func (s *Server) handleConfiguredUpstreamSessionRequest(method, upstreamMethod string, params map[string]any) map[string]any {
+	if strings.TrimSpace(strings.ToLower(upstreamMethod)) == "prompt" {
+		return s.handleHermesPromptUpstreamSessionRequest(method, params)
+	}
 	response, err := s.client.Call(upstreamMethod, params)
 	if err != nil {
 		return map[string]any{
@@ -315,6 +319,193 @@ func (s *Server) handleConfiguredUpstreamSessionRequest(upstreamMethod string, p
 		"upstreamMethod": upstreamMethod,
 		"upstream":       response,
 	}
+}
+
+func (s *Server) handleHermesPromptUpstreamSessionRequest(method string, params map[string]any) map[string]any {
+	sessionID := strings.TrimSpace(shared.StringArg(params, "sessionId", ""))
+	if sessionID == "" {
+		return map[string]any{
+			"success":  false,
+			"provider": s.providerID,
+			"mode":     "single-agent",
+			"error":    "sessionId is required",
+		}
+	}
+
+	state := s.getOrCreateSession(sessionID)
+	if method == "session.start" {
+		state = s.resetSession(sessionID)
+	}
+	taskPrompt := strings.TrimSpace(shared.StringArg(params, "taskPrompt", ""))
+	taskPrompt = shared.AugmentPromptWithAttachments(taskPrompt, params)
+	if taskPrompt == "" {
+		return map[string]any{
+			"success":  false,
+			"provider": s.providerID,
+			"mode":     "single-agent",
+			"error":    "taskPrompt is required",
+		}
+	}
+
+	workingDirectory := strings.TrimSpace(shared.StringArg(params, "workingDirectory", ""))
+	if workingDirectory == "" {
+		workingDirectory = state.workingDirectory
+	}
+	if workingDirectory == "" {
+		workingDirectory = "."
+	}
+
+	if state.upstreamSessionID == "" || method == "session.start" {
+		newSessionResp, err := s.client.Call("new_session", map[string]any{
+			"cwd": workingDirectory,
+		})
+		if err != nil {
+			return map[string]any{
+				"success":  false,
+				"provider": s.providerID,
+				"mode":     "single-agent",
+				"error":    err.Error(),
+			}
+		}
+		state.upstreamSessionID = extractHermesUpstreamSessionID(newSessionResp)
+		if state.upstreamSessionID == "" {
+			return map[string]any{
+				"success":  false,
+				"provider": s.providerID,
+				"mode":     "single-agent",
+				"error":    "hermes upstream did not return a session id",
+			}
+		}
+	}
+
+	s.sessionsMu.Lock()
+	current := s.sessions[sessionID]
+	if current == nil {
+		current = &adapterSession{}
+		s.sessions[sessionID] = current
+	}
+	current.upstreamSessionID = state.upstreamSessionID
+	current.workingDirectory = workingDirectory
+	current.model = strings.TrimSpace(shared.StringArg(params, "model", current.model))
+	s.sessionsMu.Unlock()
+
+	var outputParts []string
+	notificationHandler := func(notification map[string]any) {
+		text := extractHermesSessionUpdateText(notification)
+		if text != "" {
+			outputParts = append(outputParts, text)
+		}
+	}
+	s.client.SetNotificationHandler(notificationHandler)
+	defer s.client.SetNotificationHandler(nil)
+
+	promptPayload := []map[string]any{
+		{
+			"type": "text",
+			"text": taskPrompt,
+		},
+	}
+	response, err := s.client.Call("prompt", map[string]any{
+		"sessionId": state.upstreamSessionID,
+		"prompt":    promptPayload,
+	})
+	if err != nil {
+		return map[string]any{
+			"success":  false,
+			"provider": s.providerID,
+			"mode":     "single-agent",
+			"error":    err.Error(),
+		}
+	}
+
+	output := strings.TrimSpace(strings.Join(outputParts, ""))
+	if output == "" {
+		if resultMap, ok := response["result"].(map[string]any); ok {
+			for _, key := range []string{"output", "finalResponse", "final_response", "text", "message"} {
+				if candidate := strings.TrimSpace(shared.StringArg(resultMap, key, "")); candidate != "" {
+					output = candidate
+					break
+				}
+			}
+		}
+	}
+	if output == "" {
+		output = "ok"
+	}
+
+	s.sessionsMu.Lock()
+	current = s.sessions[sessionID]
+	if current == nil {
+		current = &adapterSession{}
+		s.sessions[sessionID] = current
+	}
+	current.history = append(current.history, "USER: "+taskPrompt, "ASSISTANT: "+output)
+	current.lastOutput = output
+	current.lastUpstreamMethod = "prompt"
+	s.sessionsMu.Unlock()
+
+	result := map[string]any{
+		"success":        true,
+		"provider":       s.providerID,
+		"mode":           "single-agent",
+		"output":         output,
+		"sessionId":      sessionID,
+		"upstreamMethod": "prompt",
+	}
+	if workingDirectory != "" {
+		result["effectiveWorkingDirectory"] = workingDirectory
+	}
+	if state.upstreamSessionID != "" {
+		result["upstreamSessionId"] = state.upstreamSessionID
+	}
+	return result
+}
+
+func extractHermesUpstreamSessionID(response map[string]any) string {
+	for _, key := range []string{"sessionId", "session_id", "id"} {
+		if value := strings.TrimSpace(shared.StringArg(asMap(response["result"]), key, "")); value != "" {
+			return value
+		}
+		if value := strings.TrimSpace(shared.StringArg(response, key, "")); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func extractHermesSessionUpdateText(notification map[string]any) string {
+	if notification == nil {
+		return ""
+	}
+	payload := asMap(notification["params"])
+	if len(payload) == 0 {
+		payload = notification
+	}
+	update := asMap(payload["update"])
+	if len(update) == 0 {
+		update = payload
+	}
+	for _, key := range []string{"text", "message", "content", "delta"} {
+		if text := strings.TrimSpace(shared.StringArg(update, key, "")); text != "" {
+			if updateKind := strings.TrimSpace(shared.StringArg(update, "sessionUpdate", "")); updateKind == "" || updateKind == "agent_message_chunk" || updateKind == "agent_message_text" {
+				return text
+			}
+		}
+	}
+	if text := strings.TrimSpace(shared.StringArg(payload, "text", "")); text != "" {
+		return text
+	}
+	return ""
+}
+
+func asMap(value any) map[string]any {
+	if value == nil {
+		return nil
+	}
+	if result, ok := value.(map[string]any); ok {
+		return result
+	}
+	return nil
 }
 
 func (s *Server) handleCompatSessionRequest(method string, params map[string]any) map[string]any {
@@ -414,6 +605,7 @@ func (s *Server) getOrCreateSession(sessionID string) *adapterSession {
 		history:            append([]string(nil), state.history...),
 		model:              state.model,
 		workingDirectory:   state.workingDirectory,
+		upstreamSessionID:  state.upstreamSessionID,
 		lastOutput:         state.lastOutput,
 		lastUpstreamMethod: state.lastUpstreamMethod,
 	}

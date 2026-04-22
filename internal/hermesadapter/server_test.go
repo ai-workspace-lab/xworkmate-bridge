@@ -14,12 +14,15 @@ import (
 )
 
 type stubClient struct {
-	initResult initializeResult
-	initErr    error
-	callResult map[string]any
-	callErr    error
-	lastMethod string
-	lastParams map[string]any
+	initResult          initializeResult
+	initErr             error
+	callResult          map[string]any
+	callErr             error
+	callFn              func(method string, params map[string]any) (map[string]any, error)
+	lastMethod          string
+	lastParams          map[string]any
+	methods             []string
+	notificationHandler func(map[string]any)
 }
 
 func (s *stubClient) Initialize() (initializeResult, error) {
@@ -29,7 +32,15 @@ func (s *stubClient) Initialize() (initializeResult, error) {
 func (s *stubClient) Call(method string, params map[string]any) (map[string]any, error) {
 	s.lastMethod = method
 	s.lastParams = params
+	s.methods = append(s.methods, method)
+	if s.callFn != nil {
+		return s.callFn(method, params)
+	}
 	return s.callResult, s.callErr
+}
+
+func (s *stubClient) SetNotificationHandler(handler func(map[string]any)) {
+	s.notificationHandler = handler
 }
 
 func (s *stubClient) Close() error { return nil }
@@ -49,17 +60,38 @@ func TestHandleCapabilitiesSynthesizesProviderResponse(t *testing.T) {
 }
 
 func TestHandleRPCSessionStartReturnsUpstreamResult(t *testing.T) {
-	stub := &stubClient{
-		initResult: initializeResult{ProtocolVersion: 1},
-		callResult: map[string]any{
-			"result": map[string]any{
-				"success": true,
-				"output":  "hello",
-			},
-		},
+	var stub *stubClient
+	stub = &stubClient{initResult: initializeResult{ProtocolVersion: 1}}
+	stub.callFn = func(method string, params map[string]any) (map[string]any, error) {
+		switch method {
+		case "new_session":
+			return map[string]any{
+				"result": map[string]any{
+					"sessionId": "upstream-session-1",
+				},
+			}, nil
+		case "prompt":
+			if stub.notificationHandler != nil {
+				stub.notificationHandler(map[string]any{
+					"params": map[string]any{
+						"update": map[string]any{
+							"sessionUpdate": "agent_message_chunk",
+							"text":          "hello",
+						},
+					},
+				})
+			}
+			return map[string]any{
+				"result": map[string]any{
+					"stopReason": "end_turn",
+				},
+			}, nil
+		default:
+			return map[string]any{"result": map[string]any{}}, nil
+		}
 	}
 	server := NewServer(stub)
-	server.upstreamMethod = "session.start"
+	server.upstreamMethod = "prompt"
 
 	body, _ := json.Marshal(shared.RPCRequest{
 		JSONRPC: "2.0",
@@ -87,8 +119,8 @@ func TestHandleRPCSessionStartReturnsUpstreamResult(t *testing.T) {
 	if got := result["output"]; got != "hello" {
 		t.Fatalf("expected output hello, got %#v", result)
 	}
-	if stub.lastMethod != "session.start" {
-		t.Fatalf("expected upstream method session.start, got %q", stub.lastMethod)
+	if len(stub.methods) != 2 || stub.methods[0] != "new_session" || stub.methods[1] != "prompt" {
+		t.Fatalf("expected new_session then prompt, got %#v", stub.methods)
 	}
 }
 
@@ -120,10 +152,10 @@ func TestHandleSessionStartFallsBackToPromptRunner(t *testing.T) {
 	}
 }
 
-func TestNewServerDefaultsHermesToUpstreamSessionStart(t *testing.T) {
+func TestNewServerDefaultsHermesToUpstreamPrompt(t *testing.T) {
 	server := NewServer(&stubClient{})
-	if got := server.upstreamMethod; got != "session.start" {
-		t.Fatalf("expected default upstream method session.start, got %q", got)
+	if got := server.upstreamMethod; got != "prompt" {
+		t.Fatalf("expected default upstream method prompt, got %q", got)
 	}
 }
 
