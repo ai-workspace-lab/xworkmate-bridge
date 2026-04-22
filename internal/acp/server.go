@@ -121,7 +121,7 @@ func (s *Server) Handler() http.Handler {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			_, _ = w.Write([]byte("xworkmate-bridge is running"))
 		case "/api/ping":
-			info := parseImageVersionInfo(os.Getenv("IMAGE"))
+			info := ParseImageVersionInfo(os.Getenv("IMAGE"))
 			resp := map[string]any{
 				"status":  "ok",
 				"image":   info.ImageRef,

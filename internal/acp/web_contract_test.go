@@ -194,7 +194,7 @@ func TestHTTPHandlerBareAliasPathsServeRPC(t *testing.T) {
 }
 
 func TestParseImageVersionInfoHandlesTaggedImageRef(t *testing.T) {
-	info := parseImageVersionInfo("ghcr.io/x-evor/xworkmate-bridge:main-2026-04-12")
+	info := ParseImageVersionInfo("ghcr.io/x-evor/xworkmate-bridge:main-2026-04-12")
 
 	if info.ImageRef != "ghcr.io/x-evor/xworkmate-bridge:main-2026-04-12" {
 		t.Fatalf("expected full image ref, got %q", info.ImageRef)

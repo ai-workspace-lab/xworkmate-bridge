@@ -9,7 +9,7 @@ type imageVersionInfo struct {
 	Version  string `json:"version,omitempty"`
 }
 
-func parseImageVersionInfo(imageRef string) imageVersionInfo {
+func ParseImageVersionInfo(imageRef string) imageVersionInfo {
 	ref := strings.TrimSpace(imageRef)
 	info := imageVersionInfo{ImageRef: ref}
 	if ref == "" {

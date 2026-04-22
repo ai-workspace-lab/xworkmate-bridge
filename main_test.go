@@ -2,10 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -128,4 +130,70 @@ func TestRunClaudeReviewSurfacesNonJSONStdout(t *testing.T) {
 	if err == nil || err.Error() == "" {
 		t.Fatal("expected non-json stdout error")
 	}
+}
+
+func TestPrintBridgeVersionInfoMatchesPingContract(t *testing.T) {
+	t.Setenv("IMAGE", "ghcr.io/x-evor/xworkmate-bridge:0123456789abcdef0123456789abcdef01234567")
+
+	output := captureStdout(t, printBridgeVersionInfo)
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(output), &payload); err != nil {
+		t.Fatalf("decode version payload: %v", err)
+	}
+	if payload["status"] != "ok" {
+		t.Fatalf("expected status ok, got %#v", payload["status"])
+	}
+	if payload["image"] != "ghcr.io/x-evor/xworkmate-bridge:0123456789abcdef0123456789abcdef01234567" {
+		t.Fatalf("unexpected image ref: %#v", payload["image"])
+	}
+	if payload["tag"] != "0123456789abcdef0123456789abcdef01234567" {
+		t.Fatalf("unexpected tag: %#v", payload["tag"])
+	}
+	if payload["commit"] != "0123456789abcdef0123456789abcdef01234567" {
+		t.Fatalf("unexpected commit: %#v", payload["commit"])
+	}
+	if payload["version"] != "0123456789abcdef0123456789abcdef01234567" {
+		t.Fatalf("unexpected version: %#v", payload["version"])
+	}
+}
+
+func TestPrintBridgeVersionInfoWithoutImageEnv(t *testing.T) {
+	t.Setenv("IMAGE", "")
+
+	output := captureStdout(t, printBridgeVersionInfo)
+	if !strings.Contains(output, `"status":"ok"`) {
+		t.Fatalf("unexpected output: %q", output)
+	}
+}
+
+func captureStdout(t *testing.T, fn func() error) string {
+	t.Helper()
+
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe stdout: %v", err)
+	}
+	os.Stdout = w
+	defer func() {
+		os.Stdout = old
+	}()
+
+	done := make(chan string, 1)
+	go func() {
+		var builder strings.Builder
+		_, _ = io.Copy(&builder, r)
+		done <- builder.String()
+	}()
+
+	callErr := fn()
+	_ = w.Close()
+	out := <-done
+	_ = r.Close()
+
+	if callErr != nil {
+		t.Fatalf("call failed: %v", callErr)
+	}
+	return strings.TrimSpace(out)
 }
