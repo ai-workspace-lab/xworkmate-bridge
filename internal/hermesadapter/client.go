@@ -201,7 +201,7 @@ func (c *stdioRPCClient) callLocked(method string, params map[string]any) (map[s
 		}
 		var payload map[string]any
 		if err := json.Unmarshal(line, &payload); err != nil {
-			return nil, fmt.Errorf("decode hermes acp response: %w", err)
+			continue
 		}
 		if responseID, _ := payload["id"].(string); responseID != "" {
 			if responseID == requestID {

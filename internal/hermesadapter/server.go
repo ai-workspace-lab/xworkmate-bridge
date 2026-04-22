@@ -350,6 +350,7 @@ func (s *Server) handleHermesACPUpstreamSessionRequest(method string, params map
 		workingDirectory = "."
 	}
 
+	createdUpstreamSession := false
 	if state.upstreamSessionID == "" || method == "session.start" {
 		newSessionResp, err := s.client.Call("session/new", map[string]any{
 			"cwd":        workingDirectory,
@@ -372,6 +373,7 @@ func (s *Server) handleHermesACPUpstreamSessionRequest(method string, params map
 				"error":    "hermes upstream did not return a session id",
 			}
 		}
+		createdUpstreamSession = true
 	}
 
 	s.sessionsMu.Lock()
@@ -384,6 +386,33 @@ func (s *Server) handleHermesACPUpstreamSessionRequest(method string, params map
 	current.workingDirectory = workingDirectory
 	current.model = strings.TrimSpace(shared.StringArg(params, "model", current.model))
 	s.sessionsMu.Unlock()
+
+	resolvedModel := strings.TrimSpace(current.model)
+	if resolvedModel == "" {
+		resolvedModel = resolveHermesConfiguredModel()
+	}
+	if resolvedModel != "" && (createdUpstreamSession || resolvedModel != current.model) {
+		if _, err := s.client.Call("session/set_model", map[string]any{
+			"sessionId": state.upstreamSessionID,
+			"modelId":   resolvedModel,
+		}); err != nil {
+			return map[string]any{
+				"success":        false,
+				"provider":       s.providerID,
+				"mode":           "single-agent",
+				"error":          err.Error(),
+				"upstreamMethod": "session/set_model",
+			}
+		}
+		s.sessionsMu.Lock()
+		current = s.sessions[sessionID]
+		if current == nil {
+			current = &adapterSession{}
+			s.sessions[sessionID] = current
+		}
+		current.model = resolvedModel
+		s.sessionsMu.Unlock()
+	}
 
 	var outputParts []string
 	notificationHandler := func(notification map[string]any) {
