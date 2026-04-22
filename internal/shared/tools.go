@@ -30,6 +30,9 @@ func RunProviderCommand(
 	if command == "" {
 		return "", fmt.Errorf("unsupported provider: %s", provider)
 	}
+	if err := ensureWorkingDirectoryExists(workingDirectory); err != nil {
+		return "", err
+	}
 	cmd := exec.CommandContext(ctx, command, args...)
 	if strings.TrimSpace(workingDirectory) != "" {
 		cmd.Dir = strings.TrimSpace(workingDirectory)
@@ -57,6 +60,30 @@ func RunProviderCommand(
 		return "", fmt.Errorf("%s returned empty output", provider)
 	}
 	return output, nil
+}
+
+func ensureWorkingDirectoryExists(workingDirectory string) error {
+	workingDirectory = strings.TrimSpace(workingDirectory)
+	if workingDirectory == "" {
+		return nil
+	}
+	if info, err := os.Stat(workingDirectory); err == nil {
+		if info.IsDir() {
+			return nil
+		}
+		return fmt.Errorf("working directory is not a directory: %s", workingDirectory)
+	}
+	if err := os.MkdirAll(workingDirectory, 0o755); err != nil {
+		return fmt.Errorf("ensure working directory %s: %w", workingDirectory, err)
+	}
+	info, err := os.Stat(workingDirectory)
+	if err != nil {
+		return fmt.Errorf("verify working directory %s: %w", workingDirectory, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("working directory is not a directory: %s", workingDirectory)
+	}
+	return nil
 }
 
 func NormalizeProviderWorkingDirectory(provider, requested string) (string, string) {

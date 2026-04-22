@@ -1,6 +1,8 @@
 package shared
 
 import (
+	"context"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -50,5 +52,31 @@ func TestResolveProviderCommandSupportsHermes(t *testing.T) {
 	}
 	if args[0] != "--model" || args[1] != "sonnet" || args[2] != "-p" || args[3] != "hello world" {
 		t.Fatalf("unexpected hermes args: %#v", args)
+	}
+}
+
+func TestRunProviderCommandCreatesMissingWorkingDirectory(t *testing.T) {
+	workspaceRoot := filepath.Join(t.TempDir(), "owners", "local", "user", "thread-1")
+	scriptPath := filepath.Join(t.TempDir(), "hermes.sh")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\necho ok\n"), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	t.Setenv("ACP_HERMES_BIN", scriptPath)
+
+	output, err := RunProviderCommand(
+		context.Background(),
+		"hermes",
+		"sonnet",
+		"hello world",
+		workspaceRoot,
+	)
+	if err != nil {
+		t.Fatalf("RunProviderCommand() error = %v", err)
+	}
+	if output != "ok" {
+		t.Fatalf("RunProviderCommand() output = %q, want %q", output, "ok")
+	}
+	if info, err := os.Stat(workspaceRoot); err != nil || !info.IsDir() {
+		t.Fatalf("expected working directory to be created, stat err=%v info=%v", err, info)
 	}
 }
