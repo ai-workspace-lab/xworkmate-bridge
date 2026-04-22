@@ -133,7 +133,14 @@ func TestRunClaudeReviewSurfacesNonJSONStdout(t *testing.T) {
 }
 
 func TestPrintBridgeVersionInfoMatchesPingContract(t *testing.T) {
-	t.Setenv("IMAGE", "ghcr.io/x-evor/xworkmate-bridge:0123456789abcdef0123456789abcdef01234567")
+	buildCommit = "cfd19f6"
+	buildVersion = "v1.0-beta2"
+	buildDate = "2026-04-22T12:23:28+08:00"
+	t.Cleanup(func() {
+		buildCommit = ""
+		buildVersion = "v1.0-beta2"
+		buildDate = ""
+	})
 
 	output := captureStdout(t, printBridgeVersionInfo)
 
@@ -144,25 +151,35 @@ func TestPrintBridgeVersionInfoMatchesPingContract(t *testing.T) {
 	if payload["status"] != "ok" {
 		t.Fatalf("expected status ok, got %#v", payload["status"])
 	}
-	if payload["image"] != "ghcr.io/x-evor/xworkmate-bridge:0123456789abcdef0123456789abcdef01234567" {
-		t.Fatalf("unexpected image ref: %#v", payload["image"])
-	}
-	if payload["tag"] != "0123456789abcdef0123456789abcdef01234567" {
-		t.Fatalf("unexpected tag: %#v", payload["tag"])
-	}
-	if payload["commit"] != "0123456789abcdef0123456789abcdef01234567" {
+	if payload["commit"] != "cfd19f6" {
 		t.Fatalf("unexpected commit: %#v", payload["commit"])
 	}
-	if payload["version"] != "0123456789abcdef0123456789abcdef01234567" {
+	if payload["version"] != "v1.0-beta2" {
 		t.Fatalf("unexpected version: %#v", payload["version"])
+	}
+	if payload["build-date"] != "2026-04-22T12:23:28+08:00" {
+		t.Fatalf("unexpected build-date: %#v", payload["build-date"])
 	}
 }
 
-func TestPrintBridgeVersionInfoWithoutImageEnv(t *testing.T) {
-	t.Setenv("IMAGE", "")
+func TestPrintBridgeVersionInfoUsesBuildVariables(t *testing.T) {
+	buildCommit = "deadbee"
+	buildVersion = "v1.0-beta2"
+	buildDate = "2026-04-01T01:02:03+08:00"
+	t.Cleanup(func() {
+		buildCommit = ""
+		buildVersion = "v1.0-beta2"
+		buildDate = ""
+	})
 
 	output := captureStdout(t, printBridgeVersionInfo)
-	if !strings.Contains(output, `"status":"ok"`) {
+	if !strings.Contains(output, `"commit":"deadbee"`) {
+		t.Fatalf("unexpected output: %q", output)
+	}
+	if !strings.Contains(output, `"version":"v1.0-beta2"`) {
+		t.Fatalf("unexpected output: %q", output)
+	}
+	if !strings.Contains(output, `"build-date":"2026-04-01T01:02:03+08:00"`) {
 		t.Fatalf("unexpected output: %q", output)
 	}
 }

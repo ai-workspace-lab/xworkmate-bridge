@@ -11,6 +11,12 @@ import (
 	"xworkmate-bridge/internal/toolbridge"
 )
 
+var (
+	buildCommit   = ""
+	buildVersion  = "v1.0-beta2"
+	buildDate     = ""
+)
+
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
@@ -52,13 +58,11 @@ func main() {
 }
 
 func printBridgeVersionInfo() error {
-	info := acp.ParseImageVersionInfo(os.Getenv("IMAGE"))
 	payload := map[string]any{
 		"status":  "ok",
-		"image":   info.ImageRef,
-		"tag":     info.Tag,
-		"commit":  info.Commit,
-		"version": info.Version,
+		"commit":  buildCommit,
+		"version": buildVersion,
+		"build-date": buildDate,
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {

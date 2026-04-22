@@ -26,7 +26,9 @@ mkdir -p "$OUTPUT_DIR"
 echo "Building xworkmate-go-core from xworkmate-bridge..."
 (
   cd "$ROOT_DIR"
-  GO111MODULE=on go build -o "$OUTPUT_PATH" .
+  build_commit="$(git rev-parse --short HEAD)"
+  build_date="$(git log -1 --format=%cI)"
+  GO111MODULE=on go build -ldflags "-X main.buildCommit=${build_commit} -X main.buildVersion=v1.0-beta2 -X main.buildDate=${build_date}" -o "$OUTPUT_PATH" .
 )
 
 chmod +x "$OUTPUT_PATH"
