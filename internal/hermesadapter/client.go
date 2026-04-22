@@ -161,6 +161,7 @@ func (c *stdioRPCClient) closeLocked() error {
 
 func (c *stdioRPCClient) callLocked(method string, params map[string]any) (map[string]any, error) {
 	requestID := fmt.Sprintf("req-%d", c.nextID.Add(1))
+	awaitFinalText := strings.EqualFold(strings.TrimSpace(method), "session/prompt")
 	request := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      requestID,
@@ -174,7 +175,17 @@ func (c *stdioRPCClient) callLocked(method string, params map[string]any) (map[s
 	if _, err := c.stdin.Write(append(encoded, '\n')); err != nil {
 		return nil, err
 	}
+	var response map[string]any
+	responseSeen := false
+	finalTextSeen := false
 	for {
+		if deadlineSetter, ok := c.stdoutPipe.(interface{ SetReadDeadline(time.Time) error }); ok {
+			timeout := 2 * time.Minute
+			if awaitFinalText {
+				timeout = 5 * time.Minute
+			}
+			_ = deadlineSetter.SetReadDeadline(time.Now().Add(timeout))
+		}
 		line, err := c.stdout.ReadBytes('\n')
 		if err != nil {
 			if stderr, stderrErr := io.ReadAll(c.stderr); stderrErr == nil {
@@ -183,21 +194,37 @@ func (c *stdioRPCClient) callLocked(method string, params map[string]any) (map[s
 					return nil, fmt.Errorf("hermes acp read failed: %s", trimmed)
 				}
 			}
+			if awaitFinalText && responseSeen {
+				return nil, fmt.Errorf("timed out waiting for hermes final session update")
+			}
 			return nil, err
 		}
-		var response map[string]any
-		if err := json.Unmarshal(line, &response); err != nil {
+		var payload map[string]any
+		if err := json.Unmarshal(line, &payload); err != nil {
 			return nil, fmt.Errorf("decode hermes acp response: %w", err)
 		}
-		if responseID, _ := response["id"].(string); responseID != "" {
+		if responseID, _ := payload["id"].(string); responseID != "" {
 			if responseID == requestID {
-				c.drainNotificationsLocked(2 * time.Second)
-				return response, nil
+				response = payload
+				responseSeen = true
+				if !awaitFinalText {
+					c.drainNotificationsLocked(2 * time.Second)
+					return response, nil
+				}
+				if finalTextSeen {
+					c.drainNotificationsLocked(500 * time.Millisecond)
+					return response, nil
+				}
 			}
 			continue
 		}
 		if handler := c.notificationHandler; handler != nil {
-			handler(response)
+			handler(payload)
+		}
+		if awaitFinalText && responseSeen && isHermesFinalSessionUpdate(payload) {
+			finalTextSeen = true
+			c.drainNotificationsLocked(500 * time.Millisecond)
+			return response, nil
 		}
 	}
 }
@@ -241,4 +268,24 @@ func isTimeoutError(err error) bool {
 		return true
 	}
 	return strings.Contains(strings.ToLower(err.Error()), "timeout")
+}
+
+func isHermesFinalSessionUpdate(notification map[string]any) bool {
+	if notification == nil {
+		return false
+	}
+	method := strings.TrimSpace(fmt.Sprint(notification["method"]))
+	if method != "session.update" && method != "session/update" && method != "acp.session.update" {
+		return false
+	}
+	params, _ := notification["params"].(map[string]any)
+	if len(params) == 0 {
+		return false
+	}
+	update, _ := params["update"].(map[string]any)
+	if len(update) == 0 {
+		update = params
+	}
+	sessionUpdate := strings.TrimSpace(fmt.Sprint(update["sessionUpdate"]))
+	return sessionUpdate == "agent_message_text"
 }
