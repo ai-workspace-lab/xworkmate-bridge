@@ -330,7 +330,7 @@ type externalACPNotificationCollector struct {
 
 func (c *externalACPNotificationCollector) observe(notification map[string]any) {
 	method := strings.TrimSpace(shared.StringArg(notification, "method", ""))
-	if method != "session.update" && method != "acp.session.update" {
+	if method != "session.update" && method != "acp.session.update" && method != "session/update" {
 		return
 	}
 	params := asMap(notification["params"])
@@ -346,45 +346,47 @@ func (c *externalACPNotificationCollector) observe(notification map[string]any) 
 			break
 		}
 	}
-	if delta := strings.TrimSpace(shared.StringArg(params, "delta", "")); delta != "" {
-		if c.deltas.Len() > 0 {
-			c.deltas.WriteString("\n")
-		}
-		c.deltas.WriteString(delta)
+	updateText := extractExternalACPNotificationText(notification)
+	if updateText == "" {
+		return
 	}
-	message := strings.TrimSpace(shared.StringArg(params, "message", ""))
-	if message == "" {
-		message = strings.TrimSpace(shared.StringArg(asMap(params["message"]), "content", ""))
+	if c.deltas.Len() > 0 {
+		c.deltas.WriteString("\n")
 	}
-	if message != "" && message != "session started" && message != "single-agent completed" {
-		c.lastMessage = message
-	}
+	c.deltas.WriteString(updateText)
+	c.lastMessage = updateText
 }
 
 func (c *externalACPNotificationCollector) apply(result map[string]any) map[string]any {
 	if result == nil {
 		result = map[string]any{}
 	}
-	text := strings.TrimSpace(shared.StringArg(result, "output", ""))
-	if text == "" {
-		text = strings.TrimSpace(shared.StringArg(result, "summary", ""))
-	}
-	if text == "" {
-		text = strings.TrimSpace(shared.StringArg(result, "message", ""))
-	}
-	if text == "" {
-		text = strings.TrimSpace(c.deltas.String())
+	text := strings.TrimSpace(c.deltas.String())
+	if isGenericHermesAckText(text) {
+		text = ""
 	}
 	if text == "" {
 		text = strings.TrimSpace(c.lastMessage)
+		if isGenericHermesAckText(text) {
+			text = ""
+		}
+	}
+	if text == "" {
+		for _, candidate := range []string{
+			strings.TrimSpace(shared.StringArg(result, "output", "")),
+			strings.TrimSpace(shared.StringArg(result, "summary", "")),
+			strings.TrimSpace(shared.StringArg(result, "message", "")),
+		} {
+			if candidate == "" || isGenericHermesAckText(candidate) {
+				continue
+			}
+			text = candidate
+			break
+		}
 	}
 	if text != "" {
-		if _, exists := result["output"]; !exists {
-			result["output"] = text
-		}
-		if _, exists := result["summary"]; !exists {
-			result["summary"] = text
-		}
+		result["output"] = text
+		result["summary"] = text
 	}
 	if _, exists := result["turnId"]; !exists && strings.TrimSpace(c.turnID) != "" {
 		result["turnId"] = strings.TrimSpace(c.turnID)
@@ -393,6 +395,85 @@ func (c *externalACPNotificationCollector) apply(result map[string]any) map[stri
 		result["resolvedWorkingDirectory"] = strings.TrimSpace(c.workingDirectory)
 	}
 	return result
+}
+
+func isGenericHermesAckText(text string) bool {
+	switch strings.ToLower(strings.TrimSpace(text)) {
+	case "", "ok", "session started", "single-agent completed":
+		return true
+	default:
+		return false
+	}
+}
+
+func extractExternalACPNotificationText(notification map[string]any) string {
+	if notification == nil {
+		return ""
+	}
+	payload := asMap(notification["params"])
+	if len(payload) == 0 {
+		payload = notification
+	}
+	update := asMap(payload["update"])
+	if len(update) == 0 {
+		update = payload
+	}
+	updateKind := strings.TrimSpace(shared.StringArg(update, "sessionUpdate", ""))
+	switch updateKind {
+	case "available_commands_update":
+		return ""
+	case "session_started", "session completed", "single-agent completed":
+		return ""
+	}
+	if text := extractExternalACPTextValue(update); text != "" {
+		return text
+	}
+	if text := extractExternalACPTextValue(payload); text != "" {
+		return text
+	}
+	return ""
+}
+
+func extractExternalACPTextValue(value any) string {
+	switch v := value.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case map[string]any:
+		var builder strings.Builder
+		for _, key := range []string{"text", "message", "content", "delta", "value"} {
+			if text := extractExternalACPTextValue(v[key]); text != "" {
+				if builder.Len() > 0 {
+					builder.WriteString(" ")
+				}
+				builder.WriteString(text)
+			}
+		}
+		if builder.Len() > 0 {
+			return strings.TrimSpace(builder.String())
+		}
+		for key, child := range v {
+			if key == "text" || key == "message" || key == "content" || key == "delta" || key == "value" || key == "sessionId" || key == "session_id" || key == "sessionUpdate" || key == "session_update" {
+				continue
+			}
+			if text := extractExternalACPTextValue(child); text != "" {
+				if builder.Len() > 0 {
+					builder.WriteString(" ")
+				}
+				builder.WriteString(text)
+			}
+		}
+		return strings.TrimSpace(builder.String())
+	case []any:
+		var parts []string
+		for _, child := range v {
+			if text := extractExternalACPTextValue(child); text != "" {
+				parts = append(parts, text)
+			}
+		}
+		return strings.TrimSpace(strings.Join(parts, " "))
+	default:
+		return ""
+	}
 }
 
 func enrichSingleAgentResultArtifacts(result map[string]any, requestParams map[string]any) map[string]any {

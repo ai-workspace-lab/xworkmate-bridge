@@ -10,7 +10,7 @@ upstream:
   codex_url: "ws://127.0.0.1:9001/acp"
   opencode_url: "http://127.0.0.1:38992"
   gemini_url: "http://127.0.0.1:8791"
-  hermes_url: "http://127.0.0.1:3920"
+  hermes_url: "ws://127.0.0.1:3920"
 
 # Legacy/Reference structure (Normally managed via code constants or environment)
 bridge:

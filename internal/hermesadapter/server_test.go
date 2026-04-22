@@ -124,6 +124,59 @@ func TestHandleRPCSessionStartReturnsUpstreamResult(t *testing.T) {
 	}
 }
 
+func TestHandleRPCSessionStartRejectsEmptyUpstreamResponse(t *testing.T) {
+	var stub *stubClient
+	stub = &stubClient{initResult: initializeResult{ProtocolVersion: 1}}
+	stub.callFn = func(method string, params map[string]any) (map[string]any, error) {
+		switch method {
+		case "new_session":
+			return map[string]any{
+				"result": map[string]any{
+					"sessionId": "upstream-session-1",
+				},
+			}, nil
+		case "prompt":
+			return map[string]any{
+				"result": map[string]any{},
+			}, nil
+		default:
+			return map[string]any{"result": map[string]any{}}, nil
+		}
+	}
+	server := NewServer(stub)
+	server.upstreamMethod = "prompt"
+
+	body, _ := json.Marshal(shared.RPCRequest{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "session.start",
+		Params: map[string]any{
+			"sessionId":  "s1",
+			"taskPrompt": "hello",
+		},
+	})
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/acp/rpc", bytes.NewReader(body))
+	request.Header.Set("Authorization", "Bearer test-token")
+	recorder := httptest.NewRecorder()
+
+	server.HandleRPC(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", recorder.Code)
+	}
+	var envelope map[string]any
+	if err := json.NewDecoder(recorder.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	result := envelope["result"].(map[string]any)
+	if got := result["success"]; got != false {
+		t.Fatalf("expected success false, got %#v", result)
+	}
+	if got := result["error"]; got != "hermes upstream returned empty response" {
+		t.Fatalf("expected empty-response error, got %#v", result)
+	}
+}
+
 func TestHandleSessionStartFallsBackToPromptRunner(t *testing.T) {
 	stub := &stubClient{initResult: initializeResult{ProtocolVersion: 1}}
 	server := NewServer(stub)

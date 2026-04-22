@@ -102,7 +102,7 @@ func newProductionProviderCatalog() (map[string]syncedProvider, []string) {
 			label:      "Hermes",
 			yaml:       config.Upstream.HermesURL,
 			envKeys:    []string{"HERMES_RPC_URL"},
-			defaultURL: "http://127.0.0.1:3920",
+			defaultURL: "ws://127.0.0.1:3920",
 		},
 	}
 

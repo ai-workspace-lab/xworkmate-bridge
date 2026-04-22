@@ -19,7 +19,7 @@ func TestResolveSingleAgentForwardEndpointFromExampleConfig(t *testing.T) {
 		"codex":    "ws://127.0.0.1:9001/acp",
 		"opencode": "http://127.0.0.1:38992",
 		"gemini":   "http://127.0.0.1:8791",
-		"hermes":   "http://127.0.0.1:3920",
+		"hermes":   "ws://127.0.0.1:3920",
 	}
 
 	for _, id := range order {
@@ -89,5 +89,57 @@ func TestNormalizeAuthorizationHeader(t *testing.T) {
 				t.Fatalf("normalizeAuthorizationHeader(%q) = %q, want %q", raw, got, want)
 			}
 		})
+	}
+}
+
+func TestExternalACPNotificationCollectorExtractsNestedSessionUpdateText(t *testing.T) {
+	t.Parallel()
+
+	collector := &externalACPNotificationCollector{}
+	collector.observe(map[string]any{
+		"method": "session.update",
+		"params": map[string]any{
+			"turnId": "turn-1",
+			"update": map[string]any{
+				"sessionUpdate": "agent_message_chunk",
+				"content": map[string]any{
+					"text": "pong",
+				},
+			},
+		},
+	})
+
+	result := collector.apply(map[string]any{})
+	if got := result["output"]; got != "pong" {
+		t.Fatalf("expected output pong, got %#v", result)
+	}
+	if got := result["turnId"]; got != "turn-1" {
+		t.Fatalf("expected turnId turn-1, got %#v", result)
+	}
+}
+
+func TestExternalACPNotificationCollectorPrefersStreamTextOverAckResult(t *testing.T) {
+	t.Parallel()
+
+	collector := &externalACPNotificationCollector{}
+	collector.observe(map[string]any{
+		"method": "session.update",
+		"params": map[string]any{
+			"update": map[string]any{
+				"sessionUpdate": "agent_message_chunk",
+				"content": map[string]any{
+					"text": "pong",
+				},
+			},
+		},
+	})
+
+	result := collector.apply(map[string]any{
+		"output":  "ok",
+		"summary": "ok",
+		"message": "ok",
+	})
+	if got := result["output"]; got != "pong" {
+		t.Fatalf("expected stream text to win over ack result, got %#v", result)
 	}
 }

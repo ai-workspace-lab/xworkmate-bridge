@@ -430,7 +430,14 @@ func (s *Server) handleHermesPromptUpstreamSessionRequest(method string, params 
 		}
 	}
 	if output == "" {
-		output = "ok"
+		return map[string]any{
+			"success":        false,
+			"provider":       s.providerID,
+			"mode":           "single-agent",
+			"error":          "hermes upstream returned empty response",
+			"upstreamMethod": "prompt",
+			"upstream":       response,
+		}
 	}
 
 	s.sessionsMu.Lock()
