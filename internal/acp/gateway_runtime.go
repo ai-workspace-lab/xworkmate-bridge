@@ -56,7 +56,7 @@ func handleGatewayConnect(
 	if request.Mode == "" {
 		request.Mode = "openclaw"
 	}
-	request = applyProductionGatewayRouting(request)
+	request = applyProductionGatewayRouting(server, request)
 	request.ReportedRemoteAddress = resolveGatewayReportedRemoteAddress(server, request)
 	result := server.gateway.Connect(request, notify)
 	return map[string]any{
@@ -69,19 +69,37 @@ func handleGatewayConnect(
 }
 
 func applyProductionGatewayRouting(
+	server *Server,
 	request gatewayruntime.ConnectRequest,
 ) gatewayruntime.ConnectRequest {
 	if strings.TrimSpace(strings.ToLower(request.Mode)) != "openclaw" {
 		return request
 	}
-	if request.Endpoint.Host == "localhost" || request.Endpoint.Host == "127.0.0.1" || request.Endpoint.Host == "0.0.0.0" {
+
+	gatewayURL := resolveURL(server.config.Upstream.GatewayURL, "GATEWAY_RPC_URL")
+	if gatewayURL == "" {
 		return request
 	}
-	// Route through the unified bridge ingress
+
+	parsed, err := url.Parse(gatewayURL)
+	if err != nil || parsed.Hostname() == "" {
+		return request
+	}
+
+	tls := strings.ToLower(parsed.Scheme) == "https" || strings.ToLower(parsed.Scheme) == "wss"
+	port := parsePositiveInt(parsed.Port())
+	if port == 0 {
+		if tls {
+			port = 443
+		} else {
+			port = 80
+		}
+	}
+
 	request.Endpoint = gatewayruntime.Endpoint{
-		Host: "xworkmate-bridge.svc.plus",
-		Port: 443,
-		TLS:  true,
+		Host: parsed.Hostname(),
+		Port: port,
+		TLS:  tls,
 	}
 	request.Auth.Token = strings.TrimSpace(bridgeUpstreamAuthorizationHeader())
 	request.Auth.Password = ""
