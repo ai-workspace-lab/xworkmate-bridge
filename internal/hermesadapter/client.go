@@ -176,8 +176,6 @@ func (c *stdioRPCClient) callLocked(method string, params map[string]any) (map[s
 		return nil, err
 	}
 	var response map[string]any
-	responseSeen := false
-	finalTextSeen := false
 	for {
 		if deadlineSetter, ok := c.stdoutPipe.(interface{ SetReadDeadline(time.Time) error }); ok {
 			timeout := 2 * time.Minute
@@ -194,9 +192,6 @@ func (c *stdioRPCClient) callLocked(method string, params map[string]any) (map[s
 					return nil, fmt.Errorf("hermes acp read failed: %s", trimmed)
 				}
 			}
-			if awaitFinalText && responseSeen {
-				return nil, fmt.Errorf("timed out waiting for hermes final session update")
-			}
 			return nil, err
 		}
 		var payload map[string]any
@@ -206,25 +201,13 @@ func (c *stdioRPCClient) callLocked(method string, params map[string]any) (map[s
 		if responseID, _ := payload["id"].(string); responseID != "" {
 			if responseID == requestID {
 				response = payload
-				responseSeen = true
-				if !awaitFinalText {
-					c.drainNotificationsLocked(2 * time.Second)
-					return response, nil
-				}
-				if finalTextSeen {
-					c.drainNotificationsLocked(500 * time.Millisecond)
-					return response, nil
-				}
+				c.drainNotificationsLocked(2 * time.Second)
+				return response, nil
 			}
 			continue
 		}
 		if handler := c.notificationHandler; handler != nil {
 			handler(payload)
-		}
-		if awaitFinalText && responseSeen && isHermesFinalSessionUpdate(payload) {
-			finalTextSeen = true
-			c.drainNotificationsLocked(500 * time.Millisecond)
-			return response, nil
 		}
 	}
 }
