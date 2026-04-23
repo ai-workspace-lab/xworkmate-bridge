@@ -1,6 +1,7 @@
 package acp
 
 import (
+	"context"
 	"net/url"
 	"strings"
 	"time"
@@ -8,6 +9,19 @@ import (
 	"xworkmate-bridge/internal/gatewayruntime"
 	"xworkmate-bridge/internal/shared"
 )
+
+func (s *Server) handleGatewayMethod(ctx context.Context, method string, params map[string]any, notify func(map[string]any)) (map[string]any, *shared.RPCError) {
+	switch method {
+	case "xworkmate.gateway.connect":
+		return handleGatewayConnect(s, params, notify), nil
+	case "xworkmate.gateway.request":
+		return handleGatewayRequest(s, params, notify), nil
+	case "xworkmate.gateway.disconnect":
+		return handleGatewayDisconnect(s, params, notify), nil
+	default:
+		return nil, &shared.RPCError{Code: -32601, Message: "unknown gateway method: " + method}
+	}
+}
 
 func handleGatewayConnect(
 	server *Server,
@@ -58,6 +72,11 @@ func handleGatewayConnect(
 	}
 	request = applyProductionGatewayRouting(server, request)
 	request.ReportedRemoteAddress = resolveGatewayReportedRemoteAddress(server, request)
+	
+	if server.gateway == nil {
+		server.gateway = gatewayruntime.NewManager()
+	}
+	
 	result := server.gateway.Connect(request, notify)
 	return map[string]any{
 		"ok":                  result.OK,
@@ -115,6 +134,9 @@ func handleGatewayRequest(
 	params map[string]any,
 	notify func(map[string]any),
 ) map[string]any {
+	if server.gateway == nil {
+		return map[string]any{"ok": false, "error": map[string]any{"message": "gateway not initialized"}}
+	}
 	timeout := time.Duration(parsePositiveInt(params["timeoutMs"])) * time.Millisecond
 	result := server.gateway.Request(
 		strings.TrimSpace(shared.StringArg(params, "runtimeId", "")),
@@ -135,95 +157,13 @@ func handleGatewayDisconnect(
 	params map[string]any,
 	notify func(map[string]any),
 ) map[string]any {
-	server.gateway.Disconnect(
-		strings.TrimSpace(shared.StringArg(params, "runtimeId", "")),
-		notify,
-	)
+	if server.gateway != nil {
+		server.gateway.Disconnect(
+			strings.TrimSpace(shared.StringArg(params, "runtimeId", "")),
+			notify,
+		)
+	}
 	return map[string]any{"accepted": true}
 }
 
-func parseGatewayRuntimeStringSlice(value any) []string {
-	list, ok := value.([]any)
-	if !ok {
-		if typed, ok := value.([]string); ok {
-			return append([]string(nil), typed...)
-		}
-		return nil
-	}
-	result := make([]string, 0, len(list))
-	for _, item := range list {
-		text := strings.TrimSpace(shared.StringArg(map[string]any{"value": item}, "value", ""))
-		if text == "" {
-			continue
-		}
-		result = append(result, text)
-	}
-	return result
-}
-
-func parseBool(value any) bool {
-	switch typed := value.(type) {
-	case bool:
-		return typed
-	case string:
-		return shared.BoolArg(typed, false)
-	case float64:
-		return typed != 0
-	case int:
-		return typed != 0
-	default:
-		return false
-	}
-}
-
-func parsePositiveInt(value any) int {
-	switch typed := value.(type) {
-	case int:
-		if typed > 0 {
-			return typed
-		}
-	case int64:
-		if typed > 0 {
-			return int(typed)
-		}
-	case float64:
-		if typed > 0 {
-			return int(typed)
-		}
-	case string:
-		return shared.IntArg(typed, 0)
-	}
-	return 0
-}
-
-func resolveGatewayReportedRemoteAddress(
-	server *Server,
-	request gatewayruntime.ConnectRequest,
-) string {
-	if strings.TrimSpace(strings.ToLower(request.Mode)) != "openclaw" {
-		return ""
-	}
-	gatewayURL := resolveURL(server.config.Upstream.GatewayURL, "GATEWAY_RPC_URL")
-	return publicEndpointAddressLabel(gatewayURL)
-}
-
-func publicEndpointAddressLabel(raw string) string {
-	parsed, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || strings.TrimSpace(parsed.Hostname()) == "" {
-		return ""
-	}
-	host := strings.TrimSpace(parsed.Hostname())
-	port := strings.TrimSpace(parsed.Port())
-	if port == "" {
-		switch strings.TrimSpace(strings.ToLower(parsed.Scheme)) {
-		case "https", "wss":
-			port = "443"
-		case "http", "ws":
-			port = "80"
-		}
-	}
-	if port == "" {
-		return host
-	}
-	return host + ":" + port
-}
+// Helper functions are now in helpers.go

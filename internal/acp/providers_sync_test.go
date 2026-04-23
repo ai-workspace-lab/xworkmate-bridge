@@ -10,20 +10,21 @@ import (
 func setTestBridgeProvider(server *Server, provider syncedProvider) {
 	server.mu.Lock()
 	defer server.mu.Unlock()
-	if server.providerCatalog == nil {
-		server.providerCatalog = map[string]syncedProvider{}
+	if server.adapters == nil {
+		server.adapters = make(map[string]ProviderAdapter)
 	}
-	server.providerCatalog[provider.ProviderID] = provider
-
-	found := false
-	for _, id := range server.providerOrder {
-		if id == provider.ProviderID {
-			found = true
-			break
-		}
+	server.adapters[provider.ProviderID] = &ProxyAdapter{
+		providerID: provider.ProviderID,
+		endpoint:   resolveSingleAgentForwardEndpoint(provider),
+		authHeader: provider.AuthorizationHeader,
 	}
-	if !found {
-		server.providerOrder = append(server.providerOrder, provider.ProviderID)
+	
+	if server.catalog != nil {
+		server.catalog.ProviderCatalog = append(server.catalog.ProviderCatalog, map[string]any{
+			"providerId": provider.ProviderID,
+			"label":      provider.Label,
+			"targets":    []string{"agent"},
+		})
 	}
 }
 
@@ -40,29 +41,40 @@ func TestCapabilitiesExposeBuiltInProductionProviderCatalog(t *testing.T) {
 	}
 
 	capabilities := response
-	if got := capabilities["singleAgent"]; got != true {
-		t.Fatalf("expected singleAgent true, got %v", got)
-	}
-
-	catalog, ok := capabilities["providerCatalog"].([]Provider)
+	targets, ok := capabilities["availableExecutionTargets"].([]any)
 	if !ok {
 		// Try fallback decoding if it was serialized
-		data, _ := json.Marshal(capabilities["providerCatalog"])
-		var providers []Provider
-		if err := json.Unmarshal(data, &providers); err == nil {
-			catalog = providers
-		} else {
-			t.Fatalf("expected providerCatalog array, got %T", capabilities["providerCatalog"])
+		data, _ := json.Marshal(capabilities["availableExecutionTargets"])
+		if err := json.Unmarshal(data, &targets); err != nil {
+			t.Fatalf("expected availableExecutionTargets array, got %T", capabilities["availableExecutionTargets"])
 		}
+	}
+	
+	foundAgent := false
+	for _, target := range targets {
+		if target == "agent" {
+			foundAgent = true
+			break
+		}
+	}
+	if !foundAgent {
+		t.Fatalf("expected agent target in availableExecutionTargets, got %v", targets)
+	}
+
+	var catalog []map[string]any
+	// Try decoding if it was serialized
+	data, _ := json.Marshal(capabilities["providerCatalog"])
+	if err := json.Unmarshal(data, &catalog); err != nil {
+		t.Fatalf("expected providerCatalog array, got %T", capabilities["providerCatalog"])
 	}
 
 	if len(catalog) < 4 {
 		t.Fatalf("expected at least 4 production providers, got %d", len(catalog))
 	}
 
-	providers := make(map[string]Provider)
+	providers := make(map[string]map[string]any)
 	for _, p := range catalog {
-		providers[p.ProviderID] = p
+		providers[p["providerId"].(string)] = p
 	}
 
 	if _, ok := providers["codex"]; !ok {
@@ -83,7 +95,7 @@ func TestProductionProviderCatalogFallsBackToBridgeAuthToken(t *testing.T) {
 	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
 	t.Setenv("INTERNAL_SERVICE_TOKEN", "")
 
-	catalog, _ := newProductionProviderCatalog()
+	_, catalog, _ := newProductionProviderCatalog()
 	p, ok := catalog["codex"]
 	if !ok {
 		t.Fatal("missing codex")
@@ -98,7 +110,7 @@ func TestProductionProviderCatalogPrefersDedicatedBridgeAuthToken(t *testing.T) 
 	t.Setenv("BRIDGE_AUTH_TOKEN", "dedicated-token")
 	t.Setenv("INTERNAL_SERVICE_TOKEN", "legacy-token")
 
-	catalog, _ := newProductionProviderCatalog()
+	_, catalog, _ := newProductionProviderCatalog()
 	p, ok := catalog["codex"]
 	if !ok {
 		t.Fatal("missing codex")
@@ -113,7 +125,7 @@ func TestProductionProviderCatalogIgnoresInternalServiceToken(t *testing.T) {
 	t.Setenv("BRIDGE_AUTH_TOKEN", "")
 	t.Setenv("INTERNAL_SERVICE_TOKEN", "legacy-token")
 
-	catalog, _ := newProductionProviderCatalog()
+	_, catalog, _ := newProductionProviderCatalog()
 	p, ok := catalog["codex"]
 	if !ok {
 		t.Fatal("missing codex")

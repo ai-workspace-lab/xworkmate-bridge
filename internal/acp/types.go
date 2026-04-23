@@ -5,40 +5,39 @@ import (
 	"sync"
 
 	"xworkmate-bridge/internal/gatewayruntime"
-	"xworkmate-bridge/internal/service"
-	"xworkmate-bridge/internal/shared"
+	"xworkmate-bridge/internal/memory"
 )
 
 type session struct {
 	sessionID string
 	threadID  string
 	mode      string
-	provider  string
-	history   []string
-	seq       int
+	provider  string // The Provider ID
+	target    string // The Execution Target ID
+	adapter   ProviderAdapter
 	cancel    context.CancelFunc
 	closed    bool
-}
-
-type task struct {
-	req    shared.RPCRequest
-	notify func(map[string]any)
-	done   chan taskResult
-}
-
-type taskResult struct {
-	response map[string]any
-	err      *shared.RPCError
+	mu        sync.Mutex
+	history   []string
 }
 
 type Server struct {
-	mu              sync.Mutex
+	mu              sync.RWMutex
 	config          *BridgeConfig
 	sessions        map[string]*session
-	queues          map[string]chan task
-	gateway         *gatewayruntime.Manager
-	providerCatalog map[string]syncedProvider
-	providerOrder   []string
-	authService     *service.StaticTokenAuthService
+	
+	// Core Control Plane Components
+	routingEngine   RoutingEngine
+	adapters        map[string]ProviderAdapter
+	catalog         *CapabilityCatalog
+	orchestrator    *SessionOrchestrator
+	memoryService   memory.Service
+	
+	providerOrder    []string
+	sessionToAdapter map[string]ProviderAdapter
+	gateway          *gatewayruntime.Manager
+
+	// Legacy / Common
+	authService     interface{} // Minimal auth dependency
 	allowedOrigins  []string
 }

@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"xworkmate-bridge/internal/gatewayruntime"
 	"xworkmate-bridge/internal/service"
 	"xworkmate-bridge/internal/shared"
 )
@@ -39,15 +38,11 @@ func Serve(args []string) error {
 }
 
 func NewServer() *Server {
-	config, providerCatalog, providerOrder := newProductionProviderCatalog()
-	return &Server{
-		config:          config,
-		sessions:        make(map[string]*session),
-		queues:          make(map[string]chan task),
-		gateway:         gatewayruntime.NewManager(),
-		providerCatalog: providerCatalog,
-		providerOrder:   providerOrder,
-		authService:     service.NewStaticTokenAuthService(strings.TrimSpace(shared.EnvOrDefault("BRIDGE_AUTH_TOKEN", ""))),
-		allowedOrigins:  shared.ParseAllowedOrigins(shared.EnvOrDefault("ACP_ALLOWED_ORIGINS", "https://xworkmate.svc.plus,http://localhost:*,http://127.0.0.1:*")),
+	s := &Server{
+		sessions:       make(map[string]*session),
+		allowedOrigins: shared.ParseAllowedOrigins(shared.EnvOrDefault("ACP_ALLOWED_ORIGINS", "https://xworkmate.svc.plus,http://localhost:*,http://127.0.0.1:*")),
+		authService:    service.NewStaticTokenAuthService(shared.EnvOrDefault("BRIDGE_AUTH_TOKEN", "")),
 	}
+	s.Bootstrap()
+	return s
 }

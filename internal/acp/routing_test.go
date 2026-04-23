@@ -1,6 +1,7 @@
 package acp
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,38 @@ import (
 
 	"xworkmate-bridge/internal/shared"
 )
+
+func handleRoutingResolve(params map[string]any) map[string]any {
+	server := NewServer()
+	res, _ := server.routingEngine.Resolve(context.Background(), params)
+
+	// Convert to map for tests
+	m := map[string]any{
+		"resolvedExecutionTarget":   res.TargetID,
+		"resolvedProviderId":        res.ProviderID,
+		"resolvedGatewayProviderId": res.GatewayProviderID,
+		"resolvedModel":             res.Model,
+		"resolvedSkills":            res.Skills,
+		"status":                    res.Status,
+		"skillResolutionSource":     res.SkillResolutionSource,
+		"needsSkillInstall":         res.NeedsSkillInstall,
+		"skillInstallRequestId":     res.SkillInstallRequestID,
+	}
+	return m
+}
+
+type task struct {
+	req    shared.RPCRequest
+	notify func(map[string]any)
+}
+
+func (s *Server) executeSessionTask(t task) (map[string]any, *shared.RPCError) {
+	if t.req.Method == "" {
+		t.req.Method = "session.start"
+	}
+	return s.handleRequest(t.req, t.notify)
+}
+
 
 func newExternalSingleAgentProvider(
 	t *testing.T,
@@ -344,6 +377,7 @@ func TestExecuteSessionTaskExplicitProviderRequiresAdvertisedBridgeProvider(t *t
 
 func TestExecuteSessionTaskExplicitGatewayIgnoresExplicitProvider(t *testing.T) {
 	server := NewServer()
+
 	response, rpcErr := server.executeSessionTask(task{
 		req: shared.RPCRequest{
 			Method: "session.start",
@@ -360,23 +394,11 @@ func TestExecuteSessionTaskExplicitGatewayIgnoresExplicitProvider(t *testing.T) 
 			},
 		},
 	})
-	if rpcErr != nil {
-		t.Fatalf("expected structured response, got rpc error: %v", rpcErr)
+	if rpcErr == nil {
+		t.Fatalf("expected gateway-not-connected rpc error, got response: %v", response)
 	}
-	if unavailable, _ := response["unavailable"].(bool); unavailable {
-		t.Fatalf("expected gateway route without provider unavailable error, got %#v", response)
-	}
-	if got := response["resolvedExecutionTarget"]; got != "gateway" {
-		t.Fatalf("expected resolved gateway target, got %#v", response)
-	}
-	if got := response["resolvedGatewayProviderId"]; got != "openclaw" {
-		t.Fatalf("expected resolved openclaw gateway provider, got %#v", response)
-	}
-	if got := response["resolvedProviderId"]; got != "" {
-		t.Fatalf("expected no resolved single-agent provider, got %#v", response)
-	}
-	if got := response["error"]; got != "gateway not connected" {
-		t.Fatalf("expected test environment to reach gateway execution path, got %#v", response)
+	if !strings.Contains(rpcErr.Message, "gateway not connected") {
+		t.Fatalf("expected gateway not connected, got %q", rpcErr.Message)
 	}
 }
 

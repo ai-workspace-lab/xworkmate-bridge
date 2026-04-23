@@ -41,22 +41,14 @@ func (s *Server) Handler() http.Handler {
 				"commit":  info.Commit,
 				"version": info.Version,
 			}
-			body, err := json.Marshal(resp)
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}
+			body, _ := json.Marshal(resp)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write(body)
-		case "/bridge/bootstrap/health":
-			s.HandleBridgeBootstrapHealth(w, r)
 		case "/acp/rpc":
 			s.HandleRPC(w, r)
 		case "/acp":
 			s.HandleWebSocket(w, r)
-		case "/gateway/openclaw/acp/rpc":
-			s.HandleGatewayRPCAlias(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -132,10 +124,6 @@ func (s *Server) writeAliasCapabilities(w http.ResponseWriter, providerID, targe
 }
 
 func (s *Server) HandleGatewayRPCAlias(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/gateway/openclaw" && r.URL.Path != "/gateway/openclaw/acp/rpc" {
-		http.NotFound(w, r)
-		return
-	}
 	if r.Method == http.MethodGet {
 		r = r.Clone(r.Context())
 		r.URL.Path = "/acp/rpc"
@@ -150,30 +138,13 @@ func (s *Server) HandleProviderRPC(w http.ResponseWriter, r *http.Request, provi
 		http.NotFound(w, r)
 		return
 	}
-	shared.ApplyCORS(w, r, s.allowedOrigins) // ACP uses configured allowed origins
+	shared.ApplyCORS(w, r, s.allowedOrigins)
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	if r.Method != http.MethodPost {
-		shared.WriteJSONError(
-			w,
-			nil,
-			http.StatusMethodNotAllowed,
-			-32600,
-			"method not allowed",
-		)
-		return
-	}
-	origin := strings.TrimSpace(r.Header.Get("Origin"))
-	if !shared.OriginAllowed(origin, s.allowedOrigins) {
-		shared.WriteJSONError(
-			w,
-			nil,
-			http.StatusForbidden,
-			-32003,
-			fmt.Sprintf("origin not allowed: %s", origin),
-		)
+		shared.WriteJSONError(w, nil, http.StatusMethodNotAllowed, -32600, "method not allowed")
 		return
 	}
 	payload, err := io.ReadAll(r.Body)
@@ -190,13 +161,7 @@ func (s *Server) HandleProviderRPC(w http.ResponseWriter, r *http.Request, provi
 		_ = json.Unmarshal(payload, &temp)
 		method := strings.TrimSpace(temp.Method)
 		if method != "acp.capabilities" && method != "health" {
-			shared.WriteJSONError(
-				w,
-				nil,
-				http.StatusUnauthorized,
-				-32001,
-				"missing bearer authorization",
-			)
+			shared.WriteJSONError(w, nil, http.StatusUnauthorized, -32001, "missing bearer authorization")
 			return
 		}
 	}
@@ -214,10 +179,7 @@ func (s *Server) HandleProviderRPC(w http.ResponseWriter, r *http.Request, provi
 		"explicitExecutionTarget": "singleAgent",
 		"explicitProviderId":    providerID,
 	}
-	request.Params = injectInboundAuthorizationHeader(
-		params,
-		r.Header.Get("Authorization"),
-	)
+	request.Params = injectInboundAuthorizationHeader(params, r.Header.Get("Authorization"))
 	response, rpcErr := s.handleRequest(request, nil)
 	if request.ID == nil {
 		return
@@ -234,23 +196,11 @@ func (s *Server) HandleProviderRPC(w http.ResponseWriter, r *http.Request, provi
 func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	if !shared.OriginAllowed(origin, s.allowedOrigins) {
-		shared.WriteJSONError(
-			w,
-			nil,
-			http.StatusForbidden,
-			-32003,
-			fmt.Sprintf("origin not allowed: %s", origin),
-		)
+		shared.WriteJSONError(w, nil, http.StatusForbidden, -32003, fmt.Sprintf("origin not allowed: %s", origin))
 		return
 	}
 	if !s.authorized(r) {
-		shared.WriteJSONError(
-			w,
-			nil,
-			http.StatusUnauthorized,
-			-32001,
-			"missing bearer authorization",
-		)
+		shared.WriteJSONError(w, nil, http.StatusUnauthorized, -32001, "missing bearer authorization")
 		return
 	}
 	upgrader := shared.StandardWSUpgrader
@@ -261,9 +211,7 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	defer func() {
-		_ = conn.Close()
-	}()
+	defer func() { _ = conn.Close() }()
 
 	var writeMu sync.Mutex
 	notify := func(message map[string]any) {
@@ -282,10 +230,7 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 			notify(shared.ErrorEnvelope(nil, -32700, err.Error()))
 			continue
 		}
-		request.Params = injectInboundAuthorizationHeader(
-			request.Params,
-			r.Header.Get("Authorization"),
-		)
+		request.Params = injectInboundAuthorizationHeader(request.Params, r.Header.Get("Authorization"))
 		response, rpcErr := s.handleRequest(request, notify)
 		if request.ID == nil {
 			continue
@@ -305,24 +250,12 @@ func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != http.MethodPost {
-		shared.WriteJSONError(
-			w,
-			nil,
-			http.StatusMethodNotAllowed,
-			-32600,
-			"method not allowed",
-		)
+		shared.WriteJSONError(w, nil, http.StatusMethodNotAllowed, -32600, "method not allowed")
 		return
 	}
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	if !shared.OriginAllowed(origin, s.allowedOrigins) {
-		shared.WriteJSONError(
-			w,
-			nil,
-			http.StatusForbidden,
-			-32003,
-			fmt.Sprintf("origin not allowed: %s", origin),
-		)
+		shared.WriteJSONError(w, nil, http.StatusForbidden, -32003, fmt.Sprintf("origin not allowed: %s", origin))
 		return
 	}
 	payload, err := io.ReadAll(r.Body)
@@ -339,13 +272,7 @@ func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal(payload, &temp)
 		method := strings.TrimSpace(temp.Method)
 		if method != "acp.capabilities" && method != "health" {
-			shared.WriteJSONError(
-				w,
-				nil,
-				http.StatusUnauthorized,
-				-32001,
-				"missing bearer authorization",
-			)
+			shared.WriteJSONError(w, nil, http.StatusUnauthorized, -32001, "missing bearer authorization")
 			return
 		}
 	}
@@ -354,10 +281,7 @@ func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
 		shared.WriteJSONError(w, nil, http.StatusBadRequest, -32700, err.Error())
 		return
 	}
-	request.Params = injectInboundAuthorizationHeader(
-		request.Params,
-		r.Header.Get("Authorization"),
-	)
+	request.Params = injectInboundAuthorizationHeader(request.Params, r.Header.Get("Authorization"))
 
 	accept := strings.ToLower(r.Header.Get("Accept"))
 	stream := strings.Contains(accept, "text/event-stream")
@@ -390,9 +314,7 @@ func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
 		if stream {
 			shared.WriteSSE(w, envelope)
 			_, _ = w.Write([]byte("data: [DONE]\n\n"))
-			if flusher != nil {
-				flusher.Flush()
-			}
+			if flusher != nil { flusher.Flush() }
 			return
 		}
 		w.WriteHeader(http.StatusOK)
@@ -402,9 +324,7 @@ func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
 	if stream {
 		shared.WriteSSE(w, shared.ResultEnvelope(request.ID, response))
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
-		if flusher != nil {
-			flusher.Flush()
-		}
+		if flusher != nil { flusher.Flush() }
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -419,5 +339,24 @@ func (s *Server) authorized(r *http.Request) bool {
 	if s.authService == nil {
 		return true
 	}
-	return s.authService.ValidateAuthorizationHeader(r.Header.Get("Authorization"))
+
+	type validator interface {
+		ValidateAuthorizationHeader(string) bool
+	}
+
+	if v, ok := s.authService.(validator); ok {
+		return v.ValidateAuthorizationHeader(r.Header.Get("Authorization"))
+	}
+	return true
+}
+
+func injectInboundAuthorizationHeader(params map[string]any, authorization string) map[string]any {
+	if params == nil {
+		params = map[string]any{}
+	}
+	authorization = strings.TrimSpace(authorization)
+	if authorization != "" {
+		params["bridgeAuthorizationHeader"] = authorization
+	}
+	return params
 }

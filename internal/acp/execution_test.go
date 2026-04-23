@@ -10,16 +10,16 @@ func TestResolveSingleAgentForwardEndpointFromExampleConfig(t *testing.T) {
 	os.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	defer os.Unsetenv("BRIDGE_CONFIG_PATH")
 
-	catalog, order := newProductionProviderCatalog()
+	_, catalog, order := newProductionProviderCatalog()
 	if len(order) == 0 {
 		t.Fatal("Expected non-empty provider order from example/config.yaml")
 	}
 
 	expectedEndpoints := map[string]string{
 		"codex":    "ws://127.0.0.1:9001/acp",
-		"opencode": "http://127.0.0.1:38992",
-		"gemini":   "http://127.0.0.1:8791",
-		"hermes":   "ws://127.0.0.1:3920",
+		"opencode": "http://127.0.0.1:38992/acp/rpc",
+		"gemini":   "http://127.0.0.1:8791/acp/rpc",
+		"hermes":   "ws://127.0.0.1:3920/acp",
 	}
 
 	for _, id := range order {
