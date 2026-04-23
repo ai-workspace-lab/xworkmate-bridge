@@ -26,31 +26,31 @@ func handleGatewayConnect(
 		HasSharedAuth:      parseBool(params["hasSharedAuth"]),
 		HasDeviceToken:     parseBool(params["hasDeviceToken"]),
 		Endpoint: gatewayruntime.Endpoint{
-			Host: strings.TrimSpace(shared.StringArg(asMap(params["endpoint"]), "host", "")),
-			Port: parsePositiveInt(asMap(params["endpoint"])["port"]),
-			TLS:  parseBool(asMap(params["endpoint"])["tls"]),
+			Host: strings.TrimSpace(shared.StringArg(shared.AsMap(params["endpoint"]), "host", "")),
+			Port: parsePositiveInt(shared.AsMap(params["endpoint"])["port"]),
+			TLS:  parseBool(shared.AsMap(params["endpoint"])["tls"]),
 		},
 		PackageInfo: gatewayruntime.PackageInfo{
-			AppName:     strings.TrimSpace(shared.StringArg(asMap(params["packageInfo"]), "appName", "")),
-			PackageName: strings.TrimSpace(shared.StringArg(asMap(params["packageInfo"]), "packageName", "")),
-			Version:     strings.TrimSpace(shared.StringArg(asMap(params["packageInfo"]), "version", "")),
-			BuildNumber: strings.TrimSpace(shared.StringArg(asMap(params["packageInfo"]), "buildNumber", "")),
+			AppName:     strings.TrimSpace(shared.StringArg(shared.AsMap(params["packageInfo"]), "appName", "")),
+			PackageName: strings.TrimSpace(shared.StringArg(shared.AsMap(params["packageInfo"]), "packageName", "")),
+			Version:     strings.TrimSpace(shared.StringArg(shared.AsMap(params["packageInfo"]), "version", "")),
+			BuildNumber: strings.TrimSpace(shared.StringArg(shared.AsMap(params["packageInfo"]), "buildNumber", "")),
 		},
 		DeviceInfo: gatewayruntime.DeviceInfo{
-			Platform:        strings.TrimSpace(shared.StringArg(asMap(params["deviceInfo"]), "platform", "")),
-			PlatformVersion: strings.TrimSpace(shared.StringArg(asMap(params["deviceInfo"]), "platformVersion", "")),
-			DeviceFamily:    strings.TrimSpace(shared.StringArg(asMap(params["deviceInfo"]), "deviceFamily", "")),
-			ModelIdentifier: strings.TrimSpace(shared.StringArg(asMap(params["deviceInfo"]), "modelIdentifier", "")),
+			Platform:        strings.TrimSpace(shared.StringArg(shared.AsMap(params["deviceInfo"]), "platform", "")),
+			PlatformVersion: strings.TrimSpace(shared.StringArg(shared.AsMap(params["deviceInfo"]), "platformVersion", "")),
+			DeviceFamily:    strings.TrimSpace(shared.StringArg(shared.AsMap(params["deviceInfo"]), "deviceFamily", "")),
+			ModelIdentifier: strings.TrimSpace(shared.StringArg(shared.AsMap(params["deviceInfo"]), "modelIdentifier", "")),
 		},
 		Identity: gatewayruntime.DeviceIdentity{
-			DeviceID:            strings.TrimSpace(shared.StringArg(asMap(params["identity"]), "deviceId", "")),
-			PublicKeyBase64URL:  strings.TrimSpace(shared.StringArg(asMap(params["identity"]), "publicKeyBase64Url", "")),
-			PrivateKeyBase64URL: strings.TrimSpace(shared.StringArg(asMap(params["identity"]), "privateKeyBase64Url", "")),
+			DeviceID:            strings.TrimSpace(shared.StringArg(shared.AsMap(params["identity"]), "deviceId", "")),
+			PublicKeyBase64URL:  strings.TrimSpace(shared.StringArg(shared.AsMap(params["identity"]), "publicKeyBase64Url", "")),
+			PrivateKeyBase64URL: strings.TrimSpace(shared.StringArg(shared.AsMap(params["identity"]), "privateKeyBase64Url", "")),
 		},
 		Auth: gatewayruntime.AuthConfig{
-			Token:       strings.TrimSpace(shared.StringArg(asMap(params["auth"]), "token", "")),
-			DeviceToken: strings.TrimSpace(shared.StringArg(asMap(params["auth"]), "deviceToken", "")),
-			Password:    strings.TrimSpace(shared.StringArg(asMap(params["auth"]), "password", "")),
+			Token:       strings.TrimSpace(shared.StringArg(shared.AsMap(params["auth"]), "token", "")),
+			DeviceToken: strings.TrimSpace(shared.StringArg(shared.AsMap(params["auth"]), "deviceToken", "")),
+			Password:    strings.TrimSpace(shared.StringArg(shared.AsMap(params["auth"]), "password", "")),
 		},
 	}
 	if request.Mode == "" {
@@ -98,7 +98,7 @@ func handleGatewayRequest(
 	result := server.gateway.Request(
 		strings.TrimSpace(shared.StringArg(params, "runtimeId", "")),
 		strings.TrimSpace(shared.StringArg(params, "method", "")),
-		asMap(params["params"]),
+		shared.AsMap(params["params"]),
 		timeout,
 		notify,
 	)
@@ -119,16 +119,6 @@ func handleGatewayDisconnect(
 		notify,
 	)
 	return map[string]any{"accepted": true}
-}
-
-func asMap(value any) map[string]any {
-	if typed, ok := value.(map[string]any); ok {
-		return typed
-	}
-	if typed, ok := value.(map[string]interface{}); ok {
-		return typed
-	}
-	return map[string]any{}
 }
 
 func parseGatewayRuntimeStringSlice(value any) []string {
@@ -192,8 +182,8 @@ func resolveGatewayReportedRemoteAddress(
 	if strings.TrimSpace(strings.ToLower(request.Mode)) != "openclaw" {
 		return ""
 	}
-	_ = server
-	return publicEndpointAddressLabel(productionGatewayEndpointURL)
+	gatewayURL := resolveURL(server.config.Upstream.GatewayURL, "GATEWAY_RPC_URL")
+	return publicEndpointAddressLabel(gatewayURL)
 }
 
 func publicEndpointAddressLabel(raw string) string {

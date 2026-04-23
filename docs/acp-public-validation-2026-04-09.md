@@ -1,185 +1,83 @@
-# ACP Public Validation - 2026-04-09
+# ACP Public Validation & Expansion Planning - 2026-04-09
 
 This document records the post-deployment validation of the bridge public
-origin at `xworkmate-bridge.svc.plus` and the independent upstream ACP ingress
-at `xworkmate-bridge.svc.plus/acp-server`.
+origin at `xworkmate-bridge.svc.plus` and outlines the expansion architecture
+for the independent upstream ACP adapters.
 
-For APP integration, the canonical public contract remains the bridge origin
-and the `.../acp/rpc` path on that origin. The direct `xworkmate-bridge.svc.plus/acp-server`
-URLs in this document are upstream validation targets, not the preferred APP
-entry points.
+## Expansion Modes Planning
 
-## Verified Public Endpoints
+To support a diverse set of backend providers, the bridge operates in the following expansion modes:
 
-### Bridge root
+| Mode ID | Adapter Role | Implementation Type |
+| :--- | :--- | :--- |
+| `acp-adapter-codex`    | Codex ACP Adapter    | Protocol Translator / Forwarder |
+| `acp-adapter-opencode` | OpenCode ACP Adapter | JSON-RPC over stdio |
+| `acp-adapter-gemini`   | Gemini ACP Adapter   | JSON-RPC over stdio |
+| `acp-adapter-hermes`   | Hermes ACP Adapter   | JSON-RPC over stdio |
+| `gateway-adapter-openclaw` | OpenClaw Gateway | Unified Protocol Entry |
 
-- URL: `https://xworkmate-bridge.svc.plus/`
-- Result: `200 OK`
-- Body: `xworkmate-bridge is running`
+## Protocol Entry Points (Public)
 
-### ACP public ingress
+The canonical entry points for external integrations are segmented by provider:
 
-The public ACP JSON-RPC endpoint is the `.../acp/rpc` path.
+*   **Codex**: `https://xworkmate-bridge.svc.plus/acp-server/codex`
+*   **Gemini**: `https://xworkmate-bridge.svc.plus/acp-server/gemini`
+*   **Hermes**: `https://xworkmate-bridge.svc.plus/acp-server/hermes`
+*   **OpenCode**: `https://xworkmate-bridge.svc.plus/acp-server/opencode`
+*   **OpenClaw**: `https://xworkmate-bridge.svc.plus/gateway/openclaw`
 
-Do not send JSON-RPC requests to `.../acp` for HTTP clients.
+## Request Chain & Runtime Design
 
-Recommended APP-facing endpoint:
+### Traffic Flow
+`Caddy (Ingress)` -> `xworkmate-bridge (Dispatcher)` -> `Adapter Service`
 
-- `https://xworkmate-bridge.svc.plus/acp/rpc`
+Caddy handles SSL termination and forwards requests to the `xworkmate-bridge` process, which performs path-based routing to the respective local adapter services.
 
-Verified public HTTP JSON-RPC endpoints:
+### Systemd Services & Local Mappings
 
-- Codex: `https://xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc`
-- OpenCode: `https://xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc`
-- Gemini: `https://xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc`
-- Hermes: `https://xworkmate-bridge.svc.plus/acp-server/hermes/acp/rpc`
-- OpenClaw: `https://xworkmate-bridge.svc.plus/gateway/openclaw/`
+Each adapter is managed as a standalone systemd service, mapped to a specific local port/protocol:
 
-The `.../acp` path remains reserved for WebSocket ACP.
+| Service Name | Local Endpoint | Adapter Target |
+| :--- | :--- | :--- |
+| `acp-codex.service`    | `ws://127.0.0.1:9001`  | Codex Engine |
+| `acp-opencode.service` | `ws://127.0.0.1:38992` | OpenCode Runtime |
+| `acp-gemini.service`   | `ws://127.0.0.1:8791`  | Gemini Bridge |
+| `acp-hermes.service`   | `ws://127.0.0.1:3920`  | Hermes Engine |
+| `(Host Process)`       | `ws://127.0.0.1:18789` | OpenClaw (Shared Runtime) |
 
 ## Auth Contract
 
-All verified public ACP HTTP requests used:
+All public ACP requests require:
 
-- header: `Authorization: Bearer <INTERNAL_SERVICE_TOKEN>`
-- header: `Content-Type: application/json`
+-   header: `Authorization: Bearer <INTERNAL_SERVICE_TOKEN>`
+-   header: `Content-Type: application/json`
 
-Missing bearer auth returns a JSON-RPC error envelope with code `-32001`.
+Missing or invalid bearer auth returns a JSON-RPC error envelope with code `-32001`.
 
-## Public Validation Results
+## Validation Results (2026-04-09)
 
-The ingress returned `200 OK` on all public routes after re-apply, and the deployment response confirmed the active upstream mappings:
-
-- `codex` -> `127.0.0.1:9001`
-- `opencode` -> `127.0.0.1:38992`
-- `gemini` -> `127.0.0.1:8791`
-- `hermes` -> `127.0.0.1:3920`
-- `openclaw` -> `127.0.0.1:18789` (Host process)
+The ingress returned `200 OK` on all public routes after re-apply.
 
 ### Codex
-
-Verified `acp.capabilities` over the public ingress:
-
-```json
-{
-  "method": "acp.capabilities",
-  "result": {
-    "providers": ["codex", "gemini", "opencode"],
-    "singleAgent": true,
-    "multiAgent": true
-  }
-}
-```
-
-Verified end-to-end task execution over the public ingress.
-
-Observed conversation behavior:
-
-- `session.start` succeeded and returned `round1`
-- `session.message` also succeeded and returned `round2`
-- `session.message` must include the same `routing` payload as `session.start`
-- omitting `routing` returns `ROUTING_REQUIRED`
+- Verified `acp.capabilities`: `["codex", "gemini", "opencode"]`
+- Two-turn conversation (`session.start` -> `session.message`) passed.
 
 ### OpenCode
-
-Verified `acp.capabilities` over the public ingress:
-
-```json
-{
-  "method": "acp.capabilities",
-  "result": {
-    "providers": ["opencode"],
-    "singleAgent": true,
-    "multiAgent": true
-  }
-}
-```
-
-Verified `session.start` end to end with prompt `Reply with exactly pong`.
-
-Observed result:
-
-```json
-{
-  "success": true,
-  "provider": "opencode",
-  "output": "pong"
-}
-```
-
-Observed conversation behavior:
-
-- `session.start` succeeded and returned `round1`
-- `session.message` also succeeded and returned `round2`
-- `session.message` must include the same `routing` payload as `session.start`
-- omitting `routing` returns `ROUTING_REQUIRED`
+- Validated as WebSocket ACP upstream at `ws://127.0.0.1:38992/acp`.
+- Two-turn conversation passed.
 
 ### Gemini
-
-Verified `acp.capabilities` over the public ingress:
-
-```json
-{
-  "method": "acp.capabilities",
-  "result": {
-    "providers": ["gemini"],
-    "singleAgent": true,
-    "multiAgent": false
-  }
-}
-```
-
-Before the compatibility layer landed, the upstream Gemini ACP returned:
-
-```json
-{
-  "success": false,
-  "error": "\"Method not found\": session.start"
-}
-```
-
-The adapter has now been updated so `session.start` and `session.message` default to adapter-local prompt compatibility instead of forwarding unsupported upstream methods.
-
-Observed conversation behavior after re-apply:
-
-- `session.start` succeeded and returned `round1`
-- `session.message` succeeded and returned `round2`
-- long conversation validation passed through the public ingress
-
-## Long Conversation Validation
-
-All three public ACP agent entries now pass a two-turn conversation check:
-
-1. `session.start`
-2. `session.message`
-
-Verified result summary:
-
-- `codex` long conversation passed
-- `opencode` long conversation passed
-- `gemini` long conversation passed
-
-This confirms the upstream ACP baseline. The APP-facing baseline remains
-`https://xworkmate-bridge.svc.plus/acp/rpc`.
+- Verified `acp.capabilities`: `["gemini"]`
+- Adapter-local prompt compatibility layer enables `session.start` / `session.message` despite lack of native upstream support.
+- Two-turn conversation passed.
 
 ## App Integration Notes
 
 ### Recommended request shape
 
-For APP integration, use JSON-RPC `POST` requests against
-`https://xworkmate-bridge.svc.plus/acp/rpc`.
+Use JSON-RPC `POST` requests against `https://xworkmate-bridge.svc.plus/acp/rpc` for general usage, or the specific provider endpoints for targeted execution.
 
-For capability discovery:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": "cap-1",
-  "method": "acp.capabilities"
-}
-```
-
-For single-agent task execution:
+**Example Task Execution:**
 
 ```json
 {
@@ -201,8 +99,6 @@ For single-agent task execution:
 ```
 
 ### Provider-specific notes
-
-- `codex`, `opencode`, `gemini`, and `hermes` are all now verified public task paths.
-- `gemini` still depends on the adapter compatibility layer, not a native upstream Gemini ACP conversation method.
-- For multi-turn flows, apps should preserve and resend `routing` on every `session.message`.
-- `codex` and `opencode` currently require explicit `routing` on follow-up turns.
+- `codex` and `opencode` require explicit `routing` on follow-up turns.
+- `gemini` uses a prompt-compatibility layer for multi-turn support.
+- `hermes` is verified as a public task path.

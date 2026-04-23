@@ -12,8 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
-
 	"xworkmate-bridge/internal/service"
 	"xworkmate-bridge/internal/shared"
 )
@@ -36,14 +34,6 @@ type Server struct {
 	sessions       map[string]*adapterSession
 }
 
-var adapterWSUpgrader = websocket.Upgrader{
-	ReadBufferSize:  16 * 1024,
-	WriteBufferSize: 16 * 1024,
-	CheckOrigin: func(*http.Request) bool {
-		return true
-	},
-}
-
 type adapterSession struct {
 	history            []string
 	model              string
@@ -53,7 +43,7 @@ type adapterSession struct {
 }
 
 func Serve(args []string) error {
-	flags := flag.NewFlagSet("gemini-acp-adapter", flag.ExitOnError)
+	flags := flag.NewFlagSet("adapter gemini", flag.ExitOnError)
 	listen := flags.String(
 		"listen",
 		strings.TrimSpace(shared.EnvOrDefault("GEMINI_ADAPTER_LISTEN_ADDR", defaultListenAddr)),
@@ -110,7 +100,7 @@ func NewServer(client rpcClient) *Server {
 		authService:    service.NewStaticTokenAuthService(strings.TrimSpace(shared.EnvOrDefault("GEMINI_ADAPTER_AUTH_TOKEN", ""))),
 		providerID:     strings.TrimSpace(shared.EnvOrDefault("GEMINI_ADAPTER_PROVIDER_ID", defaultProviderID)),
 		providerLabel:  strings.TrimSpace(shared.EnvOrDefault("GEMINI_ADAPTER_PROVIDER_LABEL", defaultLabel)),
-		allowedOrigins: parseAllowedOrigins(strings.TrimSpace(shared.EnvOrDefault("GEMINI_ADAPTER_ALLOWED_ORIGINS", "https://xworkmate.svc.plus,http://localhost:*,http://127.0.0.1:*"))),
+		allowedOrigins: shared.ParseAllowedOrigins(strings.TrimSpace(shared.EnvOrDefault("GEMINI_ADAPTER_ALLOWED_ORIGINS", "https://xworkmate.svc.plus,http://localhost:*,http://127.0.0.1:*"))),
 		upstreamMethod: strings.TrimSpace(shared.EnvOrDefault("GEMINI_ADAPTER_UPSTREAM_METHOD", "")),
 		sessionRunner: func(ctx context.Context, model, prompt, workingDirectory string) (string, error) {
 			return shared.RunProviderCommand(
@@ -126,17 +116,17 @@ func NewServer(client rpcClient) *Server {
 }
 
 func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
-	if !s.originAllowed(r.Header.Get("Origin")) {
-		s.writeJSONError(w, nil, http.StatusForbidden, -32003, fmt.Sprintf("origin not allowed: %s", strings.TrimSpace(r.Header.Get("Origin"))))
+	if !shared.OriginAllowed(r.Header.Get("Origin"), s.allowedOrigins) {
+		shared.WriteJSONError(w, nil, http.StatusForbidden, -32003, fmt.Sprintf("origin not allowed: %s", strings.TrimSpace(r.Header.Get("Origin"))))
 		return
 	}
 	if !s.authorized(r) {
-		s.writeJSONError(w, nil, http.StatusUnauthorized, -32001, "missing bearer authorization")
+		shared.WriteJSONError(w, nil, http.StatusUnauthorized, -32001, "missing bearer authorization")
 		return
 	}
-	upgrader := adapterWSUpgrader
+	upgrader := shared.StandardWSUpgrader
 	upgrader.CheckOrigin = func(req *http.Request) bool {
-		return s.originAllowed(req.Header.Get("Origin")) && s.authorized(req)
+		return shared.OriginAllowed(req.Header.Get("Origin"), s.allowedOrigins) && s.authorized(req)
 	}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -172,31 +162,31 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
-	s.applyCORS(w, r)
+	shared.ApplyCORS(w, r, s.allowedOrigins)
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	if r.Method != http.MethodPost {
-		s.writeJSONError(w, nil, http.StatusMethodNotAllowed, -32600, "method not allowed")
+		shared.WriteJSONError(w, nil, http.StatusMethodNotAllowed, -32600, "method not allowed")
 		return
 	}
-	if !s.originAllowed(r.Header.Get("Origin")) {
-		s.writeJSONError(w, nil, http.StatusForbidden, -32003, fmt.Sprintf("origin not allowed: %s", strings.TrimSpace(r.Header.Get("Origin"))))
+	if !shared.OriginAllowed(r.Header.Get("Origin"), s.allowedOrigins) {
+		shared.WriteJSONError(w, nil, http.StatusForbidden, -32003, fmt.Sprintf("origin not allowed: %s", strings.TrimSpace(r.Header.Get("Origin"))))
 		return
 	}
 	if !s.authorized(r) {
-		s.writeJSONError(w, nil, http.StatusUnauthorized, -32001, "missing bearer authorization")
+		shared.WriteJSONError(w, nil, http.StatusUnauthorized, -32001, "missing bearer authorization")
 		return
 	}
 	payload, err := io.ReadAll(r.Body)
 	if err != nil {
-		s.writeJSONError(w, nil, http.StatusBadRequest, -32600, "invalid body")
+		shared.WriteJSONError(w, nil, http.StatusBadRequest, -32600, "invalid body")
 		return
 	}
 	request, err := shared.DecodeRPCRequest(payload)
 	if err != nil {
-		s.writeJSONError(w, nil, http.StatusBadRequest, -32700, err.Error())
+		shared.WriteJSONError(w, nil, http.StatusBadRequest, -32700, err.Error())
 		return
 	}
 	result := s.handleRequest(request)
@@ -472,56 +462,6 @@ func (s *Server) closeSession(sessionID string) bool {
 	return true
 }
 
-func parseAllowedOrigins(raw string) []string {
-	if raw == "" {
-		return nil
-	}
-	parts := strings.Split(raw, ",")
-	result := make([]string, 0, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		result = append(result, part)
-	}
-	return result
-}
-
-func (s *Server) originAllowed(origin string) bool {
-	origin = strings.TrimSpace(origin)
-	if origin == "" {
-		return true
-	}
-	for _, allowed := range s.allowedOrigins {
-		if strings.HasSuffix(allowed, ":*") {
-			if strings.HasPrefix(origin, strings.TrimSuffix(allowed, "*")) {
-				return true
-			}
-			continue
-		}
-		if origin == allowed {
-			return true
-		}
-	}
-	return false
-}
-
-func (s *Server) applyCORS(w http.ResponseWriter, r *http.Request) {
-	origin := strings.TrimSpace(r.Header.Get("Origin"))
-	if origin == "" || !s.originAllowed(origin) {
-		return
-	}
-	headers := w.Header()
-	headers.Set("Access-Control-Allow-Origin", origin)
-	headers.Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-	headers.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept")
-	headers.Set("Access-Control-Max-Age", "600")
-	headers.Add("Vary", "Origin")
-	headers.Add("Vary", "Access-Control-Request-Method")
-	headers.Add("Vary", "Access-Control-Request-Headers")
-}
-
 func (s *Server) authorized(r *http.Request) bool {
 	if s == nil {
 		return false
@@ -530,10 +470,4 @@ func (s *Server) authorized(r *http.Request) bool {
 		return true
 	}
 	return s.authService.ValidateAuthorizationHeader(r.Header.Get("Authorization"))
-}
-
-func (s *Server) writeJSONError(w http.ResponseWriter, requestID any, statusCode int, code int, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(shared.ErrorEnvelope(requestID, code, message))
 }

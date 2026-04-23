@@ -79,3 +79,16 @@ func BoolArg(raw string, fallback bool) bool {
 		return fallback
 	}
 }
+
+func AsMap(value any) map[string]any {
+	if value == nil {
+		return nil
+	}
+	if typed, ok := value.(map[string]any); ok {
+		return typed
+	}
+	if typed, ok := value.(map[string]interface{}); ok {
+		return typed
+	}
+	return nil
+}

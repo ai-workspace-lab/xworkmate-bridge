@@ -123,7 +123,7 @@ func parseCandidates(raw any) []Candidate {
 	case []any:
 		result := make([]Candidate, 0, len(typed))
 		for _, item := range typed {
-			entry := toMap(item)
+			entry := shared.AsMap(item)
 			if len(entry) == 0 {
 				continue
 			}
@@ -131,7 +131,7 @@ func parseCandidates(raw any) []Candidate {
 				ID:          strings.TrimSpace(stringValue(entry["id"])),
 				Label:       strings.TrimSpace(stringValue(entry["label"])),
 				Description: strings.TrimSpace(stringValue(entry["description"])),
-				Installed:   boolValue(entry["installed"]),
+				Installed:   shared.BoolArg(stringValue(entry["installed"]), false),
 			})
 		}
 		return dedupeCandidates(result)
@@ -146,7 +146,7 @@ func parseCandidates(raw any) []Candidate {
 			ID:          strings.TrimSpace(stringValue(typed["id"])),
 			Label:       strings.TrimSpace(stringValue(typed["label"])),
 			Description: strings.TrimSpace(stringValue(typed["description"])),
-			Installed:   boolValue(typed["installed"]),
+			Installed:   shared.BoolArg(stringValue(typed["installed"]), false),
 		}
 		if entry.ID == "" && entry.Label == "" {
 			return nil
@@ -170,16 +170,6 @@ func routingCandidatesPayload(candidates []Candidate) []map[string]any {
 	return result
 }
 
-func toMap(value any) map[string]any {
-	if typed, ok := value.(map[string]any); ok {
-		return typed
-	}
-	if typed, ok := value.(map[string]interface{}); ok {
-		return typed
-	}
-	return nil
-}
-
 func stringValue(value any) string {
 	if value == nil {
 		return ""
@@ -189,21 +179,5 @@ func stringValue(value any) string {
 		return strings.TrimSpace(typed)
 	default:
 		return strings.TrimSpace(fmt.Sprint(value))
-	}
-}
-
-func boolValue(value any) bool {
-	switch typed := value.(type) {
-	case bool:
-		return typed
-	case string:
-		normalized := strings.ToLower(strings.TrimSpace(typed))
-		return normalized == "true" || normalized == "1" || normalized == "yes"
-	case float64:
-		return typed != 0
-	case int:
-		return typed != 0
-	default:
-		return false
 	}
 }

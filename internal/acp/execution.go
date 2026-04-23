@@ -111,7 +111,7 @@ func (s *Server) runGateway(
 			},
 		}
 	}
-	payload := asMap(result.Payload)
+	payload := shared.AsMap(result.Payload)
 	if len(payload) == 0 {
 		payload = map[string]any{
 			"success": true,
@@ -162,7 +162,7 @@ func (s *Server) runSingleAgentViaExternalProvider(
 	if err != nil {
 		return nil, err
 	}
-	result := asMap(response["result"])
+	result := shared.AsMap(response["result"])
 	if len(result) == 0 {
 		result = response
 	}
@@ -193,7 +193,7 @@ func (s *Server) probeExternalProvider(
 	if err != nil {
 		return nil, err
 	}
-	result := asMap(response["result"])
+	result := shared.AsMap(response["result"])
 	if len(result) == 0 {
 		return nil, fmt.Errorf("external provider probe missing result payload")
 	}
@@ -301,7 +301,7 @@ func requestExternalACPHTTP(
 	if err := json.NewDecoder(response.Body).Decode(&decoded); err != nil {
 		return nil, fmt.Errorf("failed to decode external ACP response: %w", err)
 	}
-	if errPayload := asMap(decoded["error"]); len(errPayload) > 0 {
+	if errPayload := shared.AsMap(decoded["error"]); len(errPayload) > 0 {
 		return nil, fmt.Errorf(
 			"%s",
 			strings.TrimSpace(shared.StringArg(errPayload, "message", "external ACP request failed")),
@@ -333,7 +333,7 @@ func (c *externalACPNotificationCollector) observe(notification map[string]any) 
 	if method != "session.update" && method != "acp.session.update" && method != "session/update" {
 		return
 	}
-	params := asMap(notification["params"])
+	params := shared.AsMap(notification["params"])
 	if len(params) == 0 {
 		return
 	}
@@ -410,11 +410,11 @@ func extractExternalACPNotificationText(notification map[string]any) string {
 	if notification == nil {
 		return ""
 	}
-	payload := asMap(notification["params"])
+	payload := shared.AsMap(notification["params"])
 	if len(payload) == 0 {
 		payload = notification
 	}
-	update := asMap(payload["update"])
+	update := shared.AsMap(payload["update"])
 	if len(update) == 0 {
 		update = payload
 	}
@@ -482,14 +482,14 @@ func enrichSingleAgentResultArtifacts(result map[string]any, requestParams map[s
 	}
 	remoteWorkingDirectory := firstNonEmptyString(
 		shared.StringArg(result, "remoteWorkingDirectory", ""),
-		shared.StringArg(asMap(result["remoteExecution"]), "remoteWorkingDirectory", ""),
+		shared.StringArg(shared.AsMap(result["remoteExecution"]), "remoteWorkingDirectory", ""),
 		shared.StringArg(result, "resolvedWorkingDirectory", ""),
 		shared.StringArg(result, "effectiveWorkingDirectory", ""),
 		shared.StringArg(requestParams, "workingDirectory", ""),
 	)
 	remoteWorkspaceRefKind := firstNonEmptyString(
 		shared.StringArg(result, "remoteWorkspaceRefKind", ""),
-		shared.StringArg(asMap(result["remoteExecution"]), "remoteWorkspaceRefKind", ""),
+		shared.StringArg(shared.AsMap(result["remoteExecution"]), "remoteWorkspaceRefKind", ""),
 		"remotePath",
 	)
 	if strings.TrimSpace(shared.StringArg(result, "resultSummary", "")) == "" {
@@ -694,7 +694,7 @@ func requestExternalACPWebSocket(
 		}
 		if strings.TrimSpace(shared.StringArg(payload, "id", "")) == requestID &&
 			(payload["result"] != nil || payload["error"] != nil) {
-			if errPayload := asMap(payload["error"]); len(errPayload) > 0 {
+			if errPayload := shared.AsMap(payload["error"]); len(errPayload) > 0 {
 				return nil, fmt.Errorf(
 					"%s",
 					strings.TrimSpace(shared.StringArg(errPayload, "message", "external ACP request failed")),

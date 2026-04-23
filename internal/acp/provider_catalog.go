@@ -8,11 +8,6 @@ import (
 	"xworkmate-bridge/internal/shared"
 )
 
-// Default production endpoints for XWorkmate managed bridge environment.
-const (
-	productionGatewayEndpointURL = "ws://127.0.0.1:18789/"
-)
-
 type syncedProvider struct {
 	ProviderID          string
 	Label               string
@@ -44,7 +39,7 @@ func loadBridgeConfig() *BridgeConfig {
 	return config
 }
 
-func resolveURL(yamlVal string, defaultVal string, envKeys ...string) string {
+func resolveURL(yamlVal string, envKeys ...string) string {
 	val := strings.TrimSpace(yamlVal)
 	if val != "" {
 		return val
@@ -54,7 +49,7 @@ func resolveURL(yamlVal string, defaultVal string, envKeys ...string) string {
 			return v
 		}
 	}
-	return defaultVal
+	return ""
 }
 
 func bridgeUpstreamAuthorizationHeader() string {
@@ -65,44 +60,39 @@ func bridgeUpstreamAuthorizationHeader() string {
 	return token
 }
 
-func newProductionProviderCatalog() (map[string]syncedProvider, []string) {
+func newProductionProviderCatalog() (*BridgeConfig, map[string]syncedProvider, []string) {
 	config := loadBridgeConfig()
 	authorizationHeader := bridgeUpstreamAuthorizationHeader()
 
 	providers := []struct {
-		id         string
-		label      string
-		yaml       string
-		envKeys    []string
-		defaultURL string
+		id      string
+		label   string
+		yaml    string
+		envKeys []string
 	}{
 		{
-			id:         "codex",
-			label:      "Codex",
-			yaml:       config.Upstream.CodexURL,
-			envKeys:    []string{"CODEX_RPC_URL"},
-			defaultURL: "ws://127.0.0.1:9001/acp",
+			id:      "codex",
+			label:   "Codex",
+			yaml:    config.Upstream.CodexURL,
+			envKeys: []string{"CODEX_RPC_URL"},
 		},
 		{
-			id:         "opencode",
-			label:      "OpenCode",
-			yaml:       config.Upstream.OpenCodeURL,
-			envKeys:    []string{"OPENCODE_RPC_URL"},
-			defaultURL: "http://127.0.0.1:38992",
+			id:      "opencode",
+			label:   "OpenCode",
+			yaml:    config.Upstream.OpenCodeURL,
+			envKeys: []string{"OPENCODE_RPC_URL"},
 		},
 		{
-			id:         "gemini",
-			label:      "Gemini",
-			yaml:       config.Upstream.GeminiURL,
-			envKeys:    []string{"GEMINI_RPC_URL"},
-			defaultURL: "http://127.0.0.1:8791",
+			id:      "gemini",
+			label:   "Gemini",
+			yaml:    config.Upstream.GeminiURL,
+			envKeys: []string{"GEMINI_RPC_URL"},
 		},
 		{
-			id:         "hermes",
-			label:      "Hermes",
-			yaml:       config.Upstream.HermesURL,
-			envKeys:    []string{"HERMES_RPC_URL"},
-			defaultURL: "ws://127.0.0.1:3920",
+			id:      "hermes",
+			label:   "Hermes",
+			yaml:    config.Upstream.HermesURL,
+			envKeys: []string{"HERMES_RPC_URL"},
 		},
 	}
 
@@ -110,7 +100,7 @@ func newProductionProviderCatalog() (map[string]syncedProvider, []string) {
 	var order []string
 
 	for _, p := range providers {
-		endpoint := resolveURL(p.yaml, p.defaultURL, p.envKeys...)
+		endpoint := resolveURL(p.yaml, p.envKeys...)
 		catalog[p.id] = syncedProvider{
 			ProviderID:          p.id,
 			Label:               p.label,
@@ -121,7 +111,7 @@ func newProductionProviderCatalog() (map[string]syncedProvider, []string) {
 		order = append(order, p.id)
 	}
 
-	return catalog, order
+	return config, catalog, order
 }
 
 func (s *Server) syncedProviderByID(providerID string) (syncedProvider, bool) {

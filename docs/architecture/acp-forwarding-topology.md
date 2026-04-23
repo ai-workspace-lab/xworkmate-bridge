@@ -144,8 +144,7 @@ Important distinction:
   `openclaw`
 - `availableExecutionTargets` tells the app which first-level task dialog modes
   are currently available
-- for `gatewayProviderId=openclaw`, the bridge rewrites the upstream target to
-  `https://xworkmate-bridge.svc.plus/gateway/openclaw/`
+
 ## Production Truth
 
 当前 production forwarding 事实（内部直连架构）：
@@ -157,15 +156,15 @@ Important distinction:
 
 ### 核心真源映射 (Final Source of Truth)
 
-为了消除冗余层（Bridge-on-Bridge）并提高就绪性响应速度，中心 Bridge 已配置为绕过旧的 9010/3910 转发层，直接对接各核心服务端口：
+为了消除冗余层（Bridge-on-Bridge）并提高就绪性响应速度，中心 Bridge 作为代理和适配器，直接对接各核心服务端口：
 
 | 服务名 | 核心端口 | 协议路径 | 角色定义 |
 | :--- | :--- | :--- | :--- |
+| **`acp-codex.service`**    | **`9001`** | **`ws://127.0.0.1:9001/acp/rpc`** | **Codex 核心 ACP 实现** |
+| **`acp-opencode.service`** | **`38992`** | **`ws//127.0.0.1:38992/acp/rpc`** | **Opencode 协议转换 (JSON-RPC over stdio) |
+| `acp-gemini.service`** | **`8791`** | **`ws://127.0.0.1:8791/acp/rpc`** | **Gemini 协议转换适配器 (JSON-RPC over stdio)** |
+| **`acp-hermes.service`** | **`3920`** | **`ws://127.0.0.1:3920/acp/rpc`** | **Hermes 协议转换适配器 (JSON-RPC over stdio)** |
 | **`openclaw-gateway.service`** | **`18789`** | **`ws://127.0.0.1:18789/`** | **OpenClaw 独立部署网关服务（不使用 /acp）** |
-| **`acp-codex.service`** | **`9001`** | **`http://127.0.0.1:9001/acp/rpc`** | **Codex 核心 ACP 实现** |
-| **`acp-opencode.service`** | **`38992`** | **`http://127.0.0.1:38992/acp/rpc`** | **Opencode 核心 ACP 实现** |
-| **`acp-gemini.service`** | **`8791`** | **`http://127.0.0.1:8791/acp/rpc`** | **Gemini 协议转换适配器 (Category: protocol-adapter)** |
-| **`acp-hermes.service`** | **`3920`** | **`http://127.0.0.1:3920/acp/rpc`** | **Hermes 协议转换适配器 (Category: protocol-adapter)** |
 
 对 app 而言：
 
@@ -177,10 +176,10 @@ Important distinction:
 
 - app traffic reaches upstream ACP and gateway services only through the bridge
 - app does not call `xworkmate-bridge.svc.plus/acp-server/*` or `xworkmate-bridge.svc.plus/gateway/openclaw/` directly
-- `openclaw-gateway` is an independently deployed runtime mapped to `127.0.0.1:18789`
+- `openclaw-gateway` is an independently deployed runtime mapped to `ws://127.0.0.1:18789`
 - internal provider routes remain bridge-owned validation targets:
   - `xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc`
-  - `xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc`
+  - `xworkmate-bridge.svc.plus/acp-server/opencode/acp`
   - `xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc`
   - `xworkmate-bridge.svc.plus/acp-server/hermes/acp/rpc`
 - upstream auth stays bridge-internal:

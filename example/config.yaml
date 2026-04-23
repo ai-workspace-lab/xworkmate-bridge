@@ -6,11 +6,11 @@
 # Upstream provider endpoints
 # Priority: YAML > Environment Variable (e.g. CODEX_RPC_URL) > Default Constants
 upstream:
-  gateway_url: "ws://127.0.0.1:18789/"
-  codex_url: "ws://127.0.0.1:9001/acp"
-  opencode_url: "http://127.0.0.1:38992"
-  gemini_url: "http://127.0.0.1:8791"
+  codex_url: "ws://127.0.0.1:9001"
+  gemini_url: "ws://127.0.0.1:8791"
   hermes_url: "ws://127.0.0.1:3920"
+  gateway_url: "ws://127.0.0.1:18789/"
+  opencode_url: "ws://127.0.0.1:38992"
 
 # Legacy/Reference structure (Normally managed via code constants or environment)
 bridge:

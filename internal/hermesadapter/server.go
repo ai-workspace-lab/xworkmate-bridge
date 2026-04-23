@@ -11,8 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
-
 	"xworkmate-bridge/internal/service"
 	"xworkmate-bridge/internal/shared"
 )
@@ -34,14 +32,6 @@ type Server struct {
 	sessions       map[string]*adapterSession
 }
 
-var adapterWSUpgrader = websocket.Upgrader{
-	ReadBufferSize:  16 * 1024,
-	WriteBufferSize: 16 * 1024,
-	CheckOrigin: func(*http.Request) bool {
-		return true
-	},
-}
-
 type adapterSession struct {
 	history            []string
 	model              string
@@ -52,7 +42,7 @@ type adapterSession struct {
 }
 
 func Serve(args []string) error {
-	flags := flag.NewFlagSet("hermes-acp-adapter", flag.ExitOnError)
+	flags := flag.NewFlagSet("adapter hermes", flag.ExitOnError)
 	listen := flags.String(
 		"listen",
 		strings.TrimSpace(shared.EnvOrDefault("HERMES_ADAPTER_LISTEN_ADDR", defaultListenAddr)),
@@ -109,24 +99,24 @@ func NewServer(client rpcClient) *Server {
 		authService:    service.NewStaticTokenAuthService(strings.TrimSpace(shared.EnvOrDefault("HERMES_ADAPTER_AUTH_TOKEN", ""))),
 		providerID:     strings.TrimSpace(shared.EnvOrDefault("HERMES_ADAPTER_PROVIDER_ID", defaultProviderID)),
 		providerLabel:  strings.TrimSpace(shared.EnvOrDefault("HERMES_ADAPTER_PROVIDER_LABEL", defaultLabel)),
-		allowedOrigins: parseAllowedOrigins(strings.TrimSpace(shared.EnvOrDefault("HERMES_ADAPTER_ALLOWED_ORIGINS", "https://xworkmate.svc.plus,http://localhost:*,http://127.0.0.1:*"))),
+		allowedOrigins: shared.ParseAllowedOrigins(strings.TrimSpace(shared.EnvOrDefault("HERMES_ADAPTER_ALLOWED_ORIGINS", "https://xworkmate.svc.plus,http://localhost:*,http://127.0.0.1:*"))),
 		upstreamMethod: strings.TrimSpace(shared.EnvOrDefault("HERMES_ADAPTER_UPSTREAM_METHOD", "session/prompt")),
 		sessions:       make(map[string]*adapterSession),
 	}
 }
 
 func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
-	if !s.originAllowed(r.Header.Get("Origin")) {
-		s.writeJSONError(w, nil, http.StatusForbidden, -32003, fmt.Sprintf("origin not allowed: %s", strings.TrimSpace(r.Header.Get("Origin"))))
+	if !shared.OriginAllowed(r.Header.Get("Origin"), s.allowedOrigins) {
+		shared.WriteJSONError(w, nil, http.StatusForbidden, -32003, fmt.Sprintf("origin not allowed: %s", strings.TrimSpace(r.Header.Get("Origin"))))
 		return
 	}
 	if !s.authorized(r) {
-		s.writeJSONError(w, nil, http.StatusUnauthorized, -32001, "missing bearer authorization")
+		shared.WriteJSONError(w, nil, http.StatusUnauthorized, -32001, "missing bearer authorization")
 		return
 	}
-	upgrader := adapterWSUpgrader
+	upgrader := shared.StandardWSUpgrader
 	upgrader.CheckOrigin = func(req *http.Request) bool {
-		return s.originAllowed(req.Header.Get("Origin")) && s.authorized(req)
+		return shared.OriginAllowed(req.Header.Get("Origin"), s.allowedOrigins) && s.authorized(req)
 	}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -162,31 +152,31 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
-	s.applyCORS(w, r)
+	shared.ApplyCORS(w, r, s.allowedOrigins)
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	if r.Method != http.MethodPost {
-		s.writeJSONError(w, nil, http.StatusMethodNotAllowed, -32600, "method not allowed")
+		shared.WriteJSONError(w, nil, http.StatusMethodNotAllowed, -32600, "method not allowed")
 		return
 	}
-	if !s.originAllowed(r.Header.Get("Origin")) {
-		s.writeJSONError(w, nil, http.StatusForbidden, -32003, fmt.Sprintf("origin not allowed: %s", strings.TrimSpace(r.Header.Get("Origin"))))
+	if !shared.OriginAllowed(r.Header.Get("Origin"), s.allowedOrigins) {
+		shared.WriteJSONError(w, nil, http.StatusForbidden, -32003, fmt.Sprintf("origin not allowed: %s", strings.TrimSpace(r.Header.Get("Origin"))))
 		return
 	}
 	if !s.authorized(r) {
-		s.writeJSONError(w, nil, http.StatusUnauthorized, -32001, "missing bearer authorization")
+		shared.WriteJSONError(w, nil, http.StatusUnauthorized, -32001, "missing bearer authorization")
 		return
 	}
 	payload, err := io.ReadAll(r.Body)
 	if err != nil {
-		s.writeJSONError(w, nil, http.StatusBadRequest, -32600, "invalid body")
+		shared.WriteJSONError(w, nil, http.StatusBadRequest, -32600, "invalid body")
 		return
 	}
 	request, err := shared.DecodeRPCRequest(payload)
 	if err != nil {
-		s.writeJSONError(w, nil, http.StatusBadRequest, -32700, err.Error())
+		shared.WriteJSONError(w, nil, http.StatusBadRequest, -32700, err.Error())
 		return
 	}
 	result := s.handleRequest(request)
@@ -287,7 +277,7 @@ func (s *Server) handleConfiguredUpstreamSessionRequest(method, upstreamMethod s
 			"upstreamMethod": upstreamMethod,
 		}
 	}
-	result, _ := response["result"].(map[string]any)
+	result := shared.AsMap(response["result"])
 	if len(result) > 0 {
 		if _, ok := result["provider"]; !ok {
 			result["provider"] = s.providerID
@@ -297,7 +287,7 @@ func (s *Server) handleConfiguredUpstreamSessionRequest(method, upstreamMethod s
 		}
 		return result
 	}
-	if errPayload, ok := response["error"].(map[string]any); ok && len(errPayload) > 0 {
+	if errPayload := shared.AsMap(response["error"]); len(errPayload) > 0 {
 		return map[string]any{
 			"success":        false,
 			"provider":       s.providerID,
@@ -445,7 +435,7 @@ func (s *Server) handleHermesACPUpstreamSessionRequest(method string, params map
 
 	output := strings.TrimSpace(strings.Join(outputParts, ""))
 	if output == "" {
-		if resultMap, ok := response["result"].(map[string]any); ok {
+		if resultMap := shared.AsMap(response["result"]); resultMap != nil {
 			for _, key := range []string{"output", "finalResponse", "final_response", "text", "message", "response"} {
 				candidate := strings.TrimSpace(shared.StringArg(resultMap, key, ""))
 				if candidate == "" || isGenericHermesAckText(candidate) {
@@ -504,7 +494,7 @@ func normalizeHermesUpstreamMethod(method string) string {
 
 func extractHermesUpstreamSessionID(response map[string]any) string {
 	for _, key := range []string{"sessionId", "session_id", "id"} {
-		if value := strings.TrimSpace(shared.StringArg(asMap(response["result"]), key, "")); value != "" {
+		if value := strings.TrimSpace(shared.StringArg(shared.AsMap(response["result"]), key, "")); value != "" {
 			return value
 		}
 		if value := strings.TrimSpace(shared.StringArg(response, key, "")); value != "" {
@@ -522,11 +512,11 @@ func extractHermesSessionUpdateText(notification map[string]any) string {
 	if method != "session.update" && method != "session/update" && method != "acp.session.update" {
 		return ""
 	}
-	payload := asMap(notification["params"])
+	payload := shared.AsMap(notification["params"])
 	if len(payload) == 0 {
 		payload = notification
 	}
-	update := asMap(payload["update"])
+	update := shared.AsMap(payload["update"])
 	if len(update) == 0 {
 		update = payload
 	}
@@ -592,16 +582,6 @@ func isGenericHermesAckText(text string) bool {
 	}
 }
 
-func asMap(value any) map[string]any {
-	if value == nil {
-		return nil
-	}
-	if result, ok := value.(map[string]any); ok {
-		return result
-	}
-	return nil
-}
-
 func (s *Server) getOrCreateSession(sessionID string) *adapterSession {
 	s.sessionsMu.Lock()
 	defer s.sessionsMu.Unlock()
@@ -642,54 +622,6 @@ func (s *Server) closeSession(sessionID string) bool {
 	return true
 }
 
-func parseAllowedOrigins(raw string) []string {
-	if raw == "" {
-		return nil
-	}
-	parts := strings.Split(raw, ",")
-	result := make([]string, 0, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		result = append(result, part)
-	}
-	return result
-}
-
-func (s *Server) originAllowed(origin string) bool {
-	origin = strings.TrimSpace(origin)
-	if origin == "" {
-		return true
-	}
-	for _, allowed := range s.allowedOrigins {
-		if strings.HasSuffix(allowed, ":*") {
-			if strings.HasPrefix(origin, strings.TrimSuffix(allowed, "*")) {
-				return true
-			}
-			continue
-		}
-		if origin == allowed {
-			return true
-		}
-	}
-	return false
-}
-
-func (s *Server) applyCORS(w http.ResponseWriter, r *http.Request) {
-	origin := strings.TrimSpace(r.Header.Get("Origin"))
-	if origin == "" || !s.originAllowed(origin) {
-		return
-	}
-	headers := w.Header()
-	headers.Set("Access-Control-Allow-Origin", origin)
-	headers.Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-	headers.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept")
-	headers.Set("Access-Control-Max-Age", "600")
-	headers.Add("Vary", "Origin")
-}
-
 func (s *Server) authorized(r *http.Request) bool {
 	if s == nil {
 		return false
@@ -698,10 +630,4 @@ func (s *Server) authorized(r *http.Request) bool {
 		return true
 	}
 	return s.authService.ValidateAuthorizationHeader(r.Header.Get("Authorization"))
-}
-
-func (s *Server) writeJSONError(w http.ResponseWriter, id any, status int, code int, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(shared.ErrorEnvelope(id, code, message))
 }

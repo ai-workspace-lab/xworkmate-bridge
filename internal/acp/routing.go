@@ -7,6 +7,7 @@ import (
 
 	"xworkmate-bridge/internal/memory"
 	"xworkmate-bridge/internal/router"
+	"xworkmate-bridge/internal/shared"
 	"xworkmate-bridge/internal/skills"
 )
 
@@ -19,11 +20,12 @@ func resolveRoutingMetadataWithProviders(
 	params map[string]any,
 	availableProviders []string,
 ) (router.Result, bool) {
-	routingParams := asMap(params["routing"])
+	routingParams := shared.AsMap(params["routing"])
 	if len(routingParams) == 0 {
 		return router.Result{}, false
 	}
-	installApproval := asMap(routingParams["installApproval"])
+	installApproval := shared.AsMap(routingParams["installApproval"])
+
 
 	resolver := router.NewResolver()
 	result := resolver.Resolve(router.Request{
@@ -83,7 +85,7 @@ func recordRoutingSuccess(
 	result router.Result,
 	response map[string]any,
 ) error {
-	routingParams := asMap(params["routing"])
+	routingParams := shared.AsMap(params["routing"])
 	if len(routingParams) == 0 {
 		return nil
 	}
@@ -118,8 +120,9 @@ func parseRoutingSkillCandidates(raw any) []skills.Candidate {
 	}
 	candidates := make([]skills.Candidate, 0, len(list))
 	for _, item := range list {
-		entry := asMap(item)
+		entry := shared.AsMap(item)
 		candidates = append(candidates, skills.Candidate{
+
 			ID:          strings.TrimSpace(sharedString(entry, "id")),
 			Label:       strings.TrimSpace(sharedString(entry, "label")),
 			Description: strings.TrimSpace(sharedString(entry, "description")),

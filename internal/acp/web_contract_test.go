@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"xworkmate-bridge/internal/shared"
 )
 
 func TestHTTPHandlerRootAndPingExposeRuntimeVersionInfo(t *testing.T) {
@@ -94,7 +96,7 @@ func TestHTTPHandlerBareAliasPathsExposeCapabilities(t *testing.T) {
 			if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
 				t.Fatalf("decode capability alias response: %v", err)
 			}
-			result := asMap(envelope["result"])
+			result := shared.AsMap(envelope["result"])
 			if got := result["singleAgent"]; got != true {
 				t.Fatalf("expected singleAgent true, got %#v", got)
 			}
@@ -167,7 +169,7 @@ func TestHTTPHandlerBareAliasPathsServeRPC(t *testing.T) {
 			if got := envelope["id"]; got != "rpc-1" {
 				t.Fatalf("expected rpc id rpc-1, got %#v", got)
 			}
-			result := asMap(envelope["result"])
+			result := shared.AsMap(envelope["result"])
 			if tc.wantMode == "gateway" {
 				gatewayProviders := mustObjectList(t, result["gatewayProviders"])
 				if len(gatewayProviders) != 1 {
@@ -398,7 +400,7 @@ func TestHandleRPCCapabilitiesReturnsCanonicalProviderContract(t *testing.T) {
 		t.Fatalf("decode capabilities response: %v", err)
 	}
 
-	result := asMap(envelope["result"])
+	result := shared.AsMap(envelope["result"])
 	if got := result["singleAgent"]; got != true {
 		t.Fatalf("expected singleAgent true, got %v", got)
 	}
@@ -499,7 +501,7 @@ func mustObjectList(t *testing.T, value any) []map[string]any {
 	}
 	items := make([]map[string]any, 0, len(raw))
 	for _, item := range raw {
-		items = append(items, asMap(item))
+		items = append(items, shared.AsMap(item))
 	}
 	return items
 }

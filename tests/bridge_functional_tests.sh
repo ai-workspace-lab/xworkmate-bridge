@@ -97,11 +97,11 @@ assert_success "$CONNECT_RES" "Gateway 连接"
 
 log_step "3. Gemini 流式对话测试"
 log_info "正在向 Gemini 发起对话..."
-START_GEMINI=$(call_api "/acp/rpc" "session.start" "{\"sessionId\":\"$SESSION_ID_GEMINI\",\"taskPrompt\":\"你好，请记住我叫 Gemini-Tester。\",\"routing\":{\"explicitProviderId\":\"gemini\"}}" "true" | tail -n 2 | head -n 1 | sed 's/^data: //')
+START_GEMINI=$(call_api "/acp/rpc" "session.start" "{\"sessionId\":\"$SESSION_ID_GEMINI\",\"taskPrompt\":\"你好，请记住我叫 Gemini-Tester。\",\"routing\":{\"explicitProviderId\":\"gemini\"}}" "true" | grep "^data: {" | tail -n 1 | sed 's/^data: //')
 assert_success "$START_GEMINI" "Gemini 会话启动"
 
 log_info "验证 Gemini 上下文..."
-MSG_GEMINI=$(call_api "/acp/rpc" "session.message" "{\"sessionId\":\"$SESSION_ID_GEMINI\",\"taskPrompt\":\"我刚才说我叫什么？\",\"routing\":{\"explicitProviderId\":\"gemini\"}}" "true" | tail -n 2 | head -n 1 | sed 's/^data: //')
+MSG_GEMINI=$(call_api "/acp/rpc" "session.message" "{\"sessionId\":\"$SESSION_ID_GEMINI\",\"taskPrompt\":\"我刚才说我叫什么？\",\"routing\":{\"explicitProviderId\":\"gemini\"}}" "true" | grep "^data: {" | tail -n 1 | sed 's/^data: //')
 assert_success "$MSG_GEMINI" "Gemini 上下文验证"
 log_info "Gemini 回复: $(echo "$MSG_GEMINI" | jq -r '.result.output // .payload.output')"
 
@@ -110,7 +110,7 @@ log_info "Gemini 回复: $(echo "$MSG_GEMINI" | jq -r '.result.output // .payloa
 log_step "4. OpenCode 深度测试 (通过 Gateway)"
 log_info "正在通过 Gateway 向 OpenCode 发起对话..."
 # 注意：OpenCode 需要通过已连接的 gateway 执行
-START_OPENCODE=$(call_api "/acp/rpc" "session.start" "{\"sessionId\":\"$SESSION_ID_OPENCODE\",\"taskPrompt\":\"你好 OpenCode，请问你能做什么？\",\"routing\":{\"explicitProviderId\":\"opencode\"}}" "true" | tail -n 2 | head -n 1 | sed 's/^data: //')
+START_OPENCODE=$(call_api "/acp/rpc" "session.start" "{\"sessionId\":\"$SESSION_ID_OPENCODE\",\"taskPrompt\":\"你好 OpenCode，请问你能做什么？\",\"routing\":{\"explicitProviderId\":\"opencode\"}}" "true" | grep "^data: {" | tail -n 1 | sed 's/^data: //')
 
 # 如果 gateway 依然报错，可能是环境限制，此处做容错处理
 if echo "$START_OPENCODE" | jq -e '.ok == true or .result.success == true' > /dev/null; then

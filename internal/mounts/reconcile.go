@@ -292,8 +292,7 @@ func reconcileOpencode(config Config, opencodeHome string) MountTargetState {
 	state.DiscoveredMCPCount = discovered
 	state.ManagedMCPCount = len(managedServers)
 	state.Detail = "OpenCode public base URL: https://xworkmate-bridge.svc.plus/acp-server/opencode\n" +
-		"Preferred WebSocket endpoint: https://xworkmate-bridge.svc.plus/acp-server/opencode/acp\n" +
-		"Compatibility HTTP RPC endpoint: https://xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc"
+		"Preferred WebSocket endpoint: https://xworkmate-bridge.svc.plus/acp-server/opencode/acp"
 	return state
 }
 
