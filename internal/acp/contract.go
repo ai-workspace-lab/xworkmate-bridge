@@ -2,24 +2,25 @@ package acp
 
 import (
 	"context"
-	"xworkmate-bridge/internal/shared"
 )
 
-// ProviderAdapter 是所有 Upstream 的归一化接口
-type ProviderAdapter interface {
-	ID() string
-	Metadata() map[string]any
-	// Execute 处理 Start 和 Message 的执行语义
-	Execute(ctx context.Context, sessionID string, threadID string, method string, params map[string]any) (<-chan SessionEvent, error)
-	Cancel(ctx context.Context, sessionID string) error
-	Probe(ctx context.Context) (bool, string)
+type SessionNotificationSink func(map[string]any)
+
+type ProviderProbeResult struct {
+	Available bool   `json:"available"`
+	Status    string `json:"status"`
 }
 
-// SessionEvent 归一化所有的中间输出和最终结果
-type SessionEvent struct {
-	Type      string           `json:"type"` // chunk, status, result, error
-	Payload   map[string]any   `json:"payload"`
-	Error     *shared.RPCError `json:"error,omitempty"`
+// ProviderCompat 是 bridge 依赖的唯一 provider 兼容接口。
+// stdio / 进程 / 协议细节必须收敛在 compat/runtime 内部。
+type ProviderCompat interface {
+	ID() string
+	Metadata() map[string]any
+	Probe(ctx context.Context) ProviderProbeResult
+	StartSession(ctx context.Context, sessionID string, threadID string, params map[string]any, sink SessionNotificationSink) (map[string]any, error)
+	SendMessage(ctx context.Context, sessionID string, threadID string, params map[string]any, sink SessionNotificationSink) (map[string]any, error)
+	CancelSession(ctx context.Context, sessionID string) error
+	CloseSession(ctx context.Context, sessionID string) error
 }
 
 // RoutingEngine 路由确权引擎

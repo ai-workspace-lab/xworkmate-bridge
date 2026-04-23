@@ -43,6 +43,7 @@ func (s *Server) handleRequest(request shared.RPCRequest, notify func(map[string
 			"resolvedModel":             res.Model,
 			"resolvedSkills":            res.Skills,
 			"status":                    res.Status,
+			"unavailable":               res.Status == "unavailable",
 			"unavailableCode":           res.UnavailableCode,
 			"unavailableMessage":        res.UnavailableMsg,
 			"skillResolutionSource":     res.SkillResolutionSource,
@@ -64,15 +65,19 @@ func (s *Server) handleRequest(request shared.RPCRequest, notify func(map[string
 
 func (s *Server) cancelSession(ctx context.Context, sessionID string) {
 	s.mu.RLock()
-	adapter, ok := s.sessionToAdapter[sessionID]
+	sess, ok := s.sessions[sessionID]
 	s.mu.RUnlock()
-	if ok {
-		_ = adapter.Cancel(ctx, sessionID)
+	if ok && sess != nil && sess.compat != nil {
+		_ = sess.compat.CancelSession(ctx, sessionID)
 	}
 }
 
 func (s *Server) closeSession(ctx context.Context, sessionID string) {
 	s.mu.Lock()
-	delete(s.sessionToAdapter, sessionID)
+	sess, ok := s.sessions[sessionID]
+	delete(s.sessions, sessionID)
 	s.mu.Unlock()
+	if ok && sess != nil && sess.compat != nil {
+		_ = sess.compat.CloseSession(ctx, sessionID)
+	}
 }

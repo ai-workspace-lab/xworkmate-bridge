@@ -20,56 +20,18 @@ normalize_url() {
   printf '%s\n' "${value}"
 }
 
-websocket_probe_url() {
-  local value="$1"
-  if [[ "${value}" =~ ^wss://(.*)$ ]]; then
-    printf 'https://%s\n' "${BASH_REMATCH[1]}"
-    return
-  fi
-  if [[ "${value}" =~ ^ws://(.*)$ ]]; then
-    printf 'http://%s\n' "${BASH_REMATCH[1]}"
-    return
-  fi
-  printf '%s\n' "${value}"
-}
-
 image_ref="$(printf '%s' "${IMAGE_REF}" | tr -d '\n' | xargs)"
-if [[ -z "${image_ref}" ]]; then
-  echo "image_ref is required" >&2
-  exit 1
-fi
-
 image_no_digest="${image_ref%@*}"
 tag="${image_no_digest##*:}"
-if [[ "${image_no_digest}" == "${tag}" ]]; then
-  tag=""
-fi
-
 commit=""
 version="${tag}"
-
 if [[ "${tag}" =~ ^[0-9a-f]{40}$ ]]; then
   commit="${tag}"
 fi
 
 BASE_URL="$(normalize_url "${BRIDGE_SERVER_URL:-${2:-https://xworkmate-bridge.svc.plus}}")"
-OPENCLAW_BASE_URL="$(normalize_url "${OPENCLAW_URL:-${3:-${BASE_URL}/gateway/openclaw}}")"
-CODEX_BASE_URL="$(normalize_url "${CODEX_RPC_URL:-${4:-${BASE_URL}/acp-server/codex}}")"
-OPENCODE_BASE_URL="$(normalize_url "${OPENCODE_RPC_URL:-${5:-${BASE_URL}/acp-server/opencode}}")"
-GEMINI_BASE_URL="$(normalize_url "${GEMINI_RPC_URL:-${6:-${BASE_URL}/acp-server/gemini}}")"
-HERMES_BASE_URL="$(normalize_url "${HERMES_RPC_URL:-${7:-${BASE_URL}/acp-server/hermes}}")"
+RPC_URL="${BASE_URL%/}/acp/rpc"
 AUTH_TOKEN="${BRIDGE_AUTH_TOKEN:?BRIDGE_AUTH_TOKEN is required}"
-
-append_rpc_path() {
-  local url="$1"
-  printf '%s/acp/rpc\n' "${url%/}"
-}
-
-OPENCLAW_HTTP_PROBE_URL="$(websocket_probe_url "${OPENCLAW_BASE_URL}")"
-CODEX_RPC_ENDPOINT="$(append_rpc_path "${CODEX_BASE_URL}")"
-OPENCODE_RPC_ENDPOINT="$(append_rpc_path "${OPENCODE_BASE_URL}")"
-GEMINI_RPC_ENDPOINT="$(append_rpc_path "${GEMINI_BASE_URL}")"
-HERMES_RPC_ENDPOINT="$(append_rpc_path "${HERMES_BASE_URL}")"
 
 fast_http_curl_common=(
   --silent
@@ -87,13 +49,6 @@ bridge_rpc_curl_common=(
   --max-time "${BRIDGE_RPC_TIMEOUT_SECONDS}"
 )
 
-auth_headers=()
-if [[ -n "${AUTH_TOKEN}" ]]; then
-  auth_headers+=(-H "Authorization: Bearer ${AUTH_TOKEN}")
-fi
-
-# Use explicit assignment guards so transport failures are not swallowed inside
-# nested command substitutions when bash runs without inherit_errexit.
 capture_http_response() {
   local label="$1"
   shift
@@ -123,7 +78,6 @@ should_retry_exit_code() {
       return 0
     fi
   done
-
   return 1
 }
 
@@ -157,162 +111,24 @@ run_with_retry() {
   return 1
 }
 
-probe_jsonrpc_capabilities_once() {
-  local endpoint="$1"
-  local response
-  local headers=(
-    -H 'Content-Type: application/json'
-    -H 'Accept: application/json'
-  )
-
-  headers+=("${auth_headers[@]}")
-
-  if response="$(
-    capture_http_response "capabilities ${endpoint}" \
-      "${fast_http_curl_common[@]}" \
-      "${headers[@]}" \
-      --data '{"jsonrpc":"2.0","id":"cap-1","method":"acp.capabilities"}' \
-      "${endpoint}"
-  )"; then
-    :
-  else
-    local exit_code=$?
-    return "${exit_code}"
-  fi
-
-  RESPONSE_JSON="${response}" python3 - <<'PY'
-import json
-import os
-
-try:
-    payload = json.loads(os.environ["RESPONSE_JSON"])
-except json.JSONDecodeError as exc:
-    raise SystemExit(f"capabilities response returned invalid JSON: {exc}") from None
-
-if payload.get("jsonrpc") != "2.0":
-    raise SystemExit("capabilities response missing jsonrpc envelope")
-
-result = payload.get("result")
-if not isinstance(result, dict):
-    raise SystemExit("capabilities response missing result payload")
-
-if not result and "providers" not in payload:
-    raise SystemExit("capabilities response missing result/providers data")
-PY
-}
-
 jsonrpc_bridge_call() {
   local payload="$1"
-  local response
-  local headers=(
-    -H 'Content-Type: application/json'
-    -H 'Accept: application/json'
-  )
-
-  headers+=("${auth_headers[@]}")
-
-  if response="$(
-    capture_http_response "bridge rpc ${BASE_URL}/acp/rpc" \
-      "${bridge_rpc_curl_common[@]}" \
-      "${headers[@]}" \
-      --data "${payload}" \
-      "${BASE_URL}/acp/rpc"
-  )"; then
-    :
-  else
-    local exit_code=$?
-    return "${exit_code}"
-  fi
-
-  printf '%s\n' "${response}"
-}
-
-probe_bridge_provider_probe_once() {
-  local provider_id="$1"
-  local payload
-  local response
-
-  payload="$(cat <<JSON
-{"jsonrpc":"2.0","id":"probe-${provider_id}-$(date +%s)","method":"xworkmate.provider.probe","params":{"providerId":"${provider_id}"}}
-JSON
-)"
-
-  if response="$(jsonrpc_bridge_call "${payload}")"; then
-    :
-  else
-    local exit_code=$?
-    return "${exit_code}"
-  fi
-
-  PROVIDER_ID="${provider_id}" RESPONSE_JSON="${response}" python3 - <<'PY'
-import json
-import os
-
-provider = os.environ["PROVIDER_ID"]
-try:
-    payload = json.loads(os.environ["RESPONSE_JSON"])
-except json.JSONDecodeError as exc:
-    raise SystemExit(f"{provider}: bridge rpc returned invalid JSON: {exc}") from None
-
-if payload.get("jsonrpc") != "2.0":
-    raise SystemExit(f"{provider}: missing jsonrpc envelope")
-
-result = payload.get("result")
-if not isinstance(result, dict):
-    raise SystemExit(f"{provider}: missing result payload")
-
-if result.get("success") is not True:
-    raise SystemExit(f"{provider}: provider probe failed: {result!r}")
-
-if result.get("providerId") != provider:
-    raise SystemExit(f"{provider}: providerId mismatch: {result!r}")
-
-capabilities = result.get("capabilities")
-if not isinstance(capabilities, dict):
-    raise SystemExit(f"{provider}: probe did not return capabilities payload: {result!r}")
-PY
-}
-
-probe_safe_http_endpoint() {
-  local endpoint="$1"
-  local status
-  if ! status="$(
-    curl \
-      --silent \
-      --show-error \
-      --output /dev/null \
-      --write-out '%{http_code}' \
-      --location \
-      --max-time "${FAST_HTTP_TIMEOUT_SECONDS}" \
-      "${auth_headers[@]}" \
-      "${endpoint}" 2>&1
-  )"; then
-    printf 'HTTP probe failed for %s: %s\n' "${endpoint}" "${status}" >&2
-    return "${RETRYABLE_TRANSPORT}"
-  fi
-
-  case "${status}" in
-    2*|3*|404|405|426)
-      return 0
-      ;;
-    401|403)
-      printf 'Authentication failure (HTTP %s) for %s\n' "${status}" "${endpoint}" >&2
-      return 1
-      ;;
-    *)
-      printf 'Unexpected HTTP status %s for %s\n' "${status}" "${endpoint}" >&2
-      return 1
-      ;;
-  esac
+  capture_http_response \
+    "bridge rpc ${RPC_URL}" \
+    "${bridge_rpc_curl_common[@]}" \
+    -H 'Content-Type: application/json' \
+    -H 'Accept: application/json' \
+    -H "Authorization: Bearer ${AUTH_TOKEN}" \
+    --data "${payload}" \
+    "${RPC_URL}"
 }
 
 wait_for_release_ping_once() {
   local ping_json
-
   if ping_json="$(
     capture_http_response "bridge ping ${BASE_URL}/api/ping" \
       "${fast_http_curl_common[@]}" \
-      "${BASE_URL}/api/ping"
+      "${BASE_URL%/}/api/ping"
   )"; then
     :
   else
@@ -326,23 +142,15 @@ import os
 import sys
 
 image_ref, tag, commit, version = sys.argv[1:5]
-try:
-    payload = json.loads(os.environ["PING_JSON"])
-except json.JSONDecodeError as exc:
-    raise SystemExit(f"bridge ping returned invalid JSON: {exc}") from None
-
+payload = json.loads(os.environ["PING_JSON"])
 if payload.get("status") != "ok":
     raise SystemExit("ping status not ok")
-
 if payload.get("image") != image_ref:
     raise SystemExit(f"expected image {image_ref!r}, got {payload.get('image')!r}")
-
 if tag and payload.get("tag") != tag:
     raise SystemExit(f"expected tag {tag!r}, got {payload.get('tag')!r}")
-
 if commit and payload.get("commit") != commit:
     raise SystemExit(f"expected commit {commit!r}, got {payload.get('commit')!r}")
-
 if version and payload.get("version") != version:
     raise SystemExit(f"expected version {version!r}, got {payload.get('version')!r}")
 PY
@@ -355,11 +163,10 @@ PY
 
 probe_bridge_root() {
   local bridge_root
-
   if bridge_root="$(
     capture_http_response "bridge root ${BASE_URL}/" \
       "${fast_http_curl_common[@]}" \
-      "${BASE_URL}/"
+      "${BASE_URL%/}/"
   )"; then
     :
   else
@@ -370,18 +177,107 @@ probe_bridge_root() {
   grep -qi 'xworkmate-bridge' <<<"${bridge_root}"
 }
 
+probe_bridge_capabilities_once() {
+  local response
+  if response="$(jsonrpc_bridge_call '{"jsonrpc":"2.0","id":"cap-1","method":"acp.capabilities","params":{}}')"; then
+    :
+  else
+    local exit_code=$?
+    return "${exit_code}"
+  fi
+
+  RESPONSE_JSON="${response}" python3 - <<'PY'
+import json
+import os
+
+payload = json.loads(os.environ["RESPONSE_JSON"])
+result = payload.get("result")
+if payload.get("jsonrpc") != "2.0" or not isinstance(result, dict):
+    raise SystemExit("capabilities response missing result payload")
+
+provider_catalog = result.get("providerCatalog")
+gateway_providers = result.get("gatewayProviders")
+targets = result.get("availableExecutionTargets")
+if not isinstance(provider_catalog, list):
+    raise SystemExit("providerCatalog missing")
+if not isinstance(gateway_providers, list):
+    raise SystemExit("gatewayProviders missing")
+if not isinstance(targets, list):
+    raise SystemExit("availableExecutionTargets missing")
+
+providers = {item.get("providerId") for item in provider_catalog if isinstance(item, dict)}
+if not {"codex", "opencode", "gemini", "hermes"}.issubset(providers):
+    raise SystemExit(f"unexpected providerCatalog: {provider_catalog!r}")
+
+gateway_ids = {item.get("providerId") for item in gateway_providers if isinstance(item, dict)}
+if "openclaw" not in gateway_ids:
+    raise SystemExit(f"unexpected gatewayProviders: {gateway_providers!r}")
+
+if "agent" not in targets or "gateway" not in targets:
+    raise SystemExit(f"unexpected availableExecutionTargets: {targets!r}")
+PY
+}
+
+probe_bridge_routing_once() {
+  local response
+  local payload='{"jsonrpc":"2.0","id":"route-1","method":"xworkmate.routing.resolve","params":{"taskPrompt":"create a powerpoint deck for launch","workingDirectory":"/tmp/validate-deploy","routing":{"routingMode":"explicit","explicitExecutionTarget":"singleAgent","explicitProviderId":"codex","availableSkills":[{"id":"pptx","label":"PPTX","description":"slides","installed":true}]}}}'
+
+  if response="$(jsonrpc_bridge_call "${payload}")"; then
+    :
+  else
+    local exit_code=$?
+    return "${exit_code}"
+  fi
+
+  RESPONSE_JSON="${response}" python3 - <<'PY'
+import json
+import os
+
+payload = json.loads(os.environ["RESPONSE_JSON"])
+result = payload.get("result")
+if payload.get("jsonrpc") != "2.0" or not isinstance(result, dict):
+    raise SystemExit("routing response missing result payload")
+
+if result.get("resolvedExecutionTarget") != "single-agent":
+    raise SystemExit(f"unexpected routing target: {result!r}")
+if result.get("resolvedProviderId") != "codex":
+    raise SystemExit(f"unexpected routing provider: {result!r}")
+if result.get("status") != "available":
+    raise SystemExit(f"unexpected routing status: {result!r}")
+PY
+}
+
+probe_bridge_gateway_routing_once() {
+  local response
+  local payload='{"jsonrpc":"2.0","id":"route-gateway-1","method":"xworkmate.routing.resolve","params":{"taskPrompt":"search latest news","workingDirectory":"/tmp/validate-deploy","routing":{"routingMode":"explicit","explicitExecutionTarget":"gateway","preferredGatewayProviderId":"openclaw"}}}'
+
+  if response="$(jsonrpc_bridge_call "${payload}")"; then
+    :
+  else
+    local exit_code=$?
+    return "${exit_code}"
+  fi
+
+  RESPONSE_JSON="${response}" python3 - <<'PY'
+import json
+import os
+
+payload = json.loads(os.environ["RESPONSE_JSON"])
+result = payload.get("result")
+if payload.get("jsonrpc") != "2.0" or not isinstance(result, dict):
+    raise SystemExit("gateway routing response missing result payload")
+
+if result.get("resolvedExecutionTarget") != "gateway":
+    raise SystemExit(f"unexpected gateway target: {result!r}")
+if result.get("resolvedGatewayProviderId") != "openclaw":
+    raise SystemExit(f"unexpected gateway provider: {result!r}")
+if result.get("status") != "available":
+    raise SystemExit(f"unexpected gateway routing status: {result!r}")
+PY
+}
+
 run_with_retry "bridge ping ${BASE_URL}/api/ping" 6 5 "${RETRYABLE_TRANSPORT},${RETRYABLE_NOT_READY}" wait_for_release_ping_once
 probe_bridge_root
-
-probe_safe_http_endpoint "${OPENCLAW_HTTP_PROBE_URL}"
-probe_safe_http_endpoint "${CODEX_BASE_URL}"
-probe_safe_http_endpoint "${OPENCODE_BASE_URL}"
-probe_safe_http_endpoint "${GEMINI_BASE_URL}"
-
-run_with_retry "capabilities ${CODEX_RPC_ENDPOINT}" 3 5 "${RETRYABLE_TRANSPORT}" probe_jsonrpc_capabilities_once "${CODEX_RPC_ENDPOINT}"
-run_with_retry "capabilities ${OPENCODE_RPC_ENDPOINT}" 3 5 "${RETRYABLE_TRANSPORT}" probe_jsonrpc_capabilities_once "${OPENCODE_RPC_ENDPOINT}"
-run_with_retry "capabilities ${GEMINI_RPC_ENDPOINT}" 3 5 "${RETRYABLE_TRANSPORT}" probe_jsonrpc_capabilities_once "${GEMINI_RPC_ENDPOINT}"
-run_with_retry "bridge provider probe codex" 3 10 "${RETRYABLE_TRANSPORT}" probe_bridge_provider_probe_once "codex"
-run_with_retry "bridge provider probe opencode" 3 10 "${RETRYABLE_TRANSPORT}" probe_bridge_provider_probe_once "opencode"
-run_with_retry "bridge provider probe gemini" 3 10 "${RETRYABLE_TRANSPORT}" probe_bridge_provider_probe_once "gemini"
-run_with_retry "bridge provider probe hermes" 3 10 "${RETRYABLE_TRANSPORT}" probe_bridge_provider_probe_once "hermes"
+run_with_retry "bridge capabilities ${RPC_URL}" 3 5 "${RETRYABLE_TRANSPORT}" probe_bridge_capabilities_once
+run_with_retry "bridge routing ${RPC_URL}" 3 5 "${RETRYABLE_TRANSPORT}" probe_bridge_routing_once
+run_with_retry "bridge gateway routing ${RPC_URL}" 3 5 "${RETRYABLE_TRANSPORT}" probe_bridge_gateway_routing_once

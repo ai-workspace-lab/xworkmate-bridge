@@ -49,7 +49,7 @@ func (LLMClassifier) Classify(req ClassificationRequest) string {
 		[]map[string]string{
 			{
 				"role":    "system",
-				"content": "Classify the user task into exactly one label: single-agent, multi-agent, or gateway. Return only the label.",
+				"content": "Classify the user task into exactly one label: single-agent or gateway. Return only the label.",
 			},
 			{
 				"role":    "user",
@@ -68,8 +68,6 @@ func normalizeClassifierLabel(value string) string {
 	switch {
 	case strings.Contains(normalized, ExecutionTargetSingleAgent):
 		return ExecutionTargetSingleAgent
-	case strings.Contains(normalized, ExecutionTargetMultiAgent):
-		return ExecutionTargetMultiAgent
 	case strings.Contains(normalized, ExecutionTargetGateway):
 		return ExecutionTargetGateway
 	default:

@@ -124,7 +124,7 @@ func TestResolveAutoOnlineTaskToGateway(t *testing.T) {
 	}
 }
 
-func TestResolveComplexTaskUpgradesToMultiAgent(t *testing.T) {
+func TestResolveComplexTaskNoLongerPromotesToMultiAgent(t *testing.T) {
 	resolver := Resolver{
 		SkillFinder:    skills.StaticFinder{},
 		SkillInstaller: nil,
@@ -132,11 +132,12 @@ func TestResolveComplexTaskUpgradesToMultiAgent(t *testing.T) {
 	}
 
 	result := resolver.Resolve(Request{
-		Prompt: "analyze these files, review the output, and summarize multiple deliverables",
+		Prompt:              "analyze these files, review the output, and summarize multiple deliverables",
+		AvailableProviders:  []string{"codex"},
 	})
 
-	if result.ResolvedExecutionTarget != ExecutionTargetMultiAgent {
-		t.Fatalf("expected multi-agent route, got %#v", result)
+	if result.ResolvedExecutionTarget != ExecutionTargetSingleAgent {
+		t.Fatalf("expected single-agent route after control-plane refocus, got %#v", result)
 	}
 }
 

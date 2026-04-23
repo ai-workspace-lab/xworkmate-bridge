@@ -1,21 +1,110 @@
 # ADR: Refocus xworkmate-bridge as ACP Control Plane
 
 ## Status
-Proposed
+
+Accepted
 
 ## Context
-Originally, `xworkmate-bridge` evolved as a hybrid of a reverse proxy, a stdio runtime manager, and a basic routing layer. This led to logic fragmentation, where provider-specific details (like Gemini or Hermes protocol handling) were mixed with core session orchestration. 
+
+`xworkmate-bridge` 历史上混入了三类职责：
+
+- app-facing ACP control plane
+- provider/gateway alias route
+- stdio/process/runtime implementation detail
+
+这些职责混在一起后，bridge 容易退化成：
+
+- 通用 reverse proxy
+- ingress path router
+- adapter runtime 容器
+
+结果是：
+
+- provider catalog 真源不清晰
+- routing 逻辑容易散落
+- session 主语义被 provider-specific 分支污染
+- app 容易误依赖内部 URL / 端口 / service 名
 
 ## Decision
-We decided to refocus `xworkmate-bridge` as an **APP-facing ACP control-plane and provider compatibility layer**. 
 
-Key changes:
-1. **Control Plane Identity**: The bridge is the Source of Truth (SSOT) for provider discovery (`acp.capabilities`) and routing resolution (`xworkmate.routing.resolve`).
-2. **Session Orchestration**: All sessions are orchestrated by a unified engine that handles turn state, history normalization, and result shaping. Provider-specific differences are absorbed by a dedicated **Compatibility Layer** (Adapters).
-3. **Decoupled Runtime**: Stdio and process lifecycle details are pushed down to specific adapters. The bridge only depends on the `ProviderAdapter` contract.
-4. **Stripped Non-Core Duties**: TLS, ingress routing, and rate limiting are handed over to edge ingress controllers (e.g., APISIX/Caddy).
+我们将 `xworkmate-bridge` 收敛为：
+
+**APP-facing ACP control plane and provider compatibility layer**
+
+### 1. bridge 不是 just proxy
+
+bridge 的核心资产不是纯转发，而是：
+
+- `acp.capabilities`
+- `xworkmate.routing.resolve`
+- `session orchestration`
+- `xworkmate.gateway.*`
+
+因此 bridge 不再以 alias route 作为 public surface。
+
+### 2. provider catalog 必须是 bridge-owned truth
+
+app 只能通过 `acp.capabilities` 获取：
+
+- `providerCatalog`
+- `gatewayProviders`
+- `availableExecutionTargets`
+
+app 不应依赖：
+
+- `/acp-server/*`
+- `/gateway/openclaw`
+- 本地端口
+- systemd service 名
+
+### 3. stdio runtime 必须留在 bridge core 之外
+
+以下内容不是 bridge core：
+
+- JSON-RPC over stdio framing
+- process lifecycle
+- restart / stderr
+- provider-specific upstream session 映射
+
+这些细节属于 adapter runtime / provider compat。
+
+### 4. routing.resolve 与 session orchestration 是核心资产
+
+bridge 继续保留：
+
+- 独立 routing engine
+- 统一 session orchestrator
+
+provider-specific 逻辑只能存在于 compat layer，不得污染公共 handler。
+
+### 5. WS-first
+
+canonical transport 定义为：
+
+- `GET /acp` WebSocket
+
+`POST /acp/rpc` 作为 secondary compatibility transport 保留，但不再主导架构设计。
 
 ## Consequences
-- **Pros**: Clear separation of concerns, easier to add new providers, stable contract for App, reduced codebase complexity.
-- **Cons**: Requires migration of existing direct-proxy logic to the new adapter pattern.
-- **Backward Compatibility**: Dropped legacy direct-proxy paths and internal routing leaks.
+
+### 正向结果
+
+- public contract 更清晰
+- provider 扩展更便宜
+- app 不再依赖内部部署事实
+- bridge core 与 adapter runtime 职责清晰
+
+### 有意删除
+
+- `/acp-server/*` public alias
+- `/gateway/openclaw` public alias
+- multi-agent 作为 bridge core 路径
+- 以 reverse proxy 为中心的 bridge 定位
+
+### 后续规则
+
+新增 JSON-RPC over stdio provider 时：
+
+- 只增加 compat/runtime
+- 不改 bridge core contract
+- 不把 provider-specific URL 暴露给 app

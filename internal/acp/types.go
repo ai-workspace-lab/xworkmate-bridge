@@ -14,7 +14,7 @@ type session struct {
 	mode      string
 	provider  string // The Provider ID
 	target    string // The Execution Target ID
-	adapter   ProviderAdapter
+	compat    ProviderCompat
 	cancel    context.CancelFunc
 	closed    bool
 	mu        sync.Mutex
@@ -28,14 +28,13 @@ type Server struct {
 	
 	// Core Control Plane Components
 	routingEngine   RoutingEngine
-	adapters        map[string]ProviderAdapter
+	providers       map[string]ProviderCompat
 	catalog         *CapabilityCatalog
 	orchestrator    *SessionOrchestrator
 	memoryService   memory.Service
-	
-	providerOrder    []string
-	sessionToAdapter map[string]ProviderAdapter
-	gateway          *gatewayruntime.Manager
+
+	providerOrder []string
+	gateway       *gatewayruntime.Manager
 
 	// Legacy / Common
 	authService     interface{} // Minimal auth dependency

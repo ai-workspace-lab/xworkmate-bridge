@@ -13,7 +13,6 @@ const (
 	RoutingModeExplicit = "explicit"
 
 	ExecutionTargetSingleAgent = "single-agent"
-	ExecutionTargetMultiAgent  = "multi-agent"
 	ExecutionTargetGateway     = "gateway"
 	ExecutionTargetGatewayChat = "gateway-chat"
 
@@ -142,21 +141,14 @@ func (r Resolver) resolveExecution(req Request, prefs memory.Preferences) (strin
 
 	localTask := looksLocal(prompt)
 	onlineTask := looksOnline(prompt)
-	complexTask := looksComplex(prompt)
 
 	switch {
-	case localTask && complexTask:
-		return ExecutionTargetMultiAgent, ""
-	case onlineTask && complexTask:
-		return ExecutionTargetMultiAgent, ""
 	case localTask:
 		return ExecutionTargetSingleAgent, ""
 	case onlineTask:
 		return ExecutionTargetGateway, resolveGatewayProvider(
 			req.PreferredGatewayProviderID,
 		)
-	case complexTask:
-		return ExecutionTargetMultiAgent, ""
 	}
 
 	switch normalizeExecutionTarget(r.classify(req)) {
@@ -164,8 +156,6 @@ func (r Resolver) resolveExecution(req Request, prefs memory.Preferences) (strin
 		return ExecutionTargetGateway, resolveGatewayProvider(
 			req.PreferredGatewayProviderID,
 		)
-	case ExecutionTargetMultiAgent:
-		return ExecutionTargetMultiAgent, ""
 	case ExecutionTargetSingleAgent:
 		return ExecutionTargetSingleAgent, ""
 	}
@@ -175,8 +165,6 @@ func (r Resolver) resolveExecution(req Request, prefs memory.Preferences) (strin
 		return ExecutionTargetGateway, resolveGatewayProvider(
 			req.PreferredGatewayProviderID,
 		)
-	case ExecutionTargetMultiAgent:
-		return ExecutionTargetMultiAgent, ""
 	case ExecutionTargetSingleAgent:
 		if len(normalizeProviders(req.AvailableProviders)) > 0 {
 			return ExecutionTargetSingleAgent, ""
@@ -206,8 +194,6 @@ func mapExplicitTarget(
 	preferredGatewayProviderID string,
 ) (string, string) {
 	switch strings.TrimSpace(value) {
-	case "multiAgent", ExecutionTargetMultiAgent:
-		return ExecutionTargetMultiAgent, ""
 	case "singleAgent", ExecutionTargetSingleAgent:
 		return ExecutionTargetSingleAgent, ""
 	case ExecutionTargetGateway:
@@ -317,49 +303,6 @@ func looksOnline(prompt string) bool {
 		"资讯采集", "跨浏览器", "文生图", "文生视频", "图生视频", "视频翻译",
 		"translate video", "dub video", "subtitles",
 	})
-}
-
-func looksComplex(prompt string) bool {
-	strongSignals := containsAny(prompt, []string{
-		"multiple deliverables", "multiple outputs", "多个产物", "多个输出",
-		"审阅", "复核", "汇编", "end-to-end", "end to end",
-	})
-	if strongSignals {
-		return true
-	}
-
-	reviewSignals := containsAny(prompt, []string{
-		"review", "audit", "verify", "summarize", "compare",
-		"审阅", "复核", "汇总", "对比", "整理", "整合", "汇编",
-	})
-	multiStepSignals := containsAny(prompt, []string{
-		"workflow", "pipeline", "step by step", "multi-step", "collect and",
-		"analyze and", "review and", "compare and", "summarize and",
-		"先", "然后", "之后",
-	})
-	structuredOutputSignals := containsAny(prompt, []string{
-		"report", "memo", "table", "spreadsheet", "document", "deck", "slides",
-		"presentation", "报告", "总结", "表格", "文档", "演示",
-	})
-	onlineCollectionSignals := containsAny(prompt, []string{
-		"browser", "search", "news", "research", "crawl", "scrape",
-		"跨浏览器", "搜索", "资讯", "采集", "检索",
-	})
-
-	score := 0
-	if reviewSignals {
-		score++
-	}
-	if multiStepSignals {
-		score++
-	}
-	if structuredOutputSignals {
-		score++
-	}
-	if onlineCollectionSignals && structuredOutputSignals {
-		return true
-	}
-	return score >= 2
 }
 
 func containsAny(haystack string, needles []string) bool {

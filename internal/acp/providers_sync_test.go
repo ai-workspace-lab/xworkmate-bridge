@@ -10,14 +10,10 @@ import (
 func setTestBridgeProvider(server *Server, provider syncedProvider) {
 	server.mu.Lock()
 	defer server.mu.Unlock()
-	if server.adapters == nil {
-		server.adapters = make(map[string]ProviderAdapter)
+	if server.providers == nil {
+		server.providers = make(map[string]ProviderCompat)
 	}
-	server.adapters[provider.ProviderID] = &ProxyAdapter{
-		providerID: provider.ProviderID,
-		endpoint:   resolveSingleAgentForwardEndpoint(provider),
-		authHeader: provider.AuthorizationHeader,
-	}
+	server.providers[provider.ProviderID] = newProviderCompat(provider)
 	
 	if server.catalog != nil {
 		server.catalog.ProviderCatalog = append(server.catalog.ProviderCatalog, map[string]any{

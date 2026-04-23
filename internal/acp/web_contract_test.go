@@ -60,138 +60,28 @@ func TestHTTPHandlerRootAndPingExposeRuntimeVersionInfo(t *testing.T) {
 	}
 }
 
-func TestHTTPHandlerBareAliasPathsExposeCapabilities(t *testing.T) {
+func TestHTTPHandlerKeepsLegacyACPCodexPathAlive(t *testing.T) {
 	t.Setenv("BRIDGE_AUTH_TOKEN", "")
 	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
 	handler := server.Handler()
 
-	cases := []struct {
-		name     string
-		path     string
-		wantMode string
-		wantID   string
-	}{
-		{name: "gateway", path: "/gateway/openclaw", wantMode: "gateway", wantID: "openclaw"},
-		{name: "codex", path: "/acp-server/codex", wantMode: "agent", wantID: "codex"},
-		{name: "opencode", path: "/acp-server/opencode", wantMode: "agent", wantID: "opencode"},
-		{name: "gemini", path: "/acp-server/gemini", wantMode: "agent", wantID: "gemini"},
-		{name: "hermes", path: "/acp-server/hermes", wantMode: "agent", wantID: "hermes"},
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/acp-server/codex", nil)
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", recorder.Code)
 	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			recorder := httptest.NewRecorder()
-			request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1"+tc.path, nil)
-			handler.ServeHTTP(recorder, request)
-
-			if recorder.Code != http.StatusOK {
-				t.Fatalf("expected 200, got %d", recorder.Code)
-			}
-			if got := recorder.Header().Get("Content-Type"); !strings.Contains(got, "application/json") {
-				t.Fatalf("expected application/json content type, got %q", got)
-			}
-
-			var envelope map[string]any
-			if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
-				t.Fatalf("decode capability alias response: %v", err)
-			}
-			result := shared.AsMap(envelope["result"])
-			if got := result["singleAgent"]; got != true {
-				t.Fatalf("expected singleAgent true, got %#v", got)
-			}
-			if got := result["resolvedExecutionTarget"]; got != nil {
-				t.Fatalf("did not expect resolvedExecutionTarget in alias response, got %#v", got)
-			}
-			if tc.wantMode == "gateway" {
-				gatewayProviders := mustObjectList(t, result["gatewayProviders"])
-				if len(gatewayProviders) != 1 {
-					t.Fatalf("expected one gateway provider, got %#v", gatewayProviders)
-				}
-				if got := gatewayProviders[0]["providerId"]; got != tc.wantID {
-					t.Fatalf("expected gateway provider %q, got %#v", tc.wantID, got)
-				}
-				return
-			}
-			providerCatalog := mustObjectList(t, result["providerCatalog"])
-			found := false
-			for _, provider := range providerCatalog {
-				if provider["providerId"] == tc.wantID {
-					found = true
-					break
-				}
-			}
-			if !found {
-				t.Fatalf("expected provider %q in providerCatalog, got %#v", tc.wantID, providerCatalog)
-			}
-		})
+	var payload map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode legacy payload: %v", err)
 	}
-}
-
-func TestHTTPHandlerBareAliasPathsServeRPC(t *testing.T) {
-	t.Setenv("BRIDGE_AUTH_TOKEN", "")
-	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
-	server := NewServer()
-	handler := server.Handler()
-
-	cases := []struct {
-		name     string
-		path     string
-		wantMode string
-		wantID   string
-	}{
-		{name: "gateway", path: "/gateway/openclaw", wantMode: "gateway", wantID: "openclaw"},
-		{name: "codex", path: "/acp-server/codex", wantMode: "agent", wantID: "codex"},
-		{name: "opencode", path: "/acp-server/opencode", wantMode: "agent", wantID: "opencode"},
-		{name: "gemini", path: "/acp-server/gemini", wantMode: "agent", wantID: "gemini"},
-		{name: "hermes", path: "/acp-server/hermes", wantMode: "agent", wantID: "hermes"},
+	if got := payload["providerId"]; got != "codex" {
+		t.Fatalf("expected providerId codex, got %#v", got)
 	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			recorder := httptest.NewRecorder()
-			request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1"+tc.path, strings.NewReader(`{"jsonrpc":"2.0","id":"rpc-1","method":"acp.capabilities"}`))
-			request.Header.Set("Content-Type", "application/json")
-			request.Header.Set("Authorization", "Bearer test-token")
-			handler.ServeHTTP(recorder, request)
-
-			if recorder.Code != http.StatusOK {
-				t.Fatalf("expected 200, got %d", recorder.Code)
-			}
-			if got := recorder.Header().Get("Content-Type"); !strings.Contains(got, "application/json") {
-				t.Fatalf("expected application/json content type, got %q", got)
-			}
-
-			var envelope map[string]any
-			if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
-				t.Fatalf("decode rpc alias response: %v", err)
-			}
-			if got := envelope["id"]; got != "rpc-1" {
-				t.Fatalf("expected rpc id rpc-1, got %#v", got)
-			}
-			result := shared.AsMap(envelope["result"])
-			if tc.wantMode == "gateway" {
-				gatewayProviders := mustObjectList(t, result["gatewayProviders"])
-				if len(gatewayProviders) != 1 {
-					t.Fatalf("expected one gateway provider, got %#v", gatewayProviders)
-				}
-				if got := gatewayProviders[0]["providerId"]; got != tc.wantID {
-					t.Fatalf("expected gateway provider %q, got %#v", tc.wantID, got)
-				}
-				return
-			}
-			providerCatalog := mustObjectList(t, result["providerCatalog"])
-			found := false
-			for _, provider := range providerCatalog {
-				if provider["providerId"] == tc.wantID {
-					found = true
-					break
-				}
-			}
-			if !found {
-				t.Fatalf("expected provider %q in providerCatalog, got %#v", tc.wantID, providerCatalog)
-			}
-		})
+	if got := payload["legacy"]; got != true {
+		t.Fatalf("expected legacy flag true, got %#v", got)
 	}
 }
 

@@ -213,9 +213,9 @@ func reconcileCodex(
 	}
 	state.DiscoveredMCPCount = discovered
 	state.ManagedMCPCount = len(managedServers)
-	state.Detail = "Codex public base URL: https://xworkmate-bridge.svc.plus/acp-server/codex\n" +
-		"Preferred WebSocket endpoint: https://xworkmate-bridge.svc.plus/acp-server/codex/acp\n" +
-		"Compatibility HTTP RPC endpoint: https://xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc"
+	state.Detail = "Codex is exposed through the bridge control plane.\n" +
+		"Canonical WebSocket endpoint: https://xworkmate-bridge.svc.plus/acp\n" +
+		"Secondary HTTP RPC endpoint: https://xworkmate-bridge.svc.plus/acp/rpc"
 	return state
 }
 
@@ -246,9 +246,9 @@ func reconcileCLIListTarget(
 	state.ManagedMCPCount = len(enabledServers(config.ManagedMCPServers))
 
 	if targetID == "gemini" {
-		state.Detail = "Gemini public base URL: https://xworkmate-bridge.svc.plus/acp-server/gemini\n" +
-			"Preferred WebSocket endpoint: https://xworkmate-bridge.svc.plus/acp-server/gemini/acp\n" +
-			"Compatibility HTTP RPC endpoint: https://xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc"
+		state.Detail = "Gemini is exposed through the bridge control plane.\n" +
+			"Canonical WebSocket endpoint: https://xworkmate-bridge.svc.plus/acp\n" +
+			"Secondary HTTP RPC endpoint: https://xworkmate-bridge.svc.plus/acp/rpc"
 	} else {
 		state.Detail = "MCP discovery uses `" + strings.Join(command, " ") +
 			"`; LLM API stays launch-scoped."
@@ -291,8 +291,9 @@ func reconcileOpencode(config Config, opencodeHome string) MountTargetState {
 	}
 	state.DiscoveredMCPCount = discovered
 	state.ManagedMCPCount = len(managedServers)
-	state.Detail = "OpenCode public base URL: https://xworkmate-bridge.svc.plus/acp-server/opencode\n" +
-		"Preferred WebSocket endpoint: https://xworkmate-bridge.svc.plus/acp-server/opencode/acp"
+	state.Detail = "OpenCode is exposed through the bridge control plane.\n" +
+		"Canonical WebSocket endpoint: https://xworkmate-bridge.svc.plus/acp\n" +
+		"Secondary HTTP RPC endpoint: https://xworkmate-bridge.svc.plus/acp/rpc"
 	return state
 }
 

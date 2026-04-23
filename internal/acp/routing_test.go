@@ -25,6 +25,9 @@ func handleRoutingResolve(params map[string]any) map[string]any {
 		"resolvedModel":             res.Model,
 		"resolvedSkills":            res.Skills,
 		"status":                    res.Status,
+		"unavailable":               res.Status == "unavailable",
+		"unavailableCode":           res.UnavailableCode,
+		"unavailableMessage":        res.UnavailableMsg,
 		"skillResolutionSource":     res.SkillResolutionSource,
 		"needsSkillInstall":         res.NeedsSkillInstall,
 		"skillInstallRequestId":     res.SkillInstallRequestID,
@@ -390,15 +393,41 @@ func TestExecuteSessionTaskExplicitGatewayIgnoresExplicitProvider(t *testing.T) 
 					"explicitExecutionTarget":    "gateway",
 					"explicitProviderId":         "claude",
 					"preferredGatewayProviderId": "openclaw",
+					"gatewayProvider":            "openclaw",
 				},
 			},
 		},
 	})
 	if rpcErr == nil {
-		t.Fatalf("expected gateway-not-connected rpc error, got response: %v", response)
+		t.Fatalf("expected gateway provider required rpc error, got response: %v", response)
 	}
-	if !strings.Contains(rpcErr.Message, "gateway not connected") {
-		t.Fatalf("expected gateway not connected, got %q", rpcErr.Message)
+	if rpcErr.Message != "GATEWAY_PROVIDER_REQUIRED" {
+		t.Fatalf("expected GATEWAY_PROVIDER_REQUIRED, got %q", rpcErr.Message)
+	}
+}
+
+func TestExecuteSessionTaskRequiresExplicitGatewayProvider(t *testing.T) {
+	server := NewServer()
+
+	_, rpcErr := server.executeSessionTask(task{
+		req: shared.RPCRequest{
+			Method: "session.start",
+			Params: map[string]any{
+				"sessionId":  "session-gateway-missing-provider",
+				"threadId":   "thread-gateway-missing-provider",
+				"taskPrompt": "search latest news",
+				"routing": map[string]any{
+					"routingMode":             "explicit",
+					"explicitExecutionTarget": "gateway",
+				},
+			},
+		},
+	})
+	if rpcErr == nil {
+		t.Fatal("expected gateway provider required error")
+	}
+	if rpcErr.Message != "GATEWAY_PROVIDER_REQUIRED" {
+		t.Fatalf("expected GATEWAY_PROVIDER_REQUIRED, got %#v", rpcErr)
 	}
 }
 
@@ -477,19 +506,11 @@ func TestExecuteSessionTaskRequiresRouting(t *testing.T) {
 	}
 }
 
-func TestExecuteSessionTaskAutoRoutingPromotesComplexRequestToMultiAgent(t *testing.T) {
+func TestExecuteSessionTaskComplexRequestNoLongerPromotesToMultiAgent(t *testing.T) {
 	workspaceDir := filepath.Join(t.TempDir(), "workspace")
 	if err := os.MkdirAll(workspaceDir, 0o755); err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}
-
-	aiGateway := httptest.NewServer(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"planner output"}}]}`))
-		}),
-	)
-	defer aiGateway.Close()
 
 	server := NewServer()
 	response, rpcErr := server.executeSessionTask(task{
@@ -497,28 +518,19 @@ func TestExecuteSessionTaskAutoRoutingPromotesComplexRequestToMultiAgent(t *test
 			Params: map[string]any{
 				"sessionId":        "session-complex",
 				"threadId":         "thread-complex",
-				"provider":         "claude",
 				"taskPrompt":       "collect latest news and summarize it into a report for review",
 				"workingDirectory": workspaceDir,
-				"aiGatewayBaseUrl": aiGateway.URL,
-				"aiGatewayApiKey":  "test-key",
 				"routing": map[string]any{
 					"routingMode": "auto",
 				},
 			},
 		},
 	})
-	if rpcErr != nil {
-		t.Fatalf("expected success, got rpc error: %v", rpcErr)
+	if rpcErr == nil {
+		t.Fatalf("expected gateway-not-connected error, got response %#v", response)
 	}
-	if success, _ := response["success"].(bool); !success {
-		t.Fatalf("expected success response, got %#v", response)
-	}
-	if got := response["mode"]; got != "multi-agent" {
-		t.Fatalf("expected session mode to be promoted to multi-agent, got %#v", got)
-	}
-	if got := response["resolvedExecutionTarget"]; got != "multi-agent" {
-		t.Fatalf("expected resolved execution target multi-agent, got %#v", got)
+	if strings.Contains(rpcErr.Message, "multi-agent") {
+		t.Fatalf("expected no multi-agent path, got rpc error: %v", rpcErr)
 	}
 }
 

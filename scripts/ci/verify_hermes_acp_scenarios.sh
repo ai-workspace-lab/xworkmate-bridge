@@ -3,7 +3,7 @@ set -euo pipefail
 
 BRIDGE_SERVER_URL="${BRIDGE_SERVER_URL:-https://xworkmate-bridge.svc.plus}"
 BRIDGE_AUTH_TOKEN="${BRIDGE_AUTH_TOKEN:-}"
-HERMES_RPC_URL="${HERMES_RPC_URL:-${BRIDGE_SERVER_URL%/}/acp-server/hermes/acp/rpc}"
+HERMES_RPC_URL="${HERMES_RPC_URL:-${BRIDGE_SERVER_URL%/}/acp/rpc}"
 
 if [[ -z "${BRIDGE_AUTH_TOKEN}" ]]; then
   echo "Error: BRIDGE_AUTH_TOKEN is required" >&2
@@ -88,7 +88,7 @@ hermes_caps="$(
     "${HERMES_RPC_URL}" \
     '{"jsonrpc":"2.0","id":"hermes-capabilities","method":"acp.capabilities","params":{}}'
 )"
-assert_contains "hermes capabilities" "$(json_get "${hermes_caps}" "result.providers")" "hermes"
+assert_contains "hermes capabilities" "$(json_get "${hermes_caps}" "result.providerCatalog")" "hermes"
 
 hermes_session_id="hermes-scenario-$(date +%s)"
 hermes_thread_id="${hermes_session_id}"
@@ -96,7 +96,7 @@ hermes_thread_id="${hermes_session_id}"
 hermes_start="$(
   rpc_post \
     "${HERMES_RPC_URL}" \
-    "{\"jsonrpc\":\"2.0\",\"id\":\"hermes-start\",\"method\":\"session.start\",\"params\":{\"sessionId\":\"${hermes_session_id}\",\"threadId\":\"${hermes_thread_id}\",\"taskPrompt\":\"Reply with exactly pong\",\"workingDirectory\":\"/tmp/hermes-long-dialogue\"}}"
+    "{\"jsonrpc\":\"2.0\",\"id\":\"hermes-start\",\"method\":\"session.start\",\"params\":{\"sessionId\":\"${hermes_session_id}\",\"threadId\":\"${hermes_thread_id}\",\"taskPrompt\":\"Reply with exactly pong\",\"workingDirectory\":\"/tmp/hermes-long-dialogue\",\"routing\":{\"routingMode\":\"explicit\",\"explicitExecutionTarget\":\"singleAgent\",\"explicitProviderId\":\"hermes\"}}}"
 )"
 assert_nonempty "hermes start output" "$(json_get "${hermes_start}" "result.output")"
 assert_contains "hermes start output" "$(json_get "${hermes_start}" "result.output")" "pong"
@@ -107,7 +107,7 @@ assert_nonempty "hermes upstream session id" "${hermes_upstream_session_id}"
 hermes_message_1="$(
   rpc_post \
     "${HERMES_RPC_URL}" \
-    "{\"jsonrpc\":\"2.0\",\"id\":\"hermes-message-1\",\"method\":\"session.message\",\"params\":{\"sessionId\":\"${hermes_session_id}\",\"threadId\":\"${hermes_thread_id}\",\"taskPrompt\":\"Reply with exactly pong again\",\"workingDirectory\":\"/tmp/hermes-long-dialogue\"}}"
+    "{\"jsonrpc\":\"2.0\",\"id\":\"hermes-message-1\",\"method\":\"session.message\",\"params\":{\"sessionId\":\"${hermes_session_id}\",\"threadId\":\"${hermes_thread_id}\",\"taskPrompt\":\"Reply with exactly pong again\",\"workingDirectory\":\"/tmp/hermes-long-dialogue\",\"routing\":{\"routingMode\":\"explicit\",\"explicitExecutionTarget\":\"singleAgent\",\"explicitProviderId\":\"hermes\"}}}"
 )"
 assert_nonempty "hermes message1 output" "$(json_get "${hermes_message_1}" "result.output")"
 assert_contains "hermes message1 upstream method" "$(json_get "${hermes_message_1}" "result.upstreamMethod")" "session/prompt"
@@ -116,7 +116,7 @@ assert_nonempty "hermes message1 upstream session id" "$(json_get "${hermes_mess
 hermes_message_2="$(
   rpc_post \
     "${HERMES_RPC_URL}" \
-    "{\"jsonrpc\":\"2.0\",\"id\":\"hermes-message-2\",\"method\":\"session.message\",\"params\":{\"sessionId\":\"${hermes_session_id}\",\"threadId\":\"${hermes_thread_id}\",\"taskPrompt\":\"Reply with exactly pong one more time\",\"workingDirectory\":\"/tmp/hermes-long-dialogue\"}}"
+    "{\"jsonrpc\":\"2.0\",\"id\":\"hermes-message-2\",\"method\":\"session.message\",\"params\":{\"sessionId\":\"${hermes_session_id}\",\"threadId\":\"${hermes_thread_id}\",\"taskPrompt\":\"Reply with exactly pong one more time\",\"workingDirectory\":\"/tmp/hermes-long-dialogue\",\"routing\":{\"routingMode\":\"explicit\",\"explicitExecutionTarget\":\"singleAgent\",\"explicitProviderId\":\"hermes\"}}}"
 )"
 assert_nonempty "hermes message2 output" "$(json_get "${hermes_message_2}" "result.output")"
 assert_contains "hermes message2 upstream method" "$(json_get "${hermes_message_2}" "result.upstreamMethod")" "session/prompt"

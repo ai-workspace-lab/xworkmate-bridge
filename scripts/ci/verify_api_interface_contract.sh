@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# scripts/ci/verify_api_interface_contract.sh
 set -euo pipefail
 
 BRIDGE_SERVER_URL="${BRIDGE_SERVER_URL:-https://xworkmate-bridge.svc.plus}"
@@ -10,69 +9,99 @@ if [[ -z "${BRIDGE_AUTH_TOKEN}" ]]; then
   exit 1
 fi
 
-echo "--- Verifying API Interface Contract for $BRIDGE_SERVER_URL ---"
-
-check_endpoint() {
-  local name=$1
-  local path=$2
-  local expected_status=$3
-  local content_type=$4
-
-  echo -n "Checking $name ($path)... "
-  local response_info
-  response_info=$(curl -s -o /tmp/resp.body -w "%{http_code} %{content_type}" \
-    -H "Authorization: Bearer $BRIDGE_AUTH_TOKEN" \
-    "$BRIDGE_SERVER_URL$path")
-  
-  local status=$(echo "$response_info" | cut -d' ' -f1)
-  local actual_ct=$(echo "$response_info" | cut -d' ' -f2-)
-
-  if [[ "$status" == "$expected_status" ]]; then
-    if [[ "$actual_ct" == *"$content_type"* ]]; then
-      # 验证是否为有效的 JSON 且包含 ok: true
-      if jq -e '.ok == true' /tmp/resp.body >/dev/null 2>&1; then
-        echo "✅ OK ($status, application/json)"
-      else
-        echo "❌ Failed (Invalid Bridge Response Structure)"
-        cat /tmp/resp.body
-        return 1
-      fi
-    else
-      echo "❌ Failed: Wrong Content-Type (Expected $content_type, got $actual_ct)"
-      return 1
-    fi
-  else
-    echo "❌ Failed (Expected $expected_status, got $status)"
-    return 1
-  fi
+rpc_call() {
+  local payload="$1"
+  curl \
+    --silent \
+    --show-error \
+    --fail \
+    --location \
+    --max-time 60 \
+    -H "Authorization: Bearer ${BRIDGE_AUTH_TOKEN}" \
+    -H "Content-Type: application/json" \
+    -H "Accept: application/json" \
+    --data "${payload}" \
+    "${BRIDGE_SERVER_URL%/}/acp/rpc"
 }
 
-# 现在的架构下，所有路径都应该由 Bridge 统一处理并返回 200 JSON
-check_endpoint "OpenClaw" "/gateway/openclaw" "200" "application/json"
-check_endpoint "OpenCode" "/acp-server/opencode" "200" "application/json"
-check_endpoint "Codex" "/acp-server/codex" "200" "application/json"
-check_endpoint "Gemini" "/acp-server/gemini" "200" "application/json"
-check_endpoint "Hermes" "/acp-server/hermes" "200" "application/json"
+echo "--- Verifying canonical bridge contract for ${BRIDGE_SERVER_URL} ---"
 
-# 6. Aggregate RPC Endpoint
-echo -n "Checking Aggregate RPC (/acp/rpc)... "
-rpc_status=$(curl -s -o /tmp/rpc.resp -w "%{http_code}" \
-  -X POST -H "Authorization: Bearer $BRIDGE_AUTH_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"acp.capabilities","params":{},"id":1}' \
-  "$BRIDGE_SERVER_URL/acp/rpc")
+echo -n "Checking /api/ping... "
+ping_json="$(
+  curl \
+    --silent \
+    --show-error \
+    --fail \
+    --location \
+    --max-time 20 \
+    "${BRIDGE_SERVER_URL%/}/api/ping"
+)"
+PING_JSON="${ping_json}" python3 - <<'PY'
+import json
+import os
 
-if [[ "$rpc_status" == "200" ]]; then
-  if jq -e '.ok == true' /tmp/rpc.resp >/dev/null 2>&1; then
-    echo "✅ OK (200 + Valid JSON-RPC Result)"
-  else
-    echo "❌ Failed (Invalid JSON-RPC Response)"
-    cat /tmp/rpc.resp
-    exit 1
-  fi
-else
-  echo "❌ Failed ($rpc_status)"
-  exit 1
-fi
+payload = json.loads(os.environ["PING_JSON"])
+if payload.get("status") != "ok":
+    raise SystemExit("ping status is not ok")
+PY
+echo "OK"
 
-echo "Interface contract verification completed."
+echo -n "Checking acp.capabilities... "
+capabilities_json="$(
+  rpc_call '{"jsonrpc":"2.0","id":"cap-1","method":"acp.capabilities","params":{}}'
+)"
+CAPABILITIES_JSON="${capabilities_json}" python3 - <<'PY'
+import json
+import os
+
+payload = json.loads(os.environ["CAPABILITIES_JSON"])
+result = payload.get("result")
+if payload.get("jsonrpc") != "2.0" or not isinstance(result, dict):
+    raise SystemExit("invalid capabilities envelope")
+
+provider_catalog = result.get("providerCatalog")
+gateway_providers = result.get("gatewayProviders")
+targets = result.get("availableExecutionTargets")
+if not isinstance(provider_catalog, list):
+    raise SystemExit("providerCatalog missing")
+if not isinstance(gateway_providers, list):
+    raise SystemExit("gatewayProviders missing")
+if not isinstance(targets, list):
+    raise SystemExit("availableExecutionTargets missing")
+
+providers = {item.get("providerId") for item in provider_catalog if isinstance(item, dict)}
+if not {"codex", "opencode", "gemini", "hermes"}.issubset(providers):
+    raise SystemExit(f"unexpected providerCatalog: {provider_catalog!r}")
+
+gateway_ids = {item.get("providerId") for item in gateway_providers if isinstance(item, dict)}
+if "openclaw" not in gateway_ids:
+    raise SystemExit(f"unexpected gatewayProviders: {gateway_providers!r}")
+
+if "agent" not in targets or "gateway" not in targets:
+    raise SystemExit(f"unexpected availableExecutionTargets: {targets!r}")
+PY
+echo "OK"
+
+echo -n "Checking xworkmate.routing.resolve... "
+routing_json="$(
+  rpc_call '{"jsonrpc":"2.0","id":"routing-1","method":"xworkmate.routing.resolve","params":{"taskPrompt":"create a powerpoint deck for launch","workingDirectory":"/tmp/bridge-contract","routing":{"routingMode":"explicit","explicitExecutionTarget":"singleAgent","explicitProviderId":"codex","availableSkills":[{"id":"pptx","label":"PPTX","description":"slides","installed":true}]}}}'
+)"
+ROUTING_JSON="${routing_json}" python3 - <<'PY'
+import json
+import os
+
+payload = json.loads(os.environ["ROUTING_JSON"])
+result = payload.get("result")
+if payload.get("jsonrpc") != "2.0" or not isinstance(result, dict):
+    raise SystemExit("invalid routing envelope")
+
+if result.get("resolvedExecutionTarget") != "single-agent":
+    raise SystemExit(f"unexpected resolvedExecutionTarget: {result!r}")
+if result.get("resolvedProviderId") != "codex":
+    raise SystemExit(f"unexpected resolvedProviderId: {result!r}")
+if result.get("status") != "available":
+    raise SystemExit(f"unexpected routing status: {result!r}")
+PY
+echo "OK"
+
+echo "Canonical bridge contract verification completed."

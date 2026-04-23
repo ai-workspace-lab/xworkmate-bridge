@@ -1,190 +1,87 @@
 # ACP Forwarding Topology
 
-Last Updated: 2026-04-13
+Last Updated: 2026-04-23
 
-本文件描述当前 `xworkmate-app <-> xworkmate-bridge` 主链下的 bridge-only forwarding topology。
-
-See also:
-
-- [XWorkmate Core Module Inventory](/Users/shenlan/workspaces/cloud-neutral-toolkit/xworkmate-app/docs/architecture/xworkmate-core-module-inventory-2026-04-13.md)
-- [ADR: Unified Bridge Entry Points](/Users/shenlan/workspaces/cloud-neutral-toolkit/xworkmate-bridge/docs/architecture/adr-unified-bridge-entrypoints.md)
+本文档只描述当前保留的 canonical topology。
 
 ## App-Facing Mainline
 
-对 app 来说，当前主链只有两类面向 bridge 的交互：
+对 `xworkmate-app` 来说，bridge 只有一个 canonical surface：
 
-- `assistant` surface 进入 ACP control-plane：`acp.capabilities`、`xworkmate.routing.resolve`、`session.*`
-- `settings` surface 进入 gateway runtime / connection flow：`acp.capabilities`、`xworkmate.gateway.*`
+- `GET /acp` WebSocket
+- `POST /acp/rpc`
 
-不管 bridge 内部还保留哪些 provider / gateway mode / capability flag，app-facing 公共入口都只有 bridge origin；`/acp-server/*` 和 `/gateway/openclaw` 属于 bridge-owned routing facts，不是 app-owned truth。
+app 只感知 method family：
 
-## Topology
+- `acp.capabilities`
+- `xworkmate.routing.resolve`
+- `session.*`
+- `xworkmate.gateway.*`
+
+## Canonical Topology
 
 ```mermaid
-flowchart TD
-  subgraph APP["xworkmate-app"]
-    A1["AssistantPage"]
-    A2["SettingsPage"]
-    A3["https://xworkmate-bridge.svc.plus"]
-    A1 --> A3
-    A2 --> A3
-  end
+flowchart LR
+    subgraph APP["xworkmate-app"]
+        A1["Assistant / Settings / Runtime UI"]
+        A2["Canonical ACP client"]
+        A1 --> A2
+    end
 
-  subgraph BRIDGE["xworkmate-bridge"]
-    B1["POST /acp/rpc"]
-    B2["GET /acp (WebSocket)"]
-    B3["acp.capabilities"]
-    B4["xworkmate.routing.resolve"]
-    B5["session.*"]
-    B6["xworkmate.gateway.*"]
-    B7["bridge-owned provider catalog"]
-    B8["bridge-owned routing"]
-  B9["bridge-owned gateway runtime"]
+    subgraph BRIDGE["xworkmate-bridge"]
+        B1["GET /acp<br/>JSON-RPC over WebSocket"]
+        B2["POST /acp/rpc<br/>secondary compatibility"]
+        B3["acp.capabilities"]
+        B4["xworkmate.routing.resolve"]
+        B5["session.*"]
+        B6["xworkmate.gateway.*"]
+        B7["provider_compat"]
+        B8["gateway compat"]
+    end
 
-    A3 --> B1
-    A3 --> B2
+    subgraph ADAPTERS["adapter runtime"]
+        C1["codex"]
+        C2["opencode"]
+        C3["gemini"]
+        C4["hermes"]
+    end
+
+    subgraph GATEWAY["gateway runtime"]
+        D1["openclaw"]
+    end
+
+    A2 --> B1
+    A2 --> B2
     B1 --> B3
     B1 --> B4
     B1 --> B5
     B1 --> B6
+    B2 --> B3
+    B2 --> B4
     B2 --> B5
-    B3 --> B7
-    B4 --> B8
-    B5 --> B8
-    B6 --> B9
-  end
-
-  subgraph UPSTREAM["Independent upstream services"]
-    C1["https://xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc"]
-    C2["https://xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc"]
-    C3["https://xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc"]
-    C4["https://xworkmate-bridge.svc.plus/acp-server/hermes/acp/rpc"]
-    C5["https://xworkmate-bridge.svc.plus/gateway/openclaw/"]
-  end
-
-  B7 --> C1
-  B7 --> C2
-  B7 --> C3
-  B7 --> C4
-  B8 --> C1
-  B8 --> C2
-  B8 --> C3
-  B8 --> C4
-  B9 --> C5
+    B2 --> B6
+    B5 --> B7
+    B6 --> B8
+    B7 --> C1
+    B7 --> C2
+    B7 --> C3
+    B7 --> C4
+    B8 --> D1
 ```
-## Three-Layer View
-
-This view separates what the app sees, what the bridge owns, and what the
-real upstream production targets are. The upstream ACP and gateway services
-exist independently, but for the app they are all accessed through the single
-public bridge origin: `https://xworkmate-bridge.svc.plus`.
-
-```mermaid
-flowchart LR
-    subgraph L1["APP 视角"]
-        APP["xworkmate-app"]
-        APPENTRY["https://xworkmate-bridge.svc.plus<br/>统一代理入口"]
-        APPMETHODS["bridge methods<br/>acp.capabilities / session.* / xworkmate.gateway.*"]
-        APP --> APPENTRY
-        APPENTRY --> APPMETHODS
-    end
-
-    subgraph L2["Bridge 视角"]
-        BRIDGE["xworkmate-bridge<br/>唯一上游发现真源"]
-
-        CAP["Bridge-owned target-scoped provider catalog"]
-        CAP1["codex"]
-        CAP2["opencode"]
-        CAP3["gemini"]
-        CAP4["hermes"]
-
-        GW["Bridge-owned gateway routing"]
-        GW1["gatewayProviderId=openclaw"]
-
-        BRIDGE --> CAP
-        CAP --> CAP1
-        CAP --> CAP2
-        CAP --> CAP3
-        CAP --> CAP4
-
-        BRIDGE --> GW
-        GW --> GW1
-    end
-
-    subgraph L3["上游视角"]
-        U1["https://xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc"]
-        U2["https://xworkmate-bridge.svc.plus/acp-server/opencode/acp/rpc"]
-        U3["https://xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc"]
-        U4["https://xworkmate-bridge.svc.plus/acp-server/hermes/acp/rpc"]
-        U5["https://xworkmate-bridge.svc.plus/gateway/openclaw/<br/>reported as xworkmate-bridge.svc.plus:443"]
-    end
-
-    APPMETHODS --> BRIDGE
-
-    CAP1 --> U1
-    CAP2 --> U2
-    CAP3 --> U3
-    CAP4 --> U4
-    GW1 --> U5
-```
-
-Important distinction:
-
-- the upstream services are independent production services, not embedded
-  inside the bridge
-- for the app, ACP discovery, session execution, and gateway runtime traffic
-  are all proxied through `https://xworkmate-bridge.svc.plus`
-- upstream authentication is unified through
-  `Authorization: Bearer $INTERNAL_SERVICE_TOKEN`
-- `acp.capabilities` is the single APP-facing source for task dialog modes and
-  target-scoped provider catalogs
-- `providerCatalog` currently advertises the ACP single-agent providers:
-  `codex`, `opencode`, `gemini`, and `hermes`
-- `gatewayProviders` currently advertises the gateway-scoped providers, such as
-  `openclaw`
-- `availableExecutionTargets` tells the app which first-level task dialog modes
-  are currently available
-
-## Production Truth
-
-当前 production forwarding 事实（内部直连架构）：
-
-- canonical app-facing origin: `https://xworkmate-bridge.svc.plus`
-- canonical app-facing ACP paths:
-  - `POST /acp/rpc`
-  - `GET /acp`
-
-### 核心真源映射 (Final Source of Truth)
-
-为了消除冗余层（Bridge-on-Bridge）并提高就绪性响应速度，中心 Bridge 作为代理和适配器，直接对接各核心服务端口：
-
-| 服务名 | 核心端口 | 协议路径 | 角色定义 |
-| :--- | :--- | :--- | :--- |
-| **`acp-codex.service`**    | **`9001`** | **`ws://127.0.0.1:9001/acp/rpc`** | **Codex 核心 ACP 实现** |
-| **`acp-opencode.service`** | **`38992`** | **`ws//127.0.0.1:38992/acp/rpc`** | **Opencode 协议转换 (JSON-RPC over stdio) |
-| `acp-gemini.service`** | **`8791`** | **`ws://127.0.0.1:8791/acp/rpc`** | **Gemini 协议转换适配器 (JSON-RPC over stdio)** |
-| **`acp-hermes.service`** | **`3920`** | **`ws://127.0.0.1:3920/acp/rpc`** | **Hermes 协议转换适配器 (JSON-RPC over stdio)** |
-| **`openclaw-gateway.service`** | **`18789`** | **`ws://127.0.0.1:18789/`** | **OpenClaw 独立部署网关服务（不使用 /acp）** |
-
-对 app 而言：
-
-- provider catalog、routing、gateway runtime 都是 bridge-owned metadata / behavior
-- upstream URL 存在，但不是 app 的直接合同
-- gateway backend、provider IDs、可选 capability flag 也都不是 app shell 模块分类
 
 ## Invariants
 
-- app traffic reaches upstream ACP and gateway services only through the bridge
-- app does not call `xworkmate-bridge.svc.plus/acp-server/*` or `xworkmate-bridge.svc.plus/gateway/openclaw/` directly
-- `openclaw-gateway` is an independently deployed runtime mapped to `ws://127.0.0.1:18789`
-- internal provider routes remain bridge-owned validation targets:
-  - `xworkmate-bridge.svc.plus/acp-server/codex/acp/rpc`
-  - `xworkmate-bridge.svc.plus/acp-server/opencode/acp`
-  - `xworkmate-bridge.svc.plus/acp-server/gemini/acp/rpc`
-  - `xworkmate-bridge.svc.plus/acp-server/hermes/acp/rpc`
-- upstream auth stays bridge-internal:
-  - `Authorization: Bearer $INTERNAL_SERVICE_TOKEN`
-- `acp.capabilities` is the provider / capability discovery source
-- `xworkmate.routing.resolve` is the routing resolution source
-- `xworkmate.gateway.*` is the gateway runtime method family
-- bridge may expose additional routing metadata, but that metadata must not be interpreted as extra app surfaces or legacy module shells
+- app 不直接访问 provider-specific public URL
+- app 不直接访问 openclaw public URL
+- provider catalog 与 gatewayProviders 由 bridge 独占生成
+- bridge 只暴露 canonical ACP contract
+- provider / gateway 实际地址属于 bridge internal truth
+
+## Non-Contract Facts
+
+下列事实可能存在于部署层，但不是 app contract：
+
+- `127.0.0.1:*` 端口
+- systemd unit 名
+- adapter runtime 监听地址
+- stdio / process lifecycle

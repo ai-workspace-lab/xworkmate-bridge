@@ -109,15 +109,6 @@ case "${scenario}" in
       https://xworkmate-bridge.svc.plus/)
         printf 'xworkmate-bridge is running\n'
         ;;
-      https://xworkmate-bridge.svc.plus/acp-server/*/acp/rpc)
-        printf '{"jsonrpc":"2.0","result":{"providers":["ok"]}}\n'
-        ;;
-      https://xworkmate-bridge.svc.plus/acp-server/*)
-        printf '{"jsonrpc":"2.0","result":{"providers":["ok"]}}\n'
-        ;;
-      https://xworkmate-bridge.svc.plus/gateway/openclaw)
-        printf '{"jsonrpc":"2.0","result":{"providers":["ok"]}}\n'
-        ;;
       https://xworkmate-bridge.svc.plus/acp/rpc)
         printf 'curl: (28) Operation timed out after 20001 milliseconds with 0 bytes received\n' >&2
         exit 1
@@ -141,33 +132,20 @@ case "${scenario}" in
       https://xworkmate-bridge.svc.plus/)
         printf 'xworkmate-bridge is running\n'
         ;;
-      https://xworkmate-bridge.svc.plus/acp-server/*/acp/rpc)
-        printf '{"jsonrpc":"2.0","result":{"providers":["ok"]}}\n'
-        ;;
-      https://xworkmate-bridge.svc.plus/acp-server/*)
-        printf '{"jsonrpc":"2.0","result":{"providers":["ok"]}}\n'
-        ;;
-      https://xworkmate-bridge.svc.plus/gateway/openclaw)
-        printf '{"jsonrpc":"2.0","result":{"providers":["ok"]}}\n'
-        ;;
       https://xworkmate-bridge.svc.plus/acp/rpc)
-        if [[ "${data}" == *'"providerId":"codex"'* ]]; then
-          printf '{"jsonrpc":"2.0","result":{"success":true,"providerId":"codex","capabilities":{"providers":["codex"]}}}\n'
+        if [[ "${data}" == *'"method":"acp.capabilities"'* ]]; then
+          printf '{"jsonrpc":"2.0","result":{"providerCatalog":[{"providerId":"codex"},{"providerId":"opencode"},{"providerId":"gemini"},{"providerId":"hermes"}],"gatewayProviders":[{"providerId":"openclaw"}],"availableExecutionTargets":["agent","gateway"]}}\n'
           exit 0
         fi
-        if [[ "${data}" == *'"providerId":"opencode"'* ]]; then
-          printf '{"jsonrpc":"2.0","result":{"success":true,"providerId":"opencode","capabilities":{"providers":["opencode"]}}}\n'
+        if [[ "${data}" == *'"method":"xworkmate.routing.resolve"'* && "${data}" == *'"explicitProviderId":"codex"'* ]]; then
+          printf '{"jsonrpc":"2.0","result":{"resolvedExecutionTarget":"single-agent","resolvedProviderId":"codex","status":"available"}}\n'
           exit 0
         fi
-        if [[ "${data}" == *'"providerId":"gemini"'* ]]; then
-          printf '{"jsonrpc":"2.0","result":{"success":true,"providerId":"gemini","capabilities":{"providers":["gemini"]}}}\n'
+        if [[ "${data}" == *'"method":"xworkmate.routing.resolve"'* && "${data}" == *'"explicitExecutionTarget":"gateway"'* ]]; then
+          printf '{"jsonrpc":"2.0","result":{"resolvedExecutionTarget":"gateway","resolvedGatewayProviderId":"openclaw","status":"available"}}\n'
           exit 0
         fi
-        if [[ "${data}" == *'"providerId":"hermes"'* ]]; then
-          printf '{"jsonrpc":"2.0","result":{"success":true,"providerId":"hermes","capabilities":{"providers":["hermes"]}}}\n'
-          exit 0
-        fi
-        printf 'unexpected bridge probe payload in retry-success scenario: %s\n' "${data}" >&2
+        printf 'unexpected bridge payload in retry-success scenario: %s\n' "${data}" >&2
         exit 1
         ;;
       *)
@@ -206,11 +184,6 @@ run_validate_capture() {
     FAKE_CURL_SCENARIO="${scenario}" \
     FAKE_CURL_STATE_DIR="${RUN_STATE_DIR}" \
     BRIDGE_SERVER_URL="https://xworkmate-bridge.svc.plus" \
-    OPENCLAW_URL="https://xworkmate-bridge.svc.plus/gateway/openclaw" \
-    CODEX_RPC_URL="https://xworkmate-bridge.svc.plus/acp-server/codex" \
-    OPENCODE_RPC_URL="https://xworkmate-bridge.svc.plus/acp-server/opencode" \
-    GEMINI_RPC_URL="https://xworkmate-bridge.svc.plus/acp-server/gemini" \
-    HERMES_RPC_URL="https://xworkmate-bridge.svc.plus/acp-server/hermes" \
     BRIDGE_AUTH_TOKEN="test-token" \
     bash "${SCRIPT_PATH}" "${IMAGE_REF}" 2>&1
   )"

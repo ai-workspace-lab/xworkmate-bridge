@@ -7,27 +7,17 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path"
+	"net/url"
 	"strings"
 	"sync"
+
+	"github.com/gorilla/websocket"
 
 	"xworkmate-bridge/internal/shared"
 )
 
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if providerID, ok := parseProviderACPRPCPath(r.URL.Path); ok {
-			s.HandleProviderRPC(w, r, providerID)
-			return
-		}
-		if providerID, ok := parseProviderBarePath(r.URL.Path); ok {
-			s.HandleProviderAlias(w, r, providerID)
-			return
-		}
-		if strings.TrimSpace(r.URL.Path) == "/gateway/openclaw" {
-			s.HandleGatewayAlias(w, r)
-			return
-		}
 		switch r.URL.Path {
 		case "/":
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -50,147 +40,104 @@ func (s *Server) Handler() http.Handler {
 		case "/acp":
 			s.HandleWebSocket(w, r)
 		default:
+			if strings.HasPrefix(r.URL.Path, "/acp-server/") {
+				s.handleLegacyACPServer(w, r)
+				return
+			}
 			http.NotFound(w, r)
 		}
 	})
 }
 
-func parseProviderBarePath(pathValue string) (string, bool) {
-	trimmed := strings.Trim(path.Clean(strings.TrimSpace(pathValue)), "/")
-	parts := strings.Split(trimmed, "/")
-	if len(parts) != 2 {
-		return "", false
-	}
-	if parts[0] != "acp-server" {
-		return "", false
-	}
-	switch parts[1] {
-	case "codex", "opencode", "gemini", "hermes":
-		return parts[1], true
-	default:
-		return "", false
-	}
-}
-
-func parseProviderACPRPCPath(path string) (string, bool) {
-	trimmed := strings.Trim(strings.TrimSpace(path), "/")
-	parts := strings.Split(trimmed, "/")
-	if len(parts) != 4 {
-		return "", false
-	}
-	if parts[0] != "acp-server" || parts[2] != "acp" || parts[3] != "rpc" {
-		return "", false
-	}
-	switch parts[1] {
-	case "codex", "opencode", "gemini", "hermes":
-		return parts[1], true
-	default:
-		return "", false
-	}
-}
-
-func (s *Server) HandleProviderAlias(w http.ResponseWriter, r *http.Request, providerID string) {
-	if r.Method == http.MethodGet {
-		s.writeAliasCapabilities(w, providerID, "agent")
-		return
-	}
-	s.HandleProviderRPC(w, r, providerID)
-}
-
-func (s *Server) HandleGatewayAlias(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
-		s.writeAliasCapabilities(w, "openclaw", "gateway")
-		return
-	}
-	s.HandleGatewayRPCAlias(w, r)
-}
-
-func (s *Server) writeAliasCapabilities(w http.ResponseWriter, providerID, target string) {
-	result, rpcErr := s.handleRequest(shared.RPCRequest{
-		JSONRPC: "2.0",
-		Method:  "acp.capabilities",
-		Params: map[string]any{
-			"preferredExecutionTarget": target,
-			"preferredProviderId":      providerID,
-		},
-	}, nil)
-	if rpcErr != nil {
-		shared.WriteJSONError(w, nil, http.StatusOK, rpcErr.Code, rpcErr.Message)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(shared.ResultEnvelope(nil, result))
-}
-
-func (s *Server) HandleGatewayRPCAlias(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
-		r = r.Clone(r.Context())
-		r.URL.Path = "/acp/rpc"
-		s.HandleRPC(w, r)
-		return
-	}
-	s.HandleRPC(w, r)
-}
-
-func (s *Server) HandleProviderRPC(w http.ResponseWriter, r *http.Request, providerID string) {
-	if r.Method == http.MethodGet {
+func (s *Server) handleLegacyACPServer(w http.ResponseWriter, r *http.Request) {
+	providerID := strings.TrimPrefix(strings.TrimSpace(r.URL.Path), "/acp-server/")
+	providerID = strings.Trim(providerID, "/")
+	if providerID == "" {
 		http.NotFound(w, r)
 		return
 	}
-	shared.ApplyCORS(w, r, s.allowedOrigins)
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	if r.Method != http.MethodPost {
-		shared.WriteJSONError(w, nil, http.StatusMethodNotAllowed, -32600, "method not allowed")
-		return
-	}
-	payload, err := io.ReadAll(r.Body)
-	if err != nil {
-		shared.WriteJSONError(w, nil, http.StatusBadRequest, -32600, "invalid body")
-		return
-	}
-	r.Body = io.NopCloser(bytes.NewBuffer(payload))
 
-	if !s.authorized(r) {
-		var temp struct {
-			Method string `json:"method"`
-		}
-		_ = json.Unmarshal(payload, &temp)
-		method := strings.TrimSpace(temp.Method)
-		if method != "acp.capabilities" && method != "health" {
-			shared.WriteJSONError(w, nil, http.StatusUnauthorized, -32001, "missing bearer authorization")
-			return
-		}
-	}
-	request, err := shared.DecodeRPCRequest(payload)
-	if err != nil {
-		shared.WriteJSONError(w, nil, http.StatusBadRequest, -32700, err.Error())
+	s.mu.RLock()
+	compat := s.providers[providerID]
+	s.mu.RUnlock()
+	if compat == nil {
+		http.NotFound(w, r)
 		return
 	}
-	params := request.Params
-	if params == nil {
-		params = map[string]any{}
-	}
-	params["routing"] = map[string]any{
-		"routingMode":           "explicit",
-		"explicitExecutionTarget": "singleAgent",
-		"explicitProviderId":    providerID,
-	}
-	request.Params = injectInboundAuthorizationHeader(params, r.Header.Get("Authorization"))
-	response, rpcErr := s.handleRequest(request, nil)
-	if request.ID == nil {
+
+	if websocket.IsWebSocketUpgrade(r) {
+		s.proxyLegacyACPServerWebSocket(w, r, compat)
 		return
 	}
-	if rpcErr != nil {
-		shared.WriteJSONError(w, request.ID, http.StatusOK, rpcErr.Code, rpcErr.Message)
-		return
-	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(shared.ResultEnvelope(request.ID, response))
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":     "ok",
+		"legacy":     true,
+		"providerId": providerID,
+		"label":      compat.Metadata()["label"],
+		"transport":   compat.Metadata()["transport"],
+	})
+}
+
+func (s *Server) proxyLegacyACPServerWebSocket(w http.ResponseWriter, r *http.Request, compat ProviderCompat) {
+	external, ok := compat.(*externalACPCompat)
+	if !ok || external == nil {
+		http.Error(w, "legacy websocket proxy unavailable", http.StatusNotImplemented)
+		return
+	}
+
+	upstreamURL := strings.TrimSpace(external.endpoint)
+	if upstreamURL == "" {
+		http.NotFound(w, r)
+		return
+	}
+	if _, err := url.Parse(upstreamURL); err != nil {
+		http.Error(w, "invalid upstream endpoint", http.StatusBadGateway)
+		return
+	}
+
+	headers := http.Header{}
+	if auth := strings.TrimSpace(r.Header.Get("Authorization")); auth != "" {
+		headers.Set("Authorization", auth)
+	} else if external.authHeader != "" {
+		headers.Set("Authorization", external.authHeader)
+	}
+
+	upstream, _, err := websocket.DefaultDialer.Dial(upstreamURL, headers)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer func() { _ = upstream.Close() }()
+
+	upgrader := shared.StandardWSUpgrader
+	upgrader.CheckOrigin = func(req *http.Request) bool {
+		return true
+	}
+	downstream, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer func() { _ = downstream.Close() }()
+
+	errCh := make(chan error, 2)
+	go func() { errCh <- copyWSMessages(downstream, upstream) }()
+	go func() { errCh <- copyWSMessages(upstream, downstream) }()
+	<-errCh
+}
+
+func copyWSMessages(dst, src *websocket.Conn) error {
+	for {
+		messageType, payload, err := src.ReadMessage()
+		if err != nil {
+			return err
+		}
+		if err := dst.WriteMessage(messageType, payload); err != nil {
+			return err
+		}
+	}
 }
 
 func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {

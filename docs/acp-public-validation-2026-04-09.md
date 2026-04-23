@@ -1,104 +1,69 @@
-# ACP Public Validation & Expansion Planning - 2026-04-09
+# ACP Public Validation
 
-This document records the post-deployment validation of the bridge public
-origin at `xworkmate-bridge.svc.plus` and outlines the expansion architecture
-for the independent upstream ACP adapters.
+Last Updated: 2026-04-23
 
-## Expansion Modes Planning
+本文件记录当前推荐的 public validation 方法。
 
-To support a diverse set of backend providers, the bridge operates in the following expansion modes:
+## Canonical Validation Targets
 
-| Mode ID | Adapter Role | Implementation Type |
-| :--- | :--- | :--- |
-| `acp-adapter-codex`    | Codex ACP Adapter    | Protocol Translator / Forwarder |
-| `acp-adapter-opencode` | OpenCode ACP Adapter | JSON-RPC over stdio |
-| `acp-adapter-gemini`   | Gemini ACP Adapter   | JSON-RPC over stdio |
-| `acp-adapter-hermes`   | Hermes ACP Adapter   | JSON-RPC over stdio |
-| `gateway-adapter-openclaw` | OpenClaw Gateway | Unified Protocol Entry |
+只验证 bridge canonical surface：
 
-## Protocol Entry Points (Public)
+- `GET https://xworkmate-bridge.svc.plus/api/ping`
+- `GET wss://xworkmate-bridge.svc.plus/acp`
+- `POST https://xworkmate-bridge.svc.plus/acp/rpc`
 
-The canonical entry points for external integrations are segmented by provider:
+不再把以下路径视为 public validation target：
 
-*   **Codex**: `https://xworkmate-bridge.svc.plus/acp-server/codex`
-*   **Gemini**: `https://xworkmate-bridge.svc.plus/acp-server/gemini`
-*   **Hermes**: `https://xworkmate-bridge.svc.plus/acp-server/hermes`
-*   **OpenCode**: `https://xworkmate-bridge.svc.plus/acp-server/opencode`
-*   **OpenClaw**: `https://xworkmate-bridge.svc.plus/gateway/openclaw`
+- `/acp-server/*`
+- `/gateway/openclaw`
 
-## Request Chain & Runtime Design
+## Validation Checklist
 
-### Traffic Flow
-`Caddy (Ingress)` -> `xworkmate-bridge (Dispatcher)` -> `Adapter Service`
+### 1. Release Ping
 
-Caddy handles SSL termination and forwards requests to the `xworkmate-bridge` process, which performs path-based routing to the respective local adapter services.
+验证：
 
-### Systemd Services & Local Mappings
+- `status == ok`
+- `image / tag / commit / version` 与发布镜像一致
 
-Each adapter is managed as a standalone systemd service, mapped to a specific local port/protocol:
+### 2. Capabilities
 
-| Service Name | Local Endpoint | Adapter Target |
-| :--- | :--- | :--- |
-| `acp-codex.service`    | `ws://127.0.0.1:9001`  | Codex Engine |
-| `acp-opencode.service` | `ws://127.0.0.1:38992` | OpenCode Runtime |
-| `acp-gemini.service`   | `ws://127.0.0.1:8791`  | Gemini Bridge |
-| `acp-hermes.service`   | `ws://127.0.0.1:3920`  | Hermes Engine |
-| `(Host Process)`       | `ws://127.0.0.1:18789` | OpenClaw (Shared Runtime) |
+通过 `/acp/rpc` 调 `acp.capabilities`，验证：
 
-## Auth Contract
+- `providerCatalog` 包含 `codex / opencode / gemini / hermes`
+- `gatewayProviders` 包含 `openclaw`
+- `availableExecutionTargets` 包含 `agent / gateway`
 
-All public ACP requests require:
+### 3. Routing Resolve
 
--   header: `Authorization: Bearer <INTERNAL_SERVICE_TOKEN>`
--   header: `Content-Type: application/json`
+验证显式 single-agent：
 
-Missing or invalid bearer auth returns a JSON-RPC error envelope with code `-32001`.
+- `resolvedExecutionTarget == single-agent`
+- `resolvedProviderId == codex`
 
-## Validation Results (2026-04-09)
+验证显式 gateway：
 
-The ingress returned `200 OK` on all public routes after re-apply.
+- `resolvedExecutionTarget == gateway`
+- `resolvedGatewayProviderId == openclaw`
 
-### Codex
-- Verified `acp.capabilities`: `["codex", "gemini", "opencode"]`
-- Two-turn conversation (`session.start` -> `session.message`) passed.
+### 4. Session Contract
 
-### OpenCode
-- Validated as WebSocket ACP upstream at `ws://127.0.0.1:38992/acp`.
-- Two-turn conversation passed.
+验证 `session.start` / `session.message`：
 
-### Gemini
-- Verified `acp.capabilities`: `["gemini"]`
-- Adapter-local prompt compatibility layer enables `session.start` / `session.message` despite lack of native upstream support.
-- Two-turn conversation passed.
+- 返回 JSON-RPC hybrid envelope
+- 中间通知使用 `session.update`
+- 最终结果包含 `turnId`
 
-## App Integration Notes
+### 5. Gateway Contract
 
-### Recommended request shape
+验证：
 
-Use JSON-RPC `POST` requests against `https://xworkmate-bridge.svc.plus/acp/rpc` for general usage, or the specific provider endpoints for targeted execution.
+- `xworkmate.gateway.connect`
+- `xworkmate.gateway.request`
+- `xworkmate.gateway.disconnect`
 
-**Example Task Execution:**
+## Notes
 
-```json
-{
-  "jsonrpc": "2.0",
-  "id": "task-1",
-  "method": "session.start",
-  "params": {
-    "sessionId": "session-1",
-    "threadId": "thread-1",
-    "taskPrompt": "Reply with exactly pong",
-    "workingDirectory": "/tmp",
-    "routing": {
-      "routingMode": "explicit",
-      "explicitExecutionTarget": "singleAgent",
-      "explicitProviderId": "opencode"
-    }
-  }
-}
-```
-
-### Provider-specific notes
-- `codex` and `opencode` require explicit `routing` on follow-up turns.
-- `gemini` uses a prompt-compatibility layer for multi-turn support.
-- `hermes` is verified as a public task path.
+- canonical transport 是 `GET /acp` WebSocket
+- `/acp/rpc` 仅作为 secondary compatibility transport
+- app-facing contract 由 bridge control plane 独占，不由 provider alias path 定义

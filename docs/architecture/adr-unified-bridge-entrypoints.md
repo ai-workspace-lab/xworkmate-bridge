@@ -61,8 +61,8 @@ The APP should not depend on provider-specific public URLs such as:
 - `/gemini/acp/rpc`
 - `/openclaw/`
 
-If the bridge reports execution-target metadata such as `single-agent`,
-`multi-agent`, or `gateway`, the app should treat those values as routing
+If the bridge reports execution-target metadata such as `single-agent`
+or `gateway`, the app should treat those values as routing
 results, not as shell-level surface categories.
 
 If the bridge reports gateway provider IDs such as `openclaw`, the
@@ -119,7 +119,7 @@ Upstream authentication is unified for both ACP and gateway routes:
 ### Trade-offs
 
 - docs must clearly separate canonical app contracts from independent upstream services
-- optional bridge metadata must be documented as metadata, not as surface taxonomy
+- bridge metadata must be documented as metadata, not as surface taxonomy
 
 ## Path Naming Guidance
 
@@ -127,7 +127,7 @@ Use these terms consistently:
 
 - `canonical app-facing path`: `/acp/rpc` and `/acp`
 - `gateway runtime method family`: `xworkmate.gateway.*`
-- `independent upstream service`: `xworkmate-bridge.svc.plus/acp-server/*`, `xworkmate-bridge.svc.plus/gateway/openclaw/`
+- `independent upstream service`: provider / gateway runtime behind bridge-owned compat
 - `bridge-owned routing`: provider / gateway selection performed inside bridge
 - `routing metadata`: execution target and resolved provider/gateway identifiers returned to the app
 
