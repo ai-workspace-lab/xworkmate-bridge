@@ -74,6 +74,9 @@ func applyProductionGatewayRouting(
 	if strings.TrimSpace(strings.ToLower(request.Mode)) != "openclaw" {
 		return request
 	}
+	if request.Endpoint.Host == "localhost" || request.Endpoint.Host == "127.0.0.1" || request.Endpoint.Host == "0.0.0.0" {
+		return request
+	}
 	// Route through the unified bridge ingress
 	request.Endpoint = gatewayruntime.Endpoint{
 		Host: "xworkmate-bridge.svc.plus",
