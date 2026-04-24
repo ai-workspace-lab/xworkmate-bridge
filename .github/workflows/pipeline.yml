@@ -130,6 +130,10 @@ jobs:
           platforms: linux/amd64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.service_ref.outputs.image_ref }}
+          build-args: |
+            BUILD_COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp || github.event.repository.pushed_at }}
+            BUILD_VERSION=v1.0-beta2
 
       - name: Write image ref artifact
         run: |
