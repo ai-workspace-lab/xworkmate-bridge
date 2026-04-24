@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -25,7 +26,11 @@ type externalACPCompat struct {
 	client     *http.Client
 }
 
-type codexCompat struct{ *externalACPCompat }
+type codexCompat struct {
+	*externalACPCompat
+	mu      sync.Mutex
+	threads map[string]string
+}
 type opencodeCompat struct{ *externalACPCompat }
 type geminiCompat struct{ *externalACPCompat }
 type hermesCompat struct{ *externalACPCompat }
@@ -49,7 +54,10 @@ func newProviderCompat(provider syncedProvider) ProviderCompat {
 	case "hermes":
 		return &hermesCompat{externalACPCompat: base}
 	default:
-		return &codexCompat{externalACPCompat: base}
+		return &codexCompat{
+			externalACPCompat: base,
+			threads:           make(map[string]string),
+		}
 	}
 }
 
@@ -79,6 +87,249 @@ func (c *externalACPCompat) Probe(ctx context.Context) ProviderProbeResult {
 		return ProviderProbeResult{Available: false, Status: err.Error()}
 	}
 	return ProviderProbeResult{Available: true, Status: "ok"}
+}
+
+func (c *codexCompat) Probe(ctx context.Context) ProviderProbeResult {
+	_, err := c.codexCall(ctx, "initialize", codexInitializeParams(), nil)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "already initialized") {
+			return ProviderProbeResult{Available: true, Status: "ok"}
+		}
+		return ProviderProbeResult{Available: false, Status: err.Error()}
+	}
+	return ProviderProbeResult{Available: true, Status: "ok"}
+}
+
+func (c *codexCompat) StartSession(ctx context.Context, sessionID string, threadID string, params map[string]any, sink SessionNotificationSink) (map[string]any, error) {
+	thread, err := c.codexCall(ctx, "thread/start", codexThreadStartParams(params), nil)
+	if err != nil {
+		return nil, err
+	}
+	codexThreadID := codexThreadIDFromResult(thread)
+	if codexThreadID == "" {
+		return nil, fmt.Errorf("codex thread/start response missing thread id")
+	}
+	c.rememberThread(sessionID, threadID, codexThreadID)
+	return c.startTurn(ctx, codexThreadID, params, sink)
+}
+
+func (c *codexCompat) SendMessage(ctx context.Context, sessionID string, threadID string, params map[string]any, sink SessionNotificationSink) (map[string]any, error) {
+	codexThreadID := c.lookupThread(sessionID, threadID)
+	if codexThreadID == "" {
+		codexThreadID = strings.TrimSpace(threadID)
+	}
+	if codexThreadID != "" {
+		thread, err := c.codexCall(ctx, "thread/resume", map[string]any{"threadId": codexThreadID}, nil)
+		if err != nil {
+			return nil, err
+		}
+		if resolved := codexThreadIDFromResult(thread); resolved != "" {
+			codexThreadID = resolved
+			c.rememberThread(sessionID, threadID, codexThreadID)
+		}
+	}
+	if codexThreadID == "" {
+		return c.StartSession(ctx, sessionID, threadID, params, sink)
+	}
+	return c.startTurn(ctx, codexThreadID, params, sink)
+}
+
+func (c *codexCompat) CloseSession(ctx context.Context, sessionID string) error {
+	c.mu.Lock()
+	delete(c.threads, sessionID)
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *codexCompat) CancelSession(ctx context.Context, sessionID string) error {
+	codexThreadID := c.lookupThread(sessionID, "")
+	if codexThreadID == "" {
+		return nil
+	}
+	_, err := c.codexCall(ctx, "turn/interrupt", map[string]any{"threadId": codexThreadID}, nil)
+	return err
+}
+
+func (c *codexCompat) startTurn(ctx context.Context, codexThreadID string, params map[string]any, sink SessionNotificationSink) (map[string]any, error) {
+	result, err := c.codexCall(
+		ctx,
+		"turn/start",
+		map[string]any{
+			"threadId": codexThreadID,
+			"input":    codexUserInput(params),
+		},
+		sink,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := result["output"]; !ok {
+		if summary := strings.TrimSpace(shared.StringArg(result, "summary", "")); summary != "" {
+			result["output"] = summary
+		}
+	}
+	result["providerThreadId"] = codexThreadID
+	return result, nil
+}
+
+func (c *codexCompat) codexCall(ctx context.Context, method string, params map[string]any, sink SessionNotificationSink) (map[string]any, error) {
+	if c.transport() != "ws" {
+		return c.rpcCall(ctx, method, params, sink)
+	}
+	return c.callWSRPCWithInitialize(ctx, method, params, sink)
+}
+
+func (c *codexCompat) callWSRPCWithInitialize(ctx context.Context, method string, params map[string]any, sink SessionNotificationSink) (map[string]any, error) {
+	headers := http.Header{}
+	if c.authHeader != "" {
+		headers.Set("Authorization", c.authHeader)
+	}
+	conn, _, err := websocket.DefaultDialer.DialContext(ctx, c.endpoint, headers)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = conn.Close() }()
+
+	if _, err := c.writeAndReadWSRPC(ctx, conn, "initialize", codexInitializeParams(), nil); err != nil {
+		return nil, err
+	}
+	return c.writeAndReadWSRPC(ctx, conn, method, params, sink)
+}
+
+func (c *codexCompat) writeAndReadWSRPC(ctx context.Context, conn *websocket.Conn, method string, params map[string]any, sink SessionNotificationSink) (map[string]any, error) {
+	requestID := fmt.Sprintf("req-%d", time.Now().UnixNano())
+	request := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      requestID,
+		"method":  method,
+		"params":  params,
+	}
+	if err := conn.WriteJSON(request); err != nil {
+		return nil, err
+	}
+
+	collector := &externalACPNotificationCollector{}
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		_, payload, err := conn.ReadMessage()
+		if err != nil {
+			return nil, err
+		}
+
+		var decoded map[string]any
+		if err := json.Unmarshal(payload, &decoded); err != nil {
+			return nil, fmt.Errorf("failed to decode websocket rpc response: %w", err)
+		}
+
+		methodName := strings.TrimSpace(shared.StringArg(decoded, "method", ""))
+		if methodName != "" {
+			collector.observe(decoded)
+			if isExternalSessionUpdateMethod(methodName) && sink != nil {
+				update := shared.AsMap(decoded["params"])
+				if len(update) > 0 {
+					sink(update)
+				}
+			}
+			continue
+		}
+
+		if fmt.Sprintf("%v", decoded["id"]) != requestID {
+			continue
+		}
+
+		result, err := parseExternalRPCResult(decoded)
+		if err != nil {
+			return nil, err
+		}
+		return collector.apply(result), nil
+	}
+}
+
+func (c *codexCompat) rememberThread(sessionID string, threadID string, codexThreadID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if sessionID != "" {
+		c.threads[sessionID] = codexThreadID
+	}
+	if threadID != "" {
+		c.threads[threadID] = codexThreadID
+	}
+}
+
+func (c *codexCompat) lookupThread(sessionID string, threadID string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if sessionID != "" {
+		if value := strings.TrimSpace(c.threads[sessionID]); value != "" {
+			return value
+		}
+	}
+	if threadID != "" {
+		return strings.TrimSpace(c.threads[threadID])
+	}
+	return ""
+}
+
+func codexThreadStartParams(params map[string]any) map[string]any {
+	result := map[string]any{}
+	if cwd := strings.TrimSpace(shared.StringArg(params, "workingDirectory", "")); cwd != "" {
+		result["cwd"] = cwd
+	}
+	return result
+}
+
+func codexInitializeParams() map[string]any {
+	return map[string]any{
+		"clientInfo": map[string]any{
+			"name":    "xworkmate-bridge",
+			"version": "1.1.0",
+		},
+	}
+}
+
+func codexUserInput(params map[string]any) []any {
+	input := map[string]any{
+		"type": "text",
+		"text": shared.StringArg(params, "taskPrompt", ""),
+	}
+	if attachments := anyList(params["attachments"]); len(attachments) > 0 {
+		input["attachments"] = attachments
+	}
+	return []any{input}
+}
+
+func codexThreadIDFromResult(result map[string]any) string {
+	for _, key := range []string{"threadId", "id"} {
+		if value := strings.TrimSpace(shared.StringArg(result, key, "")); value != "" {
+			return value
+		}
+	}
+	thread := shared.AsMap(result["thread"])
+	for _, key := range []string{"id", "threadId"} {
+		if value := strings.TrimSpace(shared.StringArg(thread, key, "")); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func anyList(value any) []any {
+	switch typed := value.(type) {
+	case []any:
+		return typed
+	case []map[string]any:
+		result := make([]any, 0, len(typed))
+		for _, item := range typed {
+			result = append(result, item)
+		}
+		return result
+	default:
+		return nil
+	}
 }
 
 func (c *externalACPCompat) StartSession(ctx context.Context, sessionID string, threadID string, params map[string]any, sink SessionNotificationSink) (map[string]any, error) {
@@ -221,7 +472,7 @@ func isExternalSessionUpdateMethod(method string) bool {
 	case "session.update", "acp.session.update", "session/update":
 		return true
 	default:
-		return false
+		return strings.HasPrefix(method, "item/") || strings.HasPrefix(method, "turn/")
 	}
 }
 

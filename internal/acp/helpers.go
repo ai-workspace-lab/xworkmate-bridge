@@ -31,12 +31,25 @@ func resolveSingleAgentForwardEndpoint(provider syncedProvider) string {
 	isWS := strings.HasPrefix(parsed.Scheme, "ws")
 	isHTTP := strings.HasPrefix(parsed.Scheme, "http")
 
-	path := strings.TrimRight(parsed.Path, "/")
+	path := strings.TrimRight(parsed.EscapedPath(), "/")
+	if path == "" {
+		path = strings.TrimRight(parsed.Path, "/")
+	}
 
-	if isWS && !strings.Contains(path, "/acp") {
-		parsed.Path = path + "/acp"
-	} else if isHTTP && !strings.Contains(path, "/acp/rpc") {
-		parsed.Path = path + "/acp/rpc"
+	if isWS {
+		if path == "/acp" || strings.HasSuffix(path, "/acp") {
+			parsed.Path = path
+		} else {
+			parsed.Path = path + "/acp"
+		}
+	} else if isHTTP {
+		if path == "/acp/rpc" || strings.HasSuffix(path, "/acp/rpc") {
+			parsed.Path = path
+		} else if path == "/acp" || strings.HasSuffix(path, "/acp") {
+			parsed.Path = strings.TrimSuffix(path, "/acp") + "/acp/rpc"
+		} else {
+			parsed.Path = path + "/acp/rpc"
+		}
 	}
 
 	return parsed.String()
@@ -61,7 +74,7 @@ type externalACPNotificationCollector struct {
 
 func (c *externalACPNotificationCollector) observe(notification map[string]any) {
 	method := strings.TrimSpace(stringValue(notification["method"]))
-	if method != "session.update" && method != "acp.session.update" && method != "session/update" {
+	if method != "session.update" && method != "acp.session.update" && method != "session/update" && !strings.HasPrefix(method, "item/") && !strings.HasPrefix(method, "turn/") {
 		return
 	}
 	params := asMap(notification["params"])
@@ -150,6 +163,9 @@ func extractExternalACPNotificationText(notification map[string]any) string {
 	if text := extractExternalACPTextValue(update); text != "" {
 		return text
 	}
+	if text := extractExternalACPTextValue(asMap(payload["item"])); text != "" {
+		return text
+	}
 	if text := extractExternalACPTextValue(payload); text != "" {
 		return text
 	}
@@ -174,7 +190,7 @@ func extractExternalACPTextValue(value any) string {
 			return strings.TrimSpace(builder.String())
 		}
 		for key, child := range v {
-			if key == "text" || key == "message" || key == "content" || key == "delta" || key == "value" || key == "sessionId" || key == "session_id" || key == "sessionUpdate" || key == "session_update" {
+			if key == "text" || key == "message" || key == "content" || key == "delta" || key == "value" || key == "sessionId" || key == "session_id" || key == "sessionUpdate" || key == "session_update" || key == "threadId" || key == "turnId" || key == "itemId" {
 				continue
 			}
 			if text := extractExternalACPTextValue(child); text != "" {

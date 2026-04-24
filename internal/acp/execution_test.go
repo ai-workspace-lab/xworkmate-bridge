@@ -1,6 +1,10 @@
 package acp
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 )
@@ -52,12 +56,36 @@ func TestResolveSingleAgentForwardEndpointManual(t *testing.T) {
 		want     string
 	}{
 		{
-			name: "preserves upstream endpoint",
+			name: "preserves http rpc endpoint",
 			provider: syncedProvider{
 				ProviderID: "custom",
 				Endpoint:   "https://upstream-provider.example.com/acp/rpc",
 			},
 			want: "https://upstream-provider.example.com/acp/rpc",
+		},
+		{
+			name: "normalizes http acp endpoint to rpc endpoint",
+			provider: syncedProvider{
+				ProviderID: "opencode",
+				Endpoint:   "http://127.0.0.1:39992/acp",
+			},
+			want: "http://127.0.0.1:39992/acp/rpc",
+		},
+		{
+			name: "normalizes websocket opencode endpoint to http rpc endpoint",
+			provider: syncedProvider{
+				ProviderID: "opencode",
+				Endpoint:   "ws://127.0.0.1:39992/acp",
+			},
+			want: "http://127.0.0.1:39992/acp/rpc",
+		},
+		{
+			name: "does not duplicate nested acp path",
+			provider: syncedProvider{
+				ProviderID: "opencode",
+				Endpoint:   "http://127.0.0.1:39992/acp",
+			},
+			want: "http://127.0.0.1:39992/acp/rpc",
 		},
 	}
 
@@ -89,6 +117,64 @@ func TestNormalizeAuthorizationHeader(t *testing.T) {
 				t.Fatalf("normalizeAuthorizationHeader(%q) = %q, want %q", raw, got, want)
 			}
 		})
+	}
+}
+
+func TestCodexCompatTranslatesSessionLifecycleToThreadAndTurnRPC(t *testing.T) {
+	t.Parallel()
+
+	var methods []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			_ = r.Body.Close()
+		}()
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		method := stringValue(request["method"])
+		methods = append(methods, method)
+		result := map[string]any{}
+		switch method {
+		case "thread/start":
+			result["id"] = "codex-thread-1"
+		case "turn/start":
+			result["output"] = "pong"
+		default:
+			t.Fatalf("unexpected codex upstream method %q", method)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      request["id"],
+			"result":  result,
+		})
+	}))
+	defer upstream.Close()
+
+	compat := newProviderCompat(syncedProvider{
+		ProviderID: "codex",
+		Label:      "Codex",
+		Endpoint:   upstream.URL,
+		Enabled:    true,
+	})
+	result, err := compat.StartSession(
+		context.Background(),
+		"session-1",
+		"thread-1",
+		map[string]any{
+			"taskPrompt":       "Reply with exactly pong",
+			"workingDirectory": t.TempDir(),
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("StartSession failed: %v", err)
+	}
+	if got := result["output"]; got != "pong" {
+		t.Fatalf("expected pong output, got %#v", result)
+	}
+	if len(methods) != 2 || methods[0] != "thread/start" || methods[1] != "turn/start" {
+		t.Fatalf("expected thread/start then turn/start, got %#v", methods)
 	}
 }
 

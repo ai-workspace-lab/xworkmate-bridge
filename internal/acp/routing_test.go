@@ -47,7 +47,6 @@ func (s *Server) executeSessionTask(t task) (map[string]any, *shared.RPCError) {
 	return s.handleRequest(t.req, t.notify)
 }
 
-
 func newExternalSingleAgentProvider(
 	t *testing.T,
 	providerID string,
@@ -66,16 +65,24 @@ func newExternalSingleAgentProvider(
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
+		method := strings.TrimSpace(shared.StringArg(request, "method", ""))
+		result := map[string]any{
+			"success":  true,
+			"output":   output,
+			"turnId":   "turn-" + providerID,
+			"provider": providerID,
+			"mode":     "single-agent",
+		}
+		switch method {
+		case "thread/start", "thread/resume":
+			result = map[string]any{"id": "provider-thread-" + providerID}
+		case "turn/start":
+			result["summary"] = output
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"jsonrpc": "2.0",
 			"id":      request["id"],
-			"result": map[string]any{
-				"success":  true,
-				"output":   output,
-				"turnId":   "turn-" + providerID,
-				"provider": providerID,
-				"mode":     "single-agent",
-			},
+			"result":  result,
 		})
 	}))
 }
