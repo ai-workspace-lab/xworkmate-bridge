@@ -12,9 +12,9 @@ import (
 )
 
 var (
-	buildCommit   = ""
-	buildVersion  = "v1.1.0"
-	buildDate     = ""
+	buildCommit  = ""
+	buildVersion = "v1.1.0"
+	buildDate    = ""
 )
 
 func main() {
@@ -37,7 +37,10 @@ func main() {
 	case "stdio":
 		acp.RunStdio(os.Stdin, os.Stdout)
 	case "version", "-v", "--version":
-		printBridgeVersionInfo()
+		if err := printBridgeVersionInfo(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 	default:
 		// Backward compatibility for old subcommands (optional, but we said no backward compatibility)
 		// However, for the transition, we can be nice or just fail.

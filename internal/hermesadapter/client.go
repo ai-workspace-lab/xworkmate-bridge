@@ -252,23 +252,3 @@ func isTimeoutError(err error) bool {
 	}
 	return strings.Contains(strings.ToLower(err.Error()), "timeout")
 }
-
-func isHermesFinalSessionUpdate(notification map[string]any) bool {
-	if notification == nil {
-		return false
-	}
-	method := strings.TrimSpace(fmt.Sprint(notification["method"]))
-	if method != "session.update" && method != "session/update" && method != "acp.session.update" {
-		return false
-	}
-	params, _ := notification["params"].(map[string]any)
-	if len(params) == 0 {
-		return false
-	}
-	update, _ := params["update"].(map[string]any)
-	if len(update) == 0 {
-		update = params
-	}
-	sessionUpdate := strings.TrimSpace(fmt.Sprint(update["sessionUpdate"]))
-	return sessionUpdate == "agent_message_text"
-}

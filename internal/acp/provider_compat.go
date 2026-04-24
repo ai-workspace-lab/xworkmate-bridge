@@ -395,7 +395,9 @@ func (c *externalACPCompat) callHTTPRPC(ctx context.Context, method string, para
 	if err != nil {
 		return nil, err
 	}
-	defer response.Body.Close()
+	defer func() {
+		_ = response.Body.Close()
+	}()
 
 	if response.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 2048))

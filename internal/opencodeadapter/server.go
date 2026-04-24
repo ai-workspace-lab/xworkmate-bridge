@@ -213,7 +213,6 @@ func (s *Server) handleCapabilities() map[string]any {
 
 type opencodeSessionState struct {
 	upstreamSessionID string
-	title             string
 	lastOutput        string
 }
 

@@ -1,7 +1,6 @@
 package acp
 
 import (
-	"context"
 	"sync"
 
 	"xworkmate-bridge/internal/gatewayruntime"
@@ -15,28 +14,26 @@ type session struct {
 	provider  string // The Provider ID
 	target    string // The Execution Target ID
 	compat    ProviderCompat
-	cancel    context.CancelFunc
-	closed    bool
 	mu        sync.Mutex
 	history   []string
 }
 
 type Server struct {
-	mu              sync.RWMutex
-	config          *BridgeConfig
-	sessions        map[string]*session
-	
+	mu       sync.RWMutex
+	config   *BridgeConfig
+	sessions map[string]*session
+
 	// Core Control Plane Components
-	routingEngine   RoutingEngine
-	providers       map[string]ProviderCompat
-	catalog         *CapabilityCatalog
-	orchestrator    *SessionOrchestrator
-	memoryService   memory.Service
+	routingEngine RoutingEngine
+	providers     map[string]ProviderCompat
+	catalog       *CapabilityCatalog
+	orchestrator  *SessionOrchestrator
+	memoryService memory.Service
 
 	providerOrder []string
 	gateway       *gatewayruntime.Manager
 
 	// Legacy / Common
-	authService     interface{} // Minimal auth dependency
-	allowedOrigins  []string
+	authService    interface{} // Minimal auth dependency
+	allowedOrigins []string
 }

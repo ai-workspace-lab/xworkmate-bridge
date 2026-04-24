@@ -45,7 +45,9 @@ func (c *opencodeHTTPClient) Initialize() (initializeResult, error) {
 	if err != nil {
 		return initializeResult{}, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return initializeResult{}, fmt.Errorf("opencode health failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
@@ -110,7 +112,9 @@ func (c *opencodeHTTPClient) CreateSession(title string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
@@ -213,7 +217,9 @@ func (c *opencodeHTTPClient) postSessionMessage(sessionID, prompt string, params
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err

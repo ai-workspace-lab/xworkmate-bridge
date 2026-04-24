@@ -70,8 +70,7 @@ func TestHandleCapabilitiesSynthesizesProviderResponse(t *testing.T) {
 func TestHandleRPCSessionStartReturnsUpstreamResult(t *testing.T) {
 	isolateHermesConfig(t)
 
-	var stub *stubClient
-	stub = &stubClient{initResult: initializeResult{ProtocolVersion: 1}}
+	stub := &stubClient{initResult: initializeResult{ProtocolVersion: 1}}
 	stub.callFn = func(method string, params map[string]any) (map[string]any, error) {
 		switch method {
 		case "session/new":
@@ -138,8 +137,7 @@ func TestHandleRPCSessionStartReturnsUpstreamResult(t *testing.T) {
 func TestHandleRPCSessionStartRejectsEmptyUpstreamResponse(t *testing.T) {
 	isolateHermesConfig(t)
 
-	var stub *stubClient
-	stub = &stubClient{initResult: initializeResult{ProtocolVersion: 1}}
+	stub := &stubClient{initResult: initializeResult{ProtocolVersion: 1}}
 	stub.callFn = func(method string, params map[string]any) (map[string]any, error) {
 		switch method {
 		case "session/new":
@@ -200,8 +198,7 @@ func TestNewServerDefaultsHermesToSessionPrompt(t *testing.T) {
 func TestHandleRPCSessionMessageReusesUpstreamSession(t *testing.T) {
 	isolateHermesConfig(t)
 
-	var stub *stubClient
-	stub = &stubClient{initResult: initializeResult{ProtocolVersion: 1}}
+	stub := &stubClient{initResult: initializeResult{ProtocolVersion: 1}}
 	promptCalls := 0
 	stub.callFn = func(method string, params map[string]any) (map[string]any, error) {
 		switch method {
@@ -314,8 +311,7 @@ func TestHandleRPCSessionStartUsesConfiguredHermesModelBeforePrompt(t *testing.T
 	t.Setenv("HOME", home)
 	t.Setenv("HERMES_HOME", "")
 
-	var stub *stubClient
-	stub = &stubClient{initResult: initializeResult{ProtocolVersion: 1}}
+	stub := &stubClient{initResult: initializeResult{ProtocolVersion: 1}}
 	stub.callFn = func(method string, params map[string]any) (map[string]any, error) {
 		switch method {
 		case "session/new":

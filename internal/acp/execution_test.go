@@ -5,14 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 )
 
 func TestResolveSingleAgentForwardEndpointFromExampleConfig(t *testing.T) {
 	// Set the config path to example/config.yaml relative to this test file
-	os.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
-	defer os.Unsetenv("BRIDGE_CONFIG_PATH")
+	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 
 	_, catalog, order := newProductionProviderCatalog()
 	if len(order) == 0 {
