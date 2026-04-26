@@ -221,6 +221,24 @@ func TestHandleRoutingResolveCoversNineScenarioBuckets(t *testing.T) {
 	}
 }
 
+func TestHandleRoutingResolveAcceptsTopLevelGatewayContract(t *testing.T) {
+	result := handleRoutingResolve(map[string]any{
+		"taskPrompt":        "openclaw gateway task",
+		"executionTarget":   "gateway",
+		"gatewayProviderId": "openclaw",
+	})
+
+	if got := result["resolvedExecutionTarget"]; got != "gateway" {
+		t.Fatalf("expected gateway execution target, got %#v", got)
+	}
+	if got := result["resolvedGatewayProviderId"]; got != "openclaw" {
+		t.Fatalf("expected openclaw gateway provider, got %#v", got)
+	}
+	if got := result["resolvedProviderId"]; got != "" {
+		t.Fatalf("expected no single-agent provider for gateway, got %#v", got)
+	}
+}
+
 func TestExecuteSessionTaskAutoRoutingRecordsProjectMemory(t *testing.T) {
 	homeDir := t.TempDir()
 	workspaceDir := filepath.Join(t.TempDir(), "workspace")
