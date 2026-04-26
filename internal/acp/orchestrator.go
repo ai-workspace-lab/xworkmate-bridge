@@ -56,7 +56,7 @@ func (o *SessionOrchestrator) Process(ctx context.Context, method string, params
 	})
 
 	if res.TargetID == "gateway" {
-		result, rpcErr := o.runGateway(ctx, method, params, turnID, notify)
+		result, rpcErr := o.runGateway(ctx, method, params, res, turnID, notify)
 		if rpcErr != nil {
 			return nil, rpcErr
 		}
@@ -96,6 +96,7 @@ func (o *SessionOrchestrator) runGateway(
 	ctx context.Context,
 	method string,
 	params map[string]any,
+	routing RoutingResult,
 	turnID string,
 	notify func(map[string]any),
 ) (map[string]any, *shared.RPCError) {
@@ -103,10 +104,11 @@ func (o *SessionOrchestrator) runGateway(
 		return nil, &shared.RPCError{Code: -32001, Message: "GATEWAY_NOT_INITIALIZED"}
 	}
 
-	gatewayProvider := strings.TrimSpace(shared.StringArg(params, "gatewayProvider", ""))
+	gatewayProvider := resolvedGatewayProviderID(params, routing)
 	if gatewayProvider == "" {
 		return nil, &shared.RPCError{Code: -32602, Message: "GATEWAY_PROVIDER_REQUIRED"}
 	}
+	params = withResolvedGatewayProvider(params, gatewayProvider)
 	result := o.server.gateway.RequestByMode(
 		gatewayProvider,
 		method,
@@ -135,18 +137,51 @@ func (o *SessionOrchestrator) runGateway(
 	return payload, nil
 }
 
+func resolvedGatewayProviderID(params map[string]any, routing RoutingResult) string {
+	for _, value := range []string{
+		routing.GatewayProviderID,
+		shared.StringArg(params, "gatewayProvider", ""),
+		shared.StringArg(params, "gatewayProviderId", ""),
+	} {
+		if provider := strings.TrimSpace(value); provider != "" {
+			return provider
+		}
+	}
+	routingParams := shared.AsMap(params["routing"])
+	for _, key := range []string{
+		"gatewayProvider",
+		"gatewayProviderId",
+		"preferredGatewayProviderId",
+	} {
+		if provider := strings.TrimSpace(shared.StringArg(routingParams, key, "")); provider != "" {
+			return provider
+		}
+	}
+	return ""
+}
+
+func withResolvedGatewayProvider(params map[string]any, gatewayProvider string) map[string]any {
+	next := make(map[string]any, len(params)+2)
+	for key, value := range params {
+		next[key] = value
+	}
+	next["gatewayProvider"] = gatewayProvider
+	next["gatewayProviderId"] = gatewayProvider
+	return next
+}
+
 func (o *SessionOrchestrator) formatUnavailable(res RoutingResult) map[string]any {
 	return map[string]any{
-		"success":            false,
-		"status":             "unavailable",
-		"unavailable":        true,
-		"unavailableCode":    res.UnavailableCode,
-		"unavailableMessage": res.UnavailableMsg,
+		"success":                   false,
+		"status":                    "unavailable",
+		"unavailable":               true,
+		"unavailableCode":           res.UnavailableCode,
+		"unavailableMessage":        res.UnavailableMsg,
 		"resolvedExecutionTarget":   res.TargetID,
-		"resolvedProviderId": res.ProviderID,
+		"resolvedProviderId":        res.ProviderID,
 		"resolvedGatewayProviderId": res.GatewayProviderID,
-		"resolvedModel":      res.Model,
-		"resolvedSkills":     append([]string(nil), res.Skills...),
+		"resolvedModel":             res.Model,
+		"resolvedSkills":            append([]string(nil), res.Skills...),
 	}
 }
 

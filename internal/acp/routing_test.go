@@ -385,7 +385,7 @@ func TestExecuteSessionTaskExplicitProviderRequiresAdvertisedBridgeProvider(t *t
 	}
 }
 
-func TestExecuteSessionTaskExplicitGatewayIgnoresExplicitProvider(t *testing.T) {
+func TestExecuteSessionTaskExplicitGatewayUsesResolvedGatewayProvider(t *testing.T) {
 	server := NewServer()
 
 	response, rpcErr := server.executeSessionTask(task{
@@ -400,20 +400,19 @@ func TestExecuteSessionTaskExplicitGatewayIgnoresExplicitProvider(t *testing.T) 
 					"explicitExecutionTarget":    "gateway",
 					"explicitProviderId":         "claude",
 					"preferredGatewayProviderId": "openclaw",
-					"gatewayProvider":            "openclaw",
 				},
 			},
 		},
 	})
 	if rpcErr == nil {
-		t.Fatalf("expected gateway provider required rpc error, got response: %v", response)
+		t.Fatalf("expected gateway connectivity rpc error, got response: %v", response)
 	}
-	if rpcErr.Message != "GATEWAY_PROVIDER_REQUIRED" {
-		t.Fatalf("expected GATEWAY_PROVIDER_REQUIRED, got %q", rpcErr.Message)
+	if rpcErr.Message == "GATEWAY_PROVIDER_REQUIRED" {
+		t.Fatalf("expected resolved gateway provider to be reused, got %q", rpcErr.Message)
 	}
 }
 
-func TestExecuteSessionTaskRequiresExplicitGatewayProvider(t *testing.T) {
+func TestExecuteSessionTaskDefaultsExplicitGatewayToOpenClaw(t *testing.T) {
 	server := NewServer()
 
 	_, rpcErr := server.executeSessionTask(task{
@@ -431,10 +430,10 @@ func TestExecuteSessionTaskRequiresExplicitGatewayProvider(t *testing.T) {
 		},
 	})
 	if rpcErr == nil {
-		t.Fatal("expected gateway provider required error")
+		t.Fatal("expected gateway connectivity error")
 	}
-	if rpcErr.Message != "GATEWAY_PROVIDER_REQUIRED" {
-		t.Fatalf("expected GATEWAY_PROVIDER_REQUIRED, got %#v", rpcErr)
+	if rpcErr.Message == "GATEWAY_PROVIDER_REQUIRED" {
+		t.Fatalf("expected openclaw default from routing result, got %#v", rpcErr)
 	}
 }
 
