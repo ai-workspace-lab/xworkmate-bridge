@@ -18,9 +18,13 @@ func (e *DefaultRoutingEngine) Resolve(ctx context.Context, params map[string]an
 	if len(routingParams) == 0 {
 		routingParams = map[string]any{}
 	}
+	routingMode := strings.TrimSpace(shared.StringArg(routingParams, "routingMode", "implicit"))
 	explicitExecutionTarget := strings.TrimSpace(shared.StringArg(routingParams, "explicitExecutionTarget", ""))
 	if explicitExecutionTarget == "" {
 		explicitExecutionTarget = strings.TrimSpace(shared.StringArg(params, "executionTarget", ""))
+	}
+	if explicitExecutionTarget != "" {
+		routingMode = router.RoutingModeExplicit
 	}
 	preferredGatewayProviderID := strings.TrimSpace(shared.StringArg(routingParams, "preferredGatewayProviderId", ""))
 	if preferredGatewayProviderID == "" {
@@ -38,7 +42,7 @@ func (e *DefaultRoutingEngine) Resolve(ctx context.Context, params map[string]an
 	res := resolver.Resolve(router.Request{
 		Prompt:                     strings.TrimSpace(shared.StringArg(params, "taskPrompt", "")),
 		WorkingDirectory:           strings.TrimSpace(shared.StringArg(params, "workingDirectory", "")),
-		RoutingMode:                strings.TrimSpace(shared.StringArg(routingParams, "routingMode", "implicit")),
+		RoutingMode:                routingMode,
 		PreferredGatewayProviderID: preferredGatewayProviderID,
 		ExplicitExecutionTarget:    explicitExecutionTarget,
 		ExplicitProviderID:         strings.TrimSpace(shared.StringArg(routingParams, "explicitProviderId", "")),

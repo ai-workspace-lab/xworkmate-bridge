@@ -222,19 +222,35 @@ func TestHandleRoutingResolveCoversNineScenarioBuckets(t *testing.T) {
 }
 
 func TestHandleRoutingResolveAcceptsTopLevelGatewayContract(t *testing.T) {
-	result := handleRoutingResolve(map[string]any{
+	server := NewServer()
+	server.mu.Lock()
+	server.providerOrder = []string{"codex"}
+	server.providers = map[string]ProviderCompat{
+		"codex": newProviderCompat(syncedProvider{
+			ProviderID: "codex",
+			Label:      "Codex",
+			Endpoint:   "ws://127.0.0.1:9001/acp",
+			Enabled:    true,
+		}),
+	}
+	server.mu.Unlock()
+
+	res, err := server.routingEngine.Resolve(context.Background(), map[string]any{
 		"taskPrompt":        "openclaw gateway task",
 		"executionTarget":   "gateway",
 		"gatewayProviderId": "openclaw",
 	})
+	if err != nil {
+		t.Fatalf("resolve routing: %v", err)
+	}
 
-	if got := result["resolvedExecutionTarget"]; got != "gateway" {
+	if got := res.TargetID; got != "gateway" {
 		t.Fatalf("expected gateway execution target, got %#v", got)
 	}
-	if got := result["resolvedGatewayProviderId"]; got != "openclaw" {
+	if got := res.GatewayProviderID; got != "openclaw" {
 		t.Fatalf("expected openclaw gateway provider, got %#v", got)
 	}
-	if got := result["resolvedProviderId"]; got != "" {
+	if got := res.ProviderID; got != "" {
 		t.Fatalf("expected no single-agent provider for gateway, got %#v", got)
 	}
 }
