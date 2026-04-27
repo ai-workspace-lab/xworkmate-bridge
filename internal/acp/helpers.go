@@ -69,6 +69,7 @@ func normalizeAuthorizationHeader(raw string) string {
 type externalACPNotificationCollector struct {
 	deltas      strings.Builder
 	lastMessage string
+	errors      []string
 	turnID      string
 }
 
@@ -84,8 +85,18 @@ func (c *externalACPNotificationCollector) observe(notification map[string]any) 
 	if turnID := strings.TrimSpace(stringValue(params["turnId"])); turnID != "" {
 		c.turnID = turnID
 	}
+	if errorText := extractExternalACPNotificationError(notification); errorText != "" {
+		c.errors = append(c.errors, errorText)
+	}
+	if strings.TrimSpace(stringValue(notification["method"])) == "turn/completed" {
+		return
+	}
 	updateText := extractExternalACPNotificationText(notification)
 	if updateText == "" {
+		return
+	}
+	if isExternalACPFailureText(updateText) {
+		c.errors = append(c.errors, updateText)
 		return
 	}
 	if c.deltas.Len() > 0 {
@@ -122,7 +133,13 @@ func (c *externalACPNotificationCollector) apply(result map[string]any) map[stri
 			break
 		}
 	}
-	if text != "" {
+	if errorText := c.errorText(); errorText != "" {
+		result["success"] = false
+		result["error"] = errorText
+		result["message"] = errorText
+		delete(result, "output")
+		delete(result, "summary")
+	} else if text != "" {
 		result["output"] = text
 		result["summary"] = text
 	}
@@ -130,6 +147,26 @@ func (c *externalACPNotificationCollector) apply(result map[string]any) map[stri
 		result["turnId"] = strings.TrimSpace(c.turnID)
 	}
 	return result
+}
+
+func (c *externalACPNotificationCollector) errorText() string {
+	if c == nil || len(c.errors) == 0 {
+		return ""
+	}
+	seen := make(map[string]struct{}, len(c.errors))
+	var parts []string
+	for _, item := range c.errors {
+		text := strings.TrimSpace(item)
+		if text == "" {
+			continue
+		}
+		if _, ok := seen[text]; ok {
+			continue
+		}
+		seen[text] = struct{}{}
+		parts = append(parts, text)
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n"))
 }
 
 func isGenericHermesAckText(text string) bool {
@@ -143,6 +180,9 @@ func isGenericHermesAckText(text string) bool {
 
 func extractExternalACPNotificationText(notification map[string]any) string {
 	if notification == nil {
+		return ""
+	}
+	if strings.TrimSpace(stringValue(notification["method"])) == "turn/completed" {
 		return ""
 	}
 	payload := asMap(notification["params"])
@@ -163,13 +203,70 @@ func extractExternalACPNotificationText(notification map[string]any) string {
 	if text := extractExternalACPTextValue(update); text != "" {
 		return text
 	}
-	if text := extractExternalACPTextValue(asMap(payload["item"])); text != "" {
-		return text
+	item := asMap(payload["item"])
+	if strings.TrimSpace(stringValue(item["type"])) != "userMessage" {
+		if text := extractExternalACPTextValue(item); text != "" {
+			return text
+		}
 	}
 	if text := extractExternalACPTextValue(payload); text != "" {
 		return text
 	}
 	return ""
+}
+
+func extractExternalACPNotificationError(notification map[string]any) string {
+	if notification == nil {
+		return ""
+	}
+	payload := asMap(notification["params"])
+	if len(payload) == 0 {
+		payload = notification
+	}
+	update := asMap(payload["update"])
+	if len(update) == 0 {
+		update = payload
+	}
+	if turnError := extractExternalACPTextValue(asMap(asMap(payload["turn"])["error"])); turnError != "" {
+		return turnError
+	}
+	for _, source := range []map[string]any{update, asMap(payload["item"]), payload} {
+		if len(source) == 0 {
+			continue
+		}
+		if !parseBool(source["error"]) && strings.TrimSpace(stringValue(source["level"])) != "error" {
+			if text := extractExternalACPTextValue(source); !isExternalACPFailureText(text) {
+				continue
+			}
+		}
+		for _, key := range []string{"error", "message", "text", "content", "delta", "value"} {
+			if text := extractExternalACPTextValue(source[key]); text != "" {
+				return text
+			}
+		}
+		if text := extractExternalACPTextValue(source); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func isExternalACPFailureText(text string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(text))
+	if normalized == "" {
+		return false
+	}
+	for _, marker := range []string{
+		"exec_command failed",
+		"failed to create unified exec process",
+		"execution_failed",
+		"tool execution failed",
+	} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func extractExternalACPTextValue(value any) string {

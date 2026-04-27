@@ -101,6 +101,9 @@ func (c *codexCompat) Probe(ctx context.Context) ProviderProbeResult {
 }
 
 func (c *codexCompat) StartSession(ctx context.Context, sessionID string, threadID string, params map[string]any, sink SessionNotificationSink) (map[string]any, error) {
+	if c.transport() == "ws" {
+		return c.startSessionWS(ctx, sessionID, threadID, params, sink)
+	}
 	thread, err := c.codexCall(ctx, "thread/start", codexThreadStartParams(params), nil)
 	if err != nil {
 		return nil, err
@@ -114,6 +117,9 @@ func (c *codexCompat) StartSession(ctx context.Context, sessionID string, thread
 }
 
 func (c *codexCompat) SendMessage(ctx context.Context, sessionID string, threadID string, params map[string]any, sink SessionNotificationSink) (map[string]any, error) {
+	if c.transport() == "ws" {
+		return c.sendMessageWS(ctx, sessionID, threadID, params, sink)
+	}
 	codexThreadID := c.lookupThread(sessionID, threadID)
 	if codexThreadID == "" {
 		codexThreadID = strings.TrimSpace(threadID)
@@ -132,6 +138,42 @@ func (c *codexCompat) SendMessage(ctx context.Context, sessionID string, threadI
 		return c.StartSession(ctx, sessionID, threadID, params, sink)
 	}
 	return c.startTurn(ctx, codexThreadID, params, sink)
+}
+
+func (c *codexCompat) startSessionWS(ctx context.Context, sessionID string, threadID string, params map[string]any, sink SessionNotificationSink) (map[string]any, error) {
+	return c.withInitializedCodexWS(ctx, func(conn *websocket.Conn) (map[string]any, error) {
+		thread, err := c.writeAndReadWSRPC(ctx, conn, "thread/start", codexThreadStartParams(params), nil)
+		if err != nil {
+			return nil, err
+		}
+		codexThreadID := codexThreadIDFromResult(thread)
+		if codexThreadID == "" {
+			return nil, fmt.Errorf("codex thread/start response missing thread id")
+		}
+		c.rememberThread(sessionID, threadID, codexThreadID)
+		return c.startTurnOnWS(ctx, conn, codexThreadID, params, sink)
+	})
+}
+
+func (c *codexCompat) sendMessageWS(ctx context.Context, sessionID string, threadID string, params map[string]any, sink SessionNotificationSink) (map[string]any, error) {
+	codexThreadID := c.lookupThread(sessionID, threadID)
+	if codexThreadID == "" {
+		codexThreadID = strings.TrimSpace(threadID)
+	}
+	if codexThreadID == "" {
+		return c.startSessionWS(ctx, sessionID, threadID, params, sink)
+	}
+	return c.withInitializedCodexWS(ctx, func(conn *websocket.Conn) (map[string]any, error) {
+		thread, err := c.writeAndReadWSRPC(ctx, conn, "thread/resume", map[string]any{"threadId": codexThreadID}, nil)
+		if err != nil {
+			return nil, err
+		}
+		if resolved := codexThreadIDFromResult(thread); resolved != "" {
+			codexThreadID = resolved
+			c.rememberThread(sessionID, threadID, codexThreadID)
+		}
+		return c.startTurnOnWS(ctx, conn, codexThreadID, params, sink)
+	})
 }
 
 func (c *codexCompat) CloseSession(ctx context.Context, sessionID string) error {
@@ -163,13 +205,63 @@ func (c *codexCompat) startTurn(ctx context.Context, codexThreadID string, param
 	if err != nil {
 		return nil, err
 	}
+	return c.finalizeCodexTurnResult(codexThreadID, result), nil
+}
+
+func (c *codexCompat) startTurnOnWS(ctx context.Context, conn *websocket.Conn, codexThreadID string, params map[string]any, sink SessionNotificationSink) (map[string]any, error) {
+	result, err := c.writeAndReadWSRPC(
+		ctx,
+		conn,
+		"turn/start",
+		map[string]any{
+			"threadId": codexThreadID,
+			"input":    codexUserInput(params),
+		},
+		sink,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return c.finalizeCodexTurnResult(codexThreadID, result), nil
+}
+
+func (c *codexCompat) finalizeCodexTurnResult(codexThreadID string, result map[string]any) map[string]any {
 	if _, ok := result["output"]; !ok {
 		if summary := strings.TrimSpace(shared.StringArg(result, "summary", "")); summary != "" {
 			result["output"] = summary
 		}
 	}
 	result["providerThreadId"] = codexThreadID
-	return result, nil
+	if codexDisplayText(result) == "" && !isProviderFailureResult(result) {
+		result["success"] = false
+		result["error"] = "codex returned no displayable output"
+		result["message"] = "codex returned no displayable output"
+	}
+	return result
+}
+
+func codexDisplayText(result map[string]any) string {
+	for _, key := range []string{"output", "summary", "message"} {
+		if text := strings.TrimSpace(shared.StringArg(result, key, "")); text != "" && !isGenericHermesAckText(text) {
+			return text
+		}
+	}
+	return ""
+}
+
+func isProviderFailureResult(result map[string]any) bool {
+	if result == nil {
+		return false
+	}
+	if value, ok := result["success"]; ok && !parseBool(value) {
+		return true
+	}
+	for _, key := range []string{"error", "errorMessage", "unavailableMessage"} {
+		if strings.TrimSpace(shared.StringArg(result, key, "")) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *codexCompat) codexCall(ctx context.Context, method string, params map[string]any, sink SessionNotificationSink) (map[string]any, error) {
@@ -180,6 +272,12 @@ func (c *codexCompat) codexCall(ctx context.Context, method string, params map[s
 }
 
 func (c *codexCompat) callWSRPCWithInitialize(ctx context.Context, method string, params map[string]any, sink SessionNotificationSink) (map[string]any, error) {
+	return c.withInitializedCodexWS(ctx, func(conn *websocket.Conn) (map[string]any, error) {
+		return c.writeAndReadWSRPC(ctx, conn, method, params, sink)
+	})
+}
+
+func (c *codexCompat) withInitializedCodexWS(ctx context.Context, run func(*websocket.Conn) (map[string]any, error)) (map[string]any, error) {
 	headers := http.Header{}
 	if c.authHeader != "" {
 		headers.Set("Authorization", c.authHeader)
@@ -193,7 +291,7 @@ func (c *codexCompat) callWSRPCWithInitialize(ctx context.Context, method string
 	if _, err := c.writeAndReadWSRPC(ctx, conn, "initialize", codexInitializeParams(), nil); err != nil {
 		return nil, err
 	}
-	return c.writeAndReadWSRPC(ctx, conn, method, params, sink)
+	return run(conn)
 }
 
 func (c *codexCompat) writeAndReadWSRPC(ctx context.Context, conn *websocket.Conn, method string, params map[string]any, sink SessionNotificationSink) (map[string]any, error) {
@@ -209,12 +307,14 @@ func (c *codexCompat) writeAndReadWSRPC(ctx context.Context, conn *websocket.Con
 	}
 
 	collector := &externalACPNotificationCollector{}
+	var pendingTurn map[string]any
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		default:
 		}
+		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Minute))
 		_, payload, err := conn.ReadMessage()
 		if err != nil {
 			return nil, err
@@ -234,6 +334,9 @@ func (c *codexCompat) writeAndReadWSRPC(ctx context.Context, conn *websocket.Con
 					sink(update)
 				}
 			}
+			if pendingTurn != nil && isCodexTurnCompletedNotification(decoded, pendingTurn) {
+				return collector.apply(pendingTurn), nil
+			}
 			continue
 		}
 
@@ -245,8 +348,46 @@ func (c *codexCompat) writeAndReadWSRPC(ctx context.Context, conn *websocket.Con
 		if err != nil {
 			return nil, err
 		}
+		if method == "turn/start" && isCodexTurnInProgress(result) {
+			pendingTurn = collector.apply(result)
+			continue
+		}
 		return collector.apply(result), nil
 	}
+}
+
+func isCodexTurnInProgress(result map[string]any) bool {
+	if result == nil {
+		return false
+	}
+	turn := shared.AsMap(result["turn"])
+	if len(turn) == 0 {
+		return false
+	}
+	status := strings.TrimSpace(shared.StringArg(turn, "status", ""))
+	return status == "" || strings.EqualFold(status, "inProgress") || strings.EqualFold(status, "running")
+}
+
+func isCodexTurnCompletedNotification(notification map[string]any, pendingTurn map[string]any) bool {
+	if notification == nil || pendingTurn == nil {
+		return false
+	}
+	if strings.TrimSpace(shared.StringArg(notification, "method", "")) != "turn/completed" {
+		return false
+	}
+	params := shared.AsMap(notification["params"])
+	turn := shared.AsMap(params["turn"])
+	if len(turn) == 0 {
+		return true
+	}
+	pending := shared.AsMap(pendingTurn["turn"])
+	pendingID := strings.TrimSpace(shared.StringArg(pending, "id", ""))
+	completedID := strings.TrimSpace(shared.StringArg(turn, "id", ""))
+	if pendingID == "" || completedID == "" || pendingID == completedID {
+		pendingTurn["turn"] = turn
+		return true
+	}
+	return false
 }
 
 func (c *codexCompat) rememberThread(sessionID string, threadID string, codexThreadID string) {

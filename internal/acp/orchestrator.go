@@ -190,11 +190,14 @@ func (o *SessionOrchestrator) normalizeResult(sess *session, result map[string]a
 		result = map[string]any{}
 	}
 
+	successValue, hasSuccess := result["success"]
+	success := !hasSuccess || parseBool(successValue)
+
 	output := strings.TrimSpace(shared.StringArg(result, "output", ""))
 	if output == "" {
 		output = strings.TrimSpace(shared.StringArg(result, "summary", ""))
 	}
-	if output == "" {
+	if output == "" && success {
 		output = strings.TrimSpace(shared.StringArg(result, "message", ""))
 	}
 
@@ -206,7 +209,9 @@ func (o *SessionOrchestrator) normalizeResult(sess *session, result map[string]a
 
 	result["turnId"] = turnID
 	result["status"] = "completed"
-	result["success"] = true
+	if !hasSuccess {
+		result["success"] = true
+	}
 	result["resolvedExecutionTarget"] = routing.TargetID
 	result["resolvedProviderId"] = routing.ProviderID
 	result["resolvedGatewayProviderId"] = routing.GatewayProviderID
@@ -217,6 +222,14 @@ func (o *SessionOrchestrator) normalizeResult(sess *session, result map[string]a
 		if _, ok := result["summary"]; !ok {
 			result["summary"] = output
 		}
+	}
+	if output == "" && routing.TargetID != "gateway" && !parseBool(result["success"]) {
+		result["status"] = "failed"
+	} else if output == "" && routing.TargetID != "gateway" {
+		result["success"] = false
+		result["status"] = "failed"
+		result["error"] = "provider returned no displayable output"
+		result["message"] = "provider returned no displayable output"
 	}
 
 	workingDirectory := shared.StringArg(params, "workingDirectory", "")

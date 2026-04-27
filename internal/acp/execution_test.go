@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/gorilla/websocket"
 )
 
 func TestResolveSingleAgentForwardEndpointFromExampleConfig(t *testing.T) {
@@ -176,6 +179,156 @@ func TestCodexCompatTranslatesSessionLifecycleToThreadAndTurnRPC(t *testing.T) {
 	}
 }
 
+func TestCodexCompatConvertsEmptyTurnResultToDisplayableFailure(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			_ = r.Body.Close()
+		}()
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		result := map[string]any{}
+		if stringValue(request["method"]) == "thread/start" {
+			result["id"] = "codex-thread-1"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      request["id"],
+			"result":  result,
+		})
+	}))
+	defer upstream.Close()
+
+	compat := newProviderCompat(syncedProvider{
+		ProviderID: "codex",
+		Label:      "Codex",
+		Endpoint:   upstream.URL,
+		Enabled:    true,
+	})
+	result, err := compat.StartSession(
+		context.Background(),
+		"session-1",
+		"thread-1",
+		map[string]any{
+			"taskPrompt":       "Reply with exactly pong",
+			"workingDirectory": t.TempDir(),
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("StartSession failed: %v", err)
+	}
+	if got := result["success"]; got != false {
+		t.Fatalf("expected failure success flag, got %#v", result)
+	}
+	if got := result["error"]; got != "codex returned no displayable output" {
+		t.Fatalf("expected displayable error, got %#v", result)
+	}
+}
+
+func TestCodexCompatWaitsForTurnCompletedNotification(t *testing.T) {
+	t.Parallel()
+
+	upgrader := websocket.Upgrader{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Fatalf("upgrade websocket: %v", err)
+		}
+		defer func() {
+			_ = conn.Close()
+		}()
+		for {
+			var request map[string]any
+			if err := conn.ReadJSON(&request); err != nil {
+				return
+			}
+			method := stringValue(request["method"])
+			switch method {
+			case "initialize":
+				if err := conn.WriteJSON(map[string]any{
+					"jsonrpc": "2.0",
+					"id":      request["id"],
+					"result":  map[string]any{"protocolVersion": 1},
+				}); err != nil {
+					t.Fatalf("write initialize response: %v", err)
+				}
+			case "thread/start":
+				if err := conn.WriteJSON(map[string]any{
+					"jsonrpc": "2.0",
+					"id":      request["id"],
+					"result":  map[string]any{"id": "codex-thread-1"},
+				}); err != nil {
+					t.Fatalf("write thread response: %v", err)
+				}
+			case "turn/start":
+				turn := map[string]any{
+					"id":     "turn-1",
+					"status": "inProgress",
+					"items":  []any{},
+				}
+				if err := conn.WriteJSON(map[string]any{
+					"jsonrpc": "2.0",
+					"id":      request["id"],
+					"result":  map[string]any{"turn": turn},
+				}); err != nil {
+					t.Fatalf("write turn response: %v", err)
+				}
+				if err := conn.WriteJSON(map[string]any{
+					"method": "item/completed",
+					"params": map[string]any{
+						"item": map[string]any{
+							"type":    "assistant_message",
+							"content": []any{map[string]any{"text": "pong"}},
+						},
+					},
+				}); err != nil {
+					t.Fatalf("write item completed: %v", err)
+				}
+				turn["status"] = "completed"
+				if err := conn.WriteJSON(map[string]any{
+					"method": "turn/completed",
+					"params": map[string]any{
+						"threadId": "codex-thread-1",
+						"turn":     turn,
+					},
+				}); err != nil {
+					t.Fatalf("write turn completed: %v", err)
+				}
+			default:
+				t.Fatalf("unexpected method %q", method)
+			}
+		}
+	}))
+	defer upstream.Close()
+
+	compat := newProviderCompat(syncedProvider{
+		ProviderID: "codex",
+		Label:      "Codex",
+		Endpoint:   "ws" + strings.TrimPrefix(upstream.URL, "http"),
+		Enabled:    true,
+	})
+	result, err := compat.StartSession(
+		context.Background(),
+		"session-1",
+		"thread-1",
+		map[string]any{
+			"taskPrompt":       "Reply with exactly pong",
+			"workingDirectory": t.TempDir(),
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("StartSession failed: %v", err)
+	}
+	if got := result["output"]; got != "pong" {
+		t.Fatalf("expected output pong after turn/completed, got %#v", result)
+	}
+}
+
 func TestExternalACPNotificationCollectorExtractsNestedSessionUpdateText(t *testing.T) {
 	t.Parallel()
 
@@ -199,6 +352,33 @@ func TestExternalACPNotificationCollectorExtractsNestedSessionUpdateText(t *test
 	}
 	if got := result["turnId"]; got != "turn-1" {
 		t.Fatalf("expected turnId turn-1, got %#v", result)
+	}
+}
+
+func TestExternalACPNotificationCollectorConvertsToolErrorToFailure(t *testing.T) {
+	t.Parallel()
+
+	collector := &externalACPNotificationCollector{}
+	collector.observe(map[string]any{
+		"method": "session.update",
+		"params": map[string]any{
+			"update": map[string]any{
+				"sessionUpdate": "tool_error",
+				"error":         true,
+				"message":       "exec_command failed: Failed to create unified exec process",
+			},
+		},
+	})
+
+	result := collector.apply(map[string]any{})
+	if got := result["success"]; got != false {
+		t.Fatalf("expected failure result, got %#v", result)
+	}
+	if got := result["error"]; got != "exec_command failed: Failed to create unified exec process" {
+		t.Fatalf("expected tool error text, got %#v", result)
+	}
+	if _, ok := result["output"]; ok {
+		t.Fatalf("did not expect tool error to become output, got %#v", result)
 	}
 }
 
