@@ -39,6 +39,7 @@ fast_http_curl_common=(
   --fail
   --location
   --max-time "${FAST_HTTP_TIMEOUT_SECONDS}"
+  -H "Authorization: Bearer ${AUTH_TOKEN}"
 )
 
 bridge_rpc_curl_common=(

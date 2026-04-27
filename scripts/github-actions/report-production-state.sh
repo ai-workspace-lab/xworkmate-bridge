@@ -23,15 +23,21 @@ ping_json=""
 attempts=6
 sleep_seconds=5
 
+curl_args=(
+  --silent
+  --show-error
+  --fail
+  --location
+  --max-time 20
+)
+
+if [[ -n "${BRIDGE_AUTH_TOKEN:-}" ]]; then
+  curl_args+=(-H "Authorization: Bearer ${BRIDGE_AUTH_TOKEN}")
+fi
+
 for ((attempt = 1; attempt <= attempts; attempt += 1)); do
   if ping_json="$(
-    curl \
-      --silent \
-      --show-error \
-      --fail \
-      --location \
-      --max-time 20 \
-      "${ping_url}"
+    curl "${curl_args[@]}" "${ping_url}"
   )"; then
     if [[ -n "${ping_json}" ]]; then
       break

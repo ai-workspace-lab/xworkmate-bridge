@@ -34,6 +34,7 @@ ping_json="$(
     --fail \
     --location \
     --max-time 20 \
+    -H "Authorization: Bearer ${BRIDGE_AUTH_TOKEN}" \
     "${BRIDGE_SERVER_URL%/}/api/ping"
 )"
 PING_JSON="${ping_json}" python3 - <<'PY'
