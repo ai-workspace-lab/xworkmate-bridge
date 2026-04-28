@@ -154,6 +154,41 @@ case "${scenario}" in
         ;;
     esac
     ;;
+  retry-native-success)
+    case "${url}" in
+      https://xworkmate-bridge.svc.plus/api/ping)
+        ping_attempt="$(bump_count ping)"
+        if (( ping_attempt < 3 )); then
+          printf 'curl: (28) Operation timed out after 20001 milliseconds with 0 bytes received\n' >&2
+          exit 1
+        fi
+        printf '{"status":"ok","version":"","buildDate":"","commit":"","image":""}\n'
+        ;;
+      https://xworkmate-bridge.svc.plus/)
+        printf 'xworkmate-bridge is running\n'
+        ;;
+      https://xworkmate-bridge.svc.plus/acp/rpc)
+        if [[ "${data}" == *'"method":"acp.capabilities"'* ]]; then
+          printf '{"jsonrpc":"2.0","result":{"providerCatalog":[{"providerId":"codex"},{"providerId":"opencode"},{"providerId":"gemini"},{"providerId":"hermes"}],"gatewayProviders":[{"providerId":"openclaw"}],"availableExecutionTargets":["agent","gateway"]}}\n'
+          exit 0
+        fi
+        if [[ "${data}" == *'"method":"xworkmate.routing.resolve"'* && "${data}" == *'"explicitProviderId":"codex"'* ]]; then
+          printf '{"jsonrpc":"2.0","result":{"resolvedExecutionTarget":"single-agent","resolvedProviderId":"codex","status":"available"}}\n'
+          exit 0
+        fi
+        if [[ "${data}" == *'"method":"xworkmate.routing.resolve"'* && "${data}" == *'"explicitExecutionTarget":"gateway"'* ]]; then
+          printf '{"jsonrpc":"2.0","result":{"resolvedExecutionTarget":"gateway","resolvedGatewayProviderId":"openclaw","status":"available"}}\n'
+          exit 0
+        fi
+        printf 'unexpected bridge payload in retry-native-success scenario: %s\n' "${data}" >&2
+        exit 1
+        ;;
+      *)
+        printf 'unexpected url in retry-native-success scenario: %s\n' "${url}" >&2
+        exit 1
+        ;;
+    esac
+    ;;
   *)
     printf 'unsupported fake curl scenario: %s\n' "${scenario}" >&2
     exit 1
@@ -223,7 +258,28 @@ test_ping_retry_reaches_successful_release_validation() {
   cleanup_run
 }
 
+test_ping_retry_accepts_systemd_native_runtime_metadata() {
+  run_validate_capture "retry-native-success"
+
+  if [[ "${RUN_STATUS}" -ne 0 ]]; then
+    printf '%s\n' "${RUN_OUTPUT}" >&2
+    fail "expected retry-native-success scenario to pass"
+  fi
+
+  if [[ ! -f "${RUN_STATE_DIR}/ping.count" ]]; then
+    fail "expected native ping retry counter to be recorded"
+  fi
+
+  ping_attempts="$(tr -d '\n' <"${RUN_STATE_DIR}/ping.count")"
+  if [[ "${ping_attempts}" != "3" ]]; then
+    fail "expected native ping to succeed on third attempt, got ${ping_attempts}"
+  fi
+
+  cleanup_run
+}
+
 test_bridge_timeout_stops_without_json_decode_noise
 test_ping_retry_reaches_successful_release_validation
+test_ping_retry_accepts_systemd_native_runtime_metadata
 
 printf 'validate-deploy regression tests passed\n'

@@ -146,14 +146,15 @@ image_ref, tag, commit, version = sys.argv[1:5]
 payload = json.loads(os.environ["PING_JSON"])
 if payload.get("status") != "ok":
     raise SystemExit("ping status not ok")
-if payload.get("image") != image_ref:
-    raise SystemExit(f"expected image {image_ref!r}, got {payload.get('image')!r}")
-if tag and payload.get("tag") != tag:
-    raise SystemExit(f"expected tag {tag!r}, got {payload.get('tag')!r}")
-if commit and payload.get("commit") != commit:
-    raise SystemExit(f"expected commit {commit!r}, got {payload.get('commit')!r}")
-if version and payload.get("version") != version:
-    raise SystemExit(f"expected version {version!r}, got {payload.get('version')!r}")
+if payload.get("image"):
+    if payload.get("image") != image_ref:
+        raise SystemExit(f"expected image {image_ref!r}, got {payload.get('image')!r}")
+    if tag and payload.get("tag") != tag:
+        raise SystemExit(f"expected tag {tag!r}, got {payload.get('tag')!r}")
+    if commit and payload.get("commit") != commit:
+        raise SystemExit(f"expected commit {commit!r}, got {payload.get('commit')!r}")
+    if version and payload.get("version") != version:
+        raise SystemExit(f"expected version {version!r}, got {payload.get('version')!r}")
 PY
   then
     return 0
