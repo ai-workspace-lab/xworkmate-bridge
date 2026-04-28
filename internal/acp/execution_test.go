@@ -407,3 +407,99 @@ func TestExternalACPNotificationCollectorPrefersStreamTextOverAckResult(t *testi
 		t.Fatalf("expected stream text to win over ack result, got %#v", result)
 	}
 }
+
+func TestExternalACPNotificationCollectorFiltersCodexProtocolNoise(t *testing.T) {
+	t.Parallel()
+
+	collector := &externalACPNotificationCollector{}
+	collector.observe(map[string]any{
+		"method": "turn/started",
+		"params": map[string]any{
+			"turnId": "019dd328-fcf8-7b71-845c-6ad9a81f9e0a",
+			"turn": map[string]any{
+				"id":     "019dd328-fcf8-7b71-845c-6ad9a81f9e0a",
+				"status": "inProgress",
+			},
+		},
+	})
+	collector.observe(map[string]any{
+		"method": "item/completed",
+		"params": map[string]any{
+			"item": map[string]any{
+				"type": "userMessage",
+				"content": []any{
+					map[string]any{
+						"type": "input_text",
+						"text": "hi Execution context:\n\n• target: agent\n\n• permission: default",
+					},
+				},
+			},
+		},
+	})
+	collector.observe(map[string]any{
+		"method": "item/completed",
+		"params": map[string]any{
+			"item": map[string]any{
+				"type": "agentMessage",
+				"id":   "msg_0babee661b91dbe10169f06cd278308191bfb59772d03718dc",
+				"content": []any{
+					map[string]any{
+						"type": "output_text",
+						"text": "agentMessage msg_0babee661b91dbe10169f06cd278308191bfb59772d03718dc final_answer hi hi",
+					},
+				},
+			},
+		},
+	})
+
+	result := collector.apply(map[string]any{
+		"output":  "ok",
+		"summary": "ok",
+		"message": "ok",
+	})
+	if got := result["output"]; got != "hi hi" {
+		t.Fatalf("expected only final assistant text, got %#v", result)
+	}
+	if got := result["summary"]; got != "hi hi" {
+		t.Fatalf("expected only final assistant summary, got %#v", result)
+	}
+}
+
+func TestExternalACPNotificationCollectorIgnoresCodexCommentaryMessages(t *testing.T) {
+	t.Parallel()
+
+	collector := &externalACPNotificationCollector{}
+	collector.observe(map[string]any{
+		"method": "item/completed",
+		"params": map[string]any{
+			"item": map[string]any{
+				"type": "agentMessage",
+				"content": []any{
+					map[string]any{
+						"type": "output_text",
+						"text": "commentary agentMessage msg_088265db975167a00169f0707edd688191a2174abeb1592aa3\nYou\nasked\nfor\na\nsimple\nterminal\n-style\nresponse\n,\nso\nI\n’m\nhandling\nit\ndirectly\n.\nYou asked for a simple terminal-style response, so I’m handling it directly.",
+					},
+				},
+			},
+		},
+	})
+	collector.observe(map[string]any{
+		"method": "item/completed",
+		"params": map[string]any{
+			"item": map[string]any{
+				"type": "agentMessage",
+				"content": []any{
+					map[string]any{
+						"type": "output_text",
+						"text": "hello\nhello",
+					},
+				},
+			},
+		},
+	})
+
+	result := collector.apply(map[string]any{})
+	if got := result["output"]; got != "hello" {
+		t.Fatalf("expected commentary to be hidden and duplicate final line collapsed, got %#v", result)
+	}
+}

@@ -133,6 +133,7 @@ func (c *externalACPNotificationCollector) apply(result map[string]any) map[stri
 			break
 		}
 	}
+	text = normalizeExternalACPAssistantText(text)
 	if errorText := c.errorText(); errorText != "" {
 		result["success"] = false
 		result["error"] = errorText
@@ -182,7 +183,8 @@ func extractExternalACPNotificationText(notification map[string]any) string {
 	if notification == nil {
 		return ""
 	}
-	if strings.TrimSpace(stringValue(notification["method"])) == "turn/completed" {
+	method := strings.TrimSpace(stringValue(notification["method"]))
+	if strings.HasPrefix(method, "turn/") {
 		return ""
 	}
 	payload := asMap(notification["params"])
@@ -200,16 +202,20 @@ func extractExternalACPNotificationText(notification map[string]any) string {
 	case "session_started", "session completed", "single-agent completed":
 		return ""
 	}
-	if text := extractExternalACPTextValue(update); text != "" {
-		return text
-	}
 	item := asMap(payload["item"])
-	if strings.TrimSpace(stringValue(item["type"])) != "userMessage" {
-		if text := extractExternalACPTextValue(item); text != "" {
+	if len(item) > 0 {
+		if strings.TrimSpace(stringValue(item["type"])) == "userMessage" {
+			return ""
+		}
+		if text := extractExternalACPAssistantTextValue(item); text != "" {
 			return text
 		}
+		return ""
 	}
-	if text := extractExternalACPTextValue(payload); text != "" {
+	if text := extractExternalACPAssistantTextValue(update); text != "" {
+		return text
+	}
+	if text := extractExternalACPAssistantTextValue(payload); text != "" {
 		return text
 	}
 	return ""
@@ -308,6 +314,100 @@ func extractExternalACPTextValue(value any) string {
 		return strings.TrimSpace(strings.Join(parts, " "))
 	default:
 		return ""
+	}
+}
+
+func extractExternalACPAssistantTextValue(value any) string {
+	return normalizeExternalACPAssistantText(extractExternalACPTextValue(value))
+}
+
+func normalizeExternalACPAssistantText(text string) string {
+	normalized := strings.TrimSpace(text)
+	if normalized == "" {
+		return ""
+	}
+	if isExternalACPCommentaryAgentMessage(normalized) {
+		return ""
+	}
+	if idx := strings.LastIndex(normalized, "final_answer"); idx >= 0 {
+		normalized = strings.TrimSpace(normalized[idx+len("final_answer"):])
+	}
+	normalized = stripExternalACPAgentMessagePrefix(normalized)
+	normalized = stripExternalACPExecutionContextBlocks(normalized)
+	normalized = stripExternalACPRepeatedFinalLine(normalized)
+	return strings.TrimSpace(normalized)
+}
+
+func isExternalACPCommentaryAgentMessage(text string) bool {
+	fields := strings.Fields(strings.TrimSpace(text))
+	return len(fields) >= 3 && fields[0] == "commentary" && fields[1] == "agentMessage" && strings.HasPrefix(fields[2], "msg_")
+}
+
+func stripExternalACPAgentMessagePrefix(text string) string {
+	fields := strings.Fields(strings.TrimSpace(text))
+	if len(fields) >= 2 && fields[0] == "agentMessage" && strings.HasPrefix(fields[1], "msg_") {
+		return strings.TrimSpace(strings.Join(fields[2:], " "))
+	}
+	return strings.TrimSpace(text)
+}
+
+func stripExternalACPExecutionContextBlocks(text string) string {
+	lines := strings.Split(text, "\n")
+	var kept []string
+	skippingContext := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			if skippingContext {
+				skippingContext = false
+				continue
+			}
+			kept = append(kept, line)
+			continue
+		}
+		if strings.HasPrefix(trimmed, "Execution context:") {
+			skippingContext = true
+			continue
+		}
+		if skippingContext {
+			if strings.HasPrefix(trimmed, "•") || strings.HasPrefix(trimmed, "-") || strings.HasPrefix(trimmed, "*") || strings.Contains(trimmed, ":") {
+				continue
+			}
+			skippingContext = false
+		}
+		if isExternalACPProtocolStatusLine(trimmed) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.TrimSpace(strings.Join(kept, "\n"))
+}
+
+func stripExternalACPRepeatedFinalLine(text string) string {
+	lines := strings.Split(text, "\n")
+	nonEmpty := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" {
+			nonEmpty = append(nonEmpty, trimmed)
+		}
+	}
+	if len(nonEmpty) >= 2 && nonEmpty[len(nonEmpty)-1] == nonEmpty[len(nonEmpty)-2] {
+		return nonEmpty[len(nonEmpty)-1]
+	}
+	return strings.TrimSpace(text)
+}
+
+func isExternalACPProtocolStatusLine(text string) bool {
+	fields := strings.Fields(text)
+	if len(fields) < 2 {
+		return false
+	}
+	switch fields[0] {
+	case "inProgress", "pending", "running", "completed":
+		return strings.Count(fields[1], "-") >= 4
+	default:
+		return false
 	}
 }
 
