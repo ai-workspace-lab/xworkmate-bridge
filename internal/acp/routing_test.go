@@ -525,6 +525,105 @@ func TestExecuteSessionTaskAutoRoutingUsesBridgeProductionProviderOrder(t *testi
 	}
 }
 
+func TestExecuteSessionTaskKeepsRemoteWorkspaceHintOutOfLocalCWD(t *testing.T) {
+	workspaceDir := filepath.Join(t.TempDir(), "workspace")
+	if err := os.MkdirAll(workspaceDir, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+
+	server := NewServer()
+	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/acp/rpc" {
+			http.NotFound(w, r)
+			return
+		}
+		defer func() { _ = r.Body.Close() }()
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		method := strings.TrimSpace(shared.StringArg(request, "method", ""))
+		result := map[string]any{
+			"success":                true,
+			"output":                 "hello",
+			"summary":                "hello",
+			"message":                "hello",
+			"remoteWorkingDirectory": "/owners/local/user/demo/threads/main",
+			"remoteWorkspaceRefKind": "remotePath",
+			"artifacts": []map[string]any{
+				{
+					"relativePath": "notes/hello.txt",
+					"content":      "hello artifact",
+					"contentType":  "text/plain",
+				},
+			},
+		}
+		if method == "thread/start" {
+			result = map[string]any{"id": "codex-thread-1"}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      request["id"],
+			"result":  result,
+		})
+	}))
+	defer providerServer.Close()
+	setTestBridgeProvider(server, syncedProvider{
+		ProviderID: "codex",
+		Label:      "Codex",
+		Endpoint:   providerServer.URL,
+		Enabled:    true,
+	})
+
+	response, rpcErr := server.executeSessionTask(task{
+		req: shared.RPCRequest{
+			Method: "session.start",
+			Params: map[string]any{
+				"sessionId":                  "session-remote-hint",
+				"threadId":                   "thread-remote-hint",
+				"taskPrompt":                 "say hello",
+				"workingDirectory":           workspaceDir,
+				"remoteWorkingDirectoryHint": "/owners/local/user/demo/threads/main",
+				"routing": map[string]any{
+					"routingMode":             "explicit",
+					"explicitExecutionTarget": "singleAgent",
+					"explicitProviderId":      "codex",
+				},
+			},
+		},
+	})
+	if rpcErr != nil {
+		t.Fatalf("expected success, got rpc error: %v", rpcErr)
+	}
+	if got := response["remoteWorkingDirectory"]; got != "/owners/local/user/demo/threads/main" {
+		t.Fatalf("expected remote working directory in response, got %#v", response)
+	}
+	if got := response["remoteWorkspaceRefKind"]; got != "remotePath" {
+		t.Fatalf("expected remote workspace kind in response, got %#v", response)
+	}
+	if _, ok := response["artifacts"].([]map[string]any); !ok {
+		if _, ok := response["artifacts"].([]any); !ok {
+			t.Fatalf("expected artifacts payload, got %#v", response["artifacts"])
+		}
+	}
+	sess := server.sessions["session-remote-hint"]
+	if sess == nil {
+		t.Fatal("expected session state to be retained")
+	}
+	if sess.control.RequestedWorkingDir != workspaceDir {
+		t.Fatalf("expected local requested cwd %q, got %q", workspaceDir, sess.control.RequestedWorkingDir)
+	}
+	if sess.control.RemoteWorkingDirHint != "/owners/local/user/demo/threads/main" {
+		t.Fatalf("expected remote hint retained, got %#v", sess.control)
+	}
+	if sess.task.Kind != TaskKindSingleAgent || sess.task.State != TaskStateCompleted {
+		t.Fatalf("expected completed single-agent task, got %#v", sess.task)
+	}
+	if sess.artifacts.RemoteWorkingDirectory != "/owners/local/user/demo/threads/main" {
+		t.Fatalf("expected artifact record to keep remote directory, got %#v", sess.artifacts)
+	}
+}
+
 func TestExecuteSessionTaskRequiresRouting(t *testing.T) {
 	server := NewServer()
 	_, rpcErr := server.executeSessionTask(task{

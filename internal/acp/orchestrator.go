@@ -41,6 +41,21 @@ func (o *SessionOrchestrator) Process(ctx context.Context, method string, params
 	sess.target = res.TargetID
 	sess.provider = res.ProviderID
 	sess.mode = res.TargetID
+	sess.control.ControlPlaneSessionID = sessionID
+	sess.control.ThreadID = threadID
+	sess.control.RequestedWorkingDir = strings.TrimSpace(shared.StringArg(params, "workingDirectory", ""))
+	sess.control.RemoteWorkingDirHint = strings.TrimSpace(shared.StringArg(params, "remoteWorkingDirectoryHint", ""))
+	sess.control.UpdatedAt = time.Now()
+	sess.task = QueuedTask{
+		SessionID: sessionID,
+		ThreadID:  threadID,
+		TurnID:    turnID,
+		Provider:  res.ProviderID,
+		Target:    res.TargetID,
+		State:     TaskStateRunning,
+		Kind:      taskKindFromParams(params, res),
+		UpdatedAt: time.Now(),
+	}
 	prompt := strings.TrimSpace(shared.StringArg(params, "taskPrompt", ""))
 	if prompt != "" {
 		sess.history = append(sess.history, "USER: "+prompt)
@@ -86,6 +101,10 @@ func (o *SessionOrchestrator) Process(ctx context.Context, method string, params
 		err = fmt.Errorf("unsupported session method: %s", method)
 	}
 	if err != nil {
+		sess.mu.Lock()
+		sess.task.State = TaskStateFailed
+		sess.task.UpdatedAt = time.Now()
+		sess.mu.Unlock()
 		return nil, &shared.RPCError{Code: -32002, Message: "EXECUTION_FAILED: " + err.Error()}
 	}
 
@@ -205,6 +224,8 @@ func (o *SessionOrchestrator) normalizeResult(sess *session, result map[string]a
 	if output != "" {
 		sess.history = append(sess.history, "ASSISTANT: "+output)
 	}
+	sess.task.State = TaskStateCompleted
+	sess.task.UpdatedAt = time.Now()
 	sess.mu.Unlock()
 
 	result["turnId"] = turnID
@@ -231,6 +252,26 @@ func (o *SessionOrchestrator) normalizeResult(sess *session, result map[string]a
 		result["error"] = "provider returned no displayable output"
 		result["message"] = "provider returned no displayable output"
 	}
+	if !parseBool(result["success"]) {
+		sess.mu.Lock()
+		sess.task.State = TaskStateFailed
+		sess.task.UpdatedAt = time.Now()
+		sess.mu.Unlock()
+	}
+
+	artifactRecord := buildArtifactRecord(sess, result, output)
+	if artifactRecord.RemoteWorkingDirectory != "" {
+		result["remoteWorkingDirectory"] = artifactRecord.RemoteWorkingDirectory
+	}
+	if artifactRecord.RemoteWorkspaceRefKind != "" {
+		result["remoteWorkspaceRefKind"] = artifactRecord.RemoteWorkspaceRefKind
+	}
+	if artifactRecord.ResultSummary != "" && strings.TrimSpace(shared.StringArg(result, "resultSummary", "")) == "" {
+		result["resultSummary"] = artifactRecord.ResultSummary
+	}
+	if len(artifactRecord.Artifacts) > 0 {
+		result["artifacts"] = artifactRecord.Artifacts
+	}
 
 	workingDirectory := shared.StringArg(params, "workingDirectory", "")
 	routingParams := shared.AsMap(params["routing"])
@@ -246,6 +287,67 @@ func (o *SessionOrchestrator) normalizeResult(sess *session, result map[string]a
 	}
 
 	return result
+}
+
+func taskKindFromParams(params map[string]any, routing RoutingResult) TaskKind {
+	if parseBool(params["multiAgent"]) {
+		return TaskKindMultiAgent
+	}
+	if routing.TargetID == "gateway" {
+		return TaskKindGateway
+	}
+	return TaskKindSingleAgent
+}
+
+func buildArtifactRecord(sess *session, result map[string]any, output string) ArtifactRecord {
+	record := ArtifactRecord{
+		SessionID:     sess.sessionID,
+		ThreadID:      sess.threadID,
+		ResultSummary: strings.TrimSpace(output),
+		UpdatedAt:     time.Now(),
+	}
+	if record.ResultSummary == "" {
+		record.ResultSummary = strings.TrimSpace(shared.StringArg(result, "resultSummary", ""))
+	}
+	if record.ResultSummary == "" {
+		record.ResultSummary = strings.TrimSpace(shared.StringArg(result, "summary", ""))
+	}
+	record.RemoteWorkingDirectory = strings.TrimSpace(shared.StringArg(result, "remoteWorkingDirectory", ""))
+	if record.RemoteWorkingDirectory == "" {
+		record.RemoteWorkingDirectory = strings.TrimSpace(sess.control.RemoteWorkingDirHint)
+	}
+	record.RemoteWorkspaceRefKind = strings.TrimSpace(shared.StringArg(result, "remoteWorkspaceRefKind", ""))
+	if record.RemoteWorkspaceRefKind == "" && record.RemoteWorkingDirectory != "" {
+		record.RemoteWorkspaceRefKind = "remotePath"
+	}
+	record.Artifacts = extractArtifactPayloads(result)
+	sess.mu.Lock()
+	sess.artifacts = record
+	sess.control.UpdatedAt = record.UpdatedAt
+	sess.mu.Unlock()
+	return record
+}
+
+func extractArtifactPayloads(result map[string]any) []map[string]any {
+	rawArtifacts := result["artifacts"]
+	items, ok := rawArtifacts.([]any)
+	if !ok {
+		if typed, ok := rawArtifacts.([]map[string]any); ok {
+			copied := make([]map[string]any, 0, len(typed))
+			for _, item := range typed {
+				copied = append(copied, item)
+			}
+			return copied
+		}
+		return nil
+	}
+	artifacts := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		if mapped := shared.AsMap(item); len(mapped) > 0 {
+			artifacts = append(artifacts, mapped)
+		}
+	}
+	return artifacts
 }
 
 func (s *Server) getOrCreateSession(sessionID, threadID string) *session {

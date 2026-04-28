@@ -14,6 +14,10 @@ type stubOpenCodeClient struct {
 	sendParams       map[string]any
 }
 
+type invalidSessionOpenCodeClient struct {
+	stubOpenCodeClient
+}
+
 func (s *stubOpenCodeClient) Initialize() (initializeResult, error) {
 	s.initializeCalled++
 	return initializeResult{ProtocolVersion: 1}, nil
@@ -36,6 +40,11 @@ func (s *stubOpenCodeClient) SendMessage(sessionID, prompt string, params map[st
 }
 
 func (s *stubOpenCodeClient) Close() error { return nil }
+
+func (s *invalidSessionOpenCodeClient) CreateSession(title string) (string, error) {
+	s.createTitle = title
+	return "<nil>", nil
+}
 
 func TestHandleSessionStartUsesCreateSessionAndSendMessage(t *testing.T) {
 	client := &stubOpenCodeClient{}
@@ -76,6 +85,24 @@ func TestHandleSessionMessageReusesSession(t *testing.T) {
 	}
 	if client.sendPrompt != "follow-up" {
 		t.Fatalf("expected follow-up prompt, got %q", client.sendPrompt)
+	}
+}
+
+func TestHandleSessionStartRejectsInvalidProviderSessionID(t *testing.T) {
+	client := &invalidSessionOpenCodeClient{}
+	server := NewServer(client)
+	result := server.handleRequest(sharedRequest("session.start", map[string]any{
+		"sessionId":  "thread-1",
+		"taskPrompt": "hello",
+	}))
+	if success, _ := result["success"].(bool); success {
+		t.Fatalf("expected invalid upstream session to fail, got %#v", result)
+	}
+	if got := result["error"]; got != "opencode create session returned no session id" {
+		t.Fatalf("expected missing session id error, got %#v", result)
+	}
+	if client.sendSessionID != "" {
+		t.Fatalf("expected no follow-up message call, got session id %q", client.sendSessionID)
 	}
 }
 

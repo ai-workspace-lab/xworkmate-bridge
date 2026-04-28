@@ -259,6 +259,10 @@ func (s *Server) handleSessionRequest(method string, params map[string]any) map[
 		if err != nil {
 			return map[string]any{"success": false, "provider": s.providerID, "mode": "single-agent", "error": err.Error()}
 		}
+		upstreamSessionID = sanitizeOpenCodeProviderSessionID(upstreamSessionID)
+		if upstreamSessionID == "" {
+			return map[string]any{"success": false, "provider": s.providerID, "mode": "single-agent", "error": "opencode create session returned no session id"}
+		}
 		state.upstreamSessionID = upstreamSessionID
 		s.setSession(sessionID, state)
 	}

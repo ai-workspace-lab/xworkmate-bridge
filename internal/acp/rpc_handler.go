@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 	"xworkmate-bridge/internal/shared"
 )
 
@@ -68,6 +69,10 @@ func (s *Server) cancelSession(ctx context.Context, sessionID string) {
 	sess, ok := s.sessions[sessionID]
 	s.mu.RUnlock()
 	if ok && sess != nil && sess.compat != nil {
+		sess.mu.Lock()
+		sess.task.State = TaskStateCancelled
+		sess.task.UpdatedAt = time.Now()
+		sess.mu.Unlock()
 		_ = sess.compat.CancelSession(ctx, sessionID)
 	}
 }
@@ -78,6 +83,10 @@ func (s *Server) closeSession(ctx context.Context, sessionID string) {
 	delete(s.sessions, sessionID)
 	s.mu.Unlock()
 	if ok && sess != nil && sess.compat != nil {
+		sess.mu.Lock()
+		sess.task.State = TaskStateCancelled
+		sess.task.UpdatedAt = time.Now()
+		sess.mu.Unlock()
 		_ = sess.compat.CloseSession(ctx, sessionID)
 	}
 }

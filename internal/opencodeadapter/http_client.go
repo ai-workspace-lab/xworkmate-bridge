@@ -85,13 +85,7 @@ func (c *opencodeHTTPClient) Call(method string, params map[string]any) (map[str
 }
 
 func sharedStringArg(params map[string]any, key, fallback string) string {
-	if params == nil {
-		return fallback
-	}
-	if value := strings.TrimSpace(fmt.Sprint(params[key])); value != "" {
-		return value
-	}
-	return fallback
+	return shared.StringArg(params, key, fallback)
 }
 
 func (c *opencodeHTTPClient) CreateSession(title string) (string, error) {
@@ -247,15 +241,23 @@ func (c *opencodeHTTPClient) postSessionMessage(sessionID, prompt string, params
 func extractOpenCodeSessionID(value any) string {
 	switch v := value.(type) {
 	case string:
-		return strings.TrimSpace(v)
+		return sanitizeOpenCodeProviderSessionID(v)
 	case map[string]any:
-		for _, key := range []string{"sessionId", "session_id", "id"} {
-			if sessionID := strings.TrimSpace(fmt.Sprint(v[key])); sessionID != "" {
+		for _, key := range []string{"sessionId", "sessionID", "session_id", "id"} {
+			if sessionID := sanitizeOpenCodeProviderSessionID(shared.StringArg(v, key, "")); sessionID != "" {
 				return sessionID
 			}
 		}
 	}
 	return ""
+}
+
+func sanitizeOpenCodeProviderSessionID(raw string) string {
+	sessionID := strings.TrimSpace(raw)
+	if sessionID == "" || sessionID == "<nil>" {
+		return ""
+	}
+	return sessionID
 }
 
 func extractOpenCodeText(value any) string {
