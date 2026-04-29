@@ -447,14 +447,7 @@ func (s *Server) handleHermesACPUpstreamSessionRequest(method string, params map
 		}
 	}
 	if output == "" {
-		return map[string]any{
-			"success":        false,
-			"provider":       s.providerID,
-			"mode":           "single-agent",
-			"error":          "hermes upstream returned empty response",
-			"upstreamMethod": "session/prompt",
-			"upstream":       response,
-		}
+		return s.emptyUpstreamResponseFailure("session/prompt", response)
 	}
 
 	s.sessionsMu.Lock()
@@ -483,6 +476,22 @@ func (s *Server) handleHermesACPUpstreamSessionRequest(method string, params map
 		result["upstreamSessionId"] = state.upstreamSessionID
 	}
 	return result
+}
+
+func (s *Server) emptyUpstreamResponseFailure(upstreamMethod string, upstream map[string]any) map[string]any {
+	const message = "hermes upstream returned empty response"
+	return map[string]any{
+		"success":            false,
+		"status":             "failed",
+		"provider":           s.providerID,
+		"mode":               "single-agent",
+		"error":              message,
+		"message":            message,
+		"unavailableCode":    "PROVIDER_EMPTY_RESPONSE",
+		"unavailableMessage": message,
+		"upstreamMethod":     upstreamMethod,
+		"upstream":           upstream,
+	}
 }
 
 func normalizeHermesUpstreamMethod(method string) string {

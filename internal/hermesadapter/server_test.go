@@ -186,6 +186,15 @@ func TestHandleRPCSessionStartRejectsEmptyUpstreamResponse(t *testing.T) {
 	if got := result["error"]; got != "hermes upstream returned empty response" {
 		t.Fatalf("expected empty-response error, got %#v", result)
 	}
+	if got := result["status"]; got != "failed" {
+		t.Fatalf("expected failed status, got %#v", result)
+	}
+	if got := result["unavailableCode"]; got != "PROVIDER_EMPTY_RESPONSE" {
+		t.Fatalf("expected PROVIDER_EMPTY_RESPONSE, got %#v", result)
+	}
+	if got := result["upstreamMethod"]; got != "session/prompt" {
+		t.Fatalf("expected upstream method, got %#v", result)
+	}
 }
 
 func TestNewServerDefaultsHermesToSessionPrompt(t *testing.T) {
