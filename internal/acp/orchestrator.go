@@ -334,9 +334,7 @@ func extractArtifactPayloads(result map[string]any) []map[string]any {
 	if !ok {
 		if typed, ok := rawArtifacts.([]map[string]any); ok {
 			copied := make([]map[string]any, 0, len(typed))
-			for _, item := range typed {
-				copied = append(copied, item)
-			}
+			copied = append(copied, typed...)
 			return copied
 		}
 		return nil
