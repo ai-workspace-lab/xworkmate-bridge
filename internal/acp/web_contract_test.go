@@ -75,6 +75,21 @@ func TestHTTPHandlerRejectsLegacyACPCodexPath(t *testing.T) {
 	}
 }
 
+func TestHTTPHandlerRejectsGatewayOpenClawPublicAlias(t *testing.T) {
+	t.Setenv("BRIDGE_AUTH_TOKEN", "")
+	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
+	server := NewServer()
+	handler := server.Handler()
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/gateway/openclaw", nil)
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", recorder.Code)
+	}
+}
+
 func TestHTTPHandlerPingRequiresBearerAuthorizationWhenBridgeAuthTokenConfigured(t *testing.T) {
 	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
 	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
