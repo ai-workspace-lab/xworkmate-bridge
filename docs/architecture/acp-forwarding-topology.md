@@ -30,7 +30,7 @@ flowchart LR
 
     subgraph BRIDGE["xworkmate-bridge"]
         B1["GET /acp<br/>JSON-RPC over WebSocket"]
-        B2["POST /acp/rpc<br/>secondary compatibility"]
+        B2["POST /acp/rpc<br/>App-facing HTTP RPC"]
         B3["acp.capabilities"]
         B4["xworkmate.routing.resolve"]
         B5["session.*"]

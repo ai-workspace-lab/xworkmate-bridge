@@ -77,13 +77,13 @@ bridge 继续保留：
 
 provider-specific 逻辑只能存在于 compat layer，不得污染公共 handler。
 
-### 5. WS-first
+### 5. App-facing HTTP RPC
 
-canonical transport 定义为：
+App-facing canonical transport 定义为：
 
-- `GET /acp` WebSocket
+- `POST /acp/rpc`
 
-`POST /acp/rpc` 作为 secondary compatibility transport 保留，但不再主导架构设计。
+`GET /acp` WebSocket 作为 ACP transport variant 保留，但不主导 App 运行时路由。
 
 ## Consequences
 

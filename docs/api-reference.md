@@ -4,10 +4,10 @@
 
 当前定位：
 
-- `xworkmate-bridge` 是 **APP-facing ACP control plane and provider compatibility layer**
-- canonical transport 是 `GET /acp` 上的 **JSON-RPC over WebSocket**
-- `POST /acp/rpc` 保留为 secondary compatibility transport
-- `/acp-server/*`、`/gateway/openclaw` 不再是 public API
+- `xworkmate-bridge` 是 **APP-facing ACP control plane and provider runtime layer**
+- App-facing canonical HTTP transport 是 `POST /acp/rpc`
+- `GET /acp` WebSocket 仅保留为 ACP transport variant
+- `/acp-server/*`、`/gateway/openclaw` 不再是 public API，也不再提供 alias handler
 
 ## 1. Runtime Entry Points
 
@@ -28,9 +28,9 @@
 | Path | Method / Protocol | Auth | 用途 |
 | --- | --- | --- | --- |
 | `/` | `GET` | 否 | 纯文本运行状态 |
-| `/api/ping` | `GET` | 否 | 发布版本探针 |
-| `/acp` | `GET` + WebSocket upgrade | 是 | canonical JSON-RPC transport |
-| `/acp/rpc` | `POST` | 是 | secondary compatibility transport |
+| `/api/ping` | `GET` | 是 | 发布版本探针 |
+| `/acp` | `GET` + WebSocket upgrade | 是 | JSON-RPC WebSocket transport |
+| `/acp/rpc` | `POST` | 是 | App-facing JSON-RPC HTTP transport |
 | `/acp/rpc` | `OPTIONS` | 否 | CORS preflight |
 
 其他路径返回 `404 Not Found`。
@@ -46,7 +46,7 @@
 
 - `/acp` 与 `/acp/rpc` 都做 origin allowlist 校验
 - 空 `Origin` 默认允许
-- auth 使用 bearer header
+- `/api/ping`、`/acp`、`/acp/rpc` 在 `BRIDGE_AUTH_TOKEN` 非空时都要求 bearer header
 - `BRIDGE_AUTH_TOKEN` 为空时默认放行
 - `BRIDGE_AUTH_TOKEN` 非空时，接受裸 token 或 `Bearer <token>`
 

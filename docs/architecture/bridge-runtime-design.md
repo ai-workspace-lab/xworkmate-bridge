@@ -56,13 +56,13 @@ APISIX / Caddy 这类外层网关负责：
 
 bridge 当前采用：
 
-- canonical transport: `GET /acp` WebSocket
-- secondary compatibility transport: `POST /acp/rpc`
+- App-facing canonical HTTP transport: `POST /acp/rpc`
+- ACP WebSocket transport variant: `GET /acp`
 
 设计含义：
 
-- WS 是 control-plane 主链
-- HTTP RPC 是兼容入口，不再反向塑造内部架构
+- HTTP RPC 是 App 运行时主链
+- WS 作为 ACP transport variant，不反向塑造 App 路由
 - provider / gateway alias route 不再属于 public surface
 
 ## 4. 模块边界

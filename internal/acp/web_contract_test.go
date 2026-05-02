@@ -60,7 +60,7 @@ func TestHTTPHandlerRootAndPingExposeRuntimeVersionInfo(t *testing.T) {
 	}
 }
 
-func TestHTTPHandlerKeepsLegacyACPCodexPathAlive(t *testing.T) {
+func TestHTTPHandlerRejectsLegacyACPCodexPath(t *testing.T) {
 	t.Setenv("BRIDGE_AUTH_TOKEN", "")
 	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
@@ -70,18 +70,23 @@ func TestHTTPHandlerKeepsLegacyACPCodexPathAlive(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/acp-server/codex", nil)
 	handler.ServeHTTP(recorder, request)
 
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", recorder.Code)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", recorder.Code)
 	}
-	var payload map[string]any
-	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("decode legacy payload: %v", err)
-	}
-	if got := payload["providerId"]; got != "codex" {
-		t.Fatalf("expected providerId codex, got %#v", got)
-	}
-	if got := payload["legacy"]; got != true {
-		t.Fatalf("expected legacy flag true, got %#v", got)
+}
+
+func TestHTTPHandlerPingRequiresBearerAuthorizationWhenBridgeAuthTokenConfigured(t *testing.T) {
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
+	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
+	server := NewServer()
+	handler := server.Handler()
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/ping", nil)
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", recorder.Code)
 	}
 }
 
@@ -172,6 +177,25 @@ func TestHandleRPCRequiresBearerAuthorizationWhenBridgeAuthTokenConfigured(t *te
 		http.MethodPost,
 		"http://127.0.0.1/acp/rpc",
 		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"session.start","params":{"sessionId":"test"}}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+
+	server.HandleRPC(recorder, request)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", recorder.Code)
+	}
+}
+
+func TestHandleRPCCapabilitiesRequiresBearerAuthorizationWhenBridgeAuthTokenConfigured(t *testing.T) {
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
+	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
+	server := NewServer()
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"http://127.0.0.1/acp/rpc",
+		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"acp.capabilities"}`),
 	)
 	request.Header.Set("Content-Type", "application/json")
 

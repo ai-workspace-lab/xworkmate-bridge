@@ -26,8 +26,8 @@ APP-facing ACP control plane。
 
 负责：
 
-- `/acp` WebSocket canonical transport
-- `/acp/rpc` secondary compatibility transport
+- `/acp/rpc` App-facing HTTP RPC transport
+- `/acp` WebSocket transport variant
 - JSON-RPC / hybrid envelope
 - `acp.capabilities`
 - `xworkmate.routing.resolve`
@@ -105,7 +105,7 @@ APP-facing ACP control plane。
 以下逻辑已从主链移除：
 
 - `/acp-server/*`
-- `/gateway/openclaw` public alias
+- `/gateway/openclaw` public alias handler
 - multi-agent 执行路径
 - provider-specific alias handler
 

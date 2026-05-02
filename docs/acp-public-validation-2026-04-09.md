@@ -64,6 +64,6 @@ Last Updated: 2026-04-23
 
 ## Notes
 
-- canonical transport 是 `GET /acp` WebSocket
-- `/acp/rpc` 仅作为 secondary compatibility transport
+- App-facing canonical HTTP transport 是 `POST /acp/rpc`
+- `GET /acp` WebSocket 仅作为 ACP transport variant
 - app-facing contract 由 bridge control plane 独占，不由 provider alias path 定义
