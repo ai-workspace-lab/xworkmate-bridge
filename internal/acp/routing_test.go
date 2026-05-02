@@ -3,13 +3,17 @@ package acp
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/gorilla/websocket"
 	"xworkmate-bridge/internal/shared"
 )
 
@@ -446,6 +450,47 @@ func TestExecuteSessionTaskExplicitGatewayUsesResolvedGatewayProvider(t *testing
 	}
 }
 
+func TestExecuteSessionTaskGatewayAutoConnectsLocalOpenClaw(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	response, rpcErr := server.executeSessionTask(task{
+		req: shared.RPCRequest{
+			Method: "session.start",
+			Params: map[string]any{
+				"sessionId":        "session-openclaw",
+				"threadId":         "thread-openclaw",
+				"taskPrompt":       "say pong",
+				"workingDirectory": t.TempDir(),
+				"routing": map[string]any{
+					"routingMode":                "explicit",
+					"explicitExecutionTarget":    "gateway",
+					"preferredGatewayProviderId": "openclaw",
+				},
+			},
+		},
+	})
+	if rpcErr != nil {
+		t.Fatalf("expected gateway response, got rpc error: %#v", rpcErr)
+	}
+	if got := response["output"]; got != "gateway pong" {
+		t.Fatalf("expected gateway pong output, got %#v", response)
+	}
+	if got := response["resolvedGatewayProviderId"]; got != "openclaw" {
+		t.Fatalf("expected openclaw gateway provider, got %#v", response)
+	}
+	if gateway.ConnectCount() != 1 {
+		t.Fatalf("expected one automatic gateway connect, got %d", gateway.ConnectCount())
+	}
+	if gateway.SessionStartCount() != 1 {
+		t.Fatalf("expected one session.start request, got %d", gateway.SessionStartCount())
+	}
+}
+
 func TestExecuteSessionTaskDefaultsExplicitGatewayToOpenClaw(t *testing.T) {
 	server := NewServer()
 
@@ -469,6 +514,113 @@ func TestExecuteSessionTaskDefaultsExplicitGatewayToOpenClaw(t *testing.T) {
 	if rpcErr.Message == "GATEWAY_PROVIDER_REQUIRED" {
 		t.Fatalf("expected openclaw default from routing result, got %#v", rpcErr)
 	}
+}
+
+type acpFakeOpenClawGateway struct {
+	server            *http.Server
+	listener          net.Listener
+	connectCount      atomic.Int32
+	sessionStartCount atomic.Int32
+}
+
+func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen fake openclaw gateway: %v", err)
+	}
+	fake := &acpFakeOpenClawGateway{listener: listener}
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() {
+			_ = conn.Close()
+		}()
+		_ = conn.WriteJSON(map[string]any{
+			"type":  "event",
+			"event": "connect.challenge",
+			"payload": map[string]any{
+				"nonce": "nonce-1",
+			},
+		})
+		for {
+			_, payload, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			var frame map[string]any
+			if err := json.Unmarshal(payload, &frame); err != nil {
+				continue
+			}
+			if strings.TrimSpace(shared.StringArg(frame, "type", "")) != "req" {
+				continue
+			}
+			id := frame["id"]
+			switch strings.TrimSpace(shared.StringArg(frame, "method", "")) {
+			case "connect":
+				fake.connectCount.Add(1)
+				_ = conn.WriteJSON(map[string]any{
+					"type": "res",
+					"id":   id,
+					"ok":   true,
+					"payload": map[string]any{
+						"server": map[string]any{"host": "127.0.0.1"},
+						"snapshot": map[string]any{
+							"sessionDefaults": map[string]any{"mainSessionKey": "main"},
+						},
+						"auth": map[string]any{
+							"role":        "operator",
+							"scopes":      []string{"operator.read", "operator.write"},
+							"deviceToken": "device-token-1",
+						},
+					},
+				})
+			case "session.start":
+				fake.sessionStartCount.Add(1)
+				_ = conn.WriteJSON(map[string]any{
+					"type": "res",
+					"id":   id,
+					"ok":   true,
+					"payload": map[string]any{
+						"success": true,
+						"output":  "gateway pong",
+					},
+				})
+			default:
+				_ = conn.WriteJSON(map[string]any{
+					"type":    "res",
+					"id":      id,
+					"ok":      true,
+					"payload": map[string]any{},
+				})
+			}
+		}
+	})
+	fake.server = &http.Server{Handler: mux, ReadHeaderTimeout: 2 * time.Second}
+	go func() {
+		_ = fake.server.Serve(listener)
+	}()
+	return fake
+}
+
+func (f *acpFakeOpenClawGateway) URL() string {
+	return "ws://" + f.listener.Addr().String() + "/"
+}
+
+func (f *acpFakeOpenClawGateway) ConnectCount() int {
+	return int(f.connectCount.Load())
+}
+
+func (f *acpFakeOpenClawGateway) SessionStartCount() int {
+	return int(f.sessionStartCount.Load())
+}
+
+func (f *acpFakeOpenClawGateway) Close() {
+	_ = f.server.Close()
 }
 
 func TestExecuteSessionTaskAutoRoutingUsesBridgeProductionProviderOrder(t *testing.T) {

@@ -2,13 +2,23 @@ package acp
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"xworkmate-bridge/internal/gatewayruntime"
 	"xworkmate-bridge/internal/shared"
 )
+
+var bridgeGatewayIdentity = struct {
+	sync.Mutex
+	value gatewayruntime.DeviceIdentity
+}{}
 
 func (s *Server) handleGatewayMethod(ctx context.Context, method string, params map[string]any, notify func(map[string]any)) (map[string]any, *shared.RPCError) {
 	switch method {
@@ -72,11 +82,11 @@ func handleGatewayConnect(
 	}
 	request = applyProductionGatewayRouting(server, request)
 	request.ReportedRemoteAddress = resolveGatewayReportedRemoteAddress(server, request)
-	
+
 	if server.gateway == nil {
 		server.gateway = gatewayruntime.NewManager()
 	}
-	
+
 	result := server.gateway.Connect(request, notify)
 	return map[string]any{
 		"ok":                  result.OK,
@@ -164,6 +174,68 @@ func handleGatewayDisconnect(
 		)
 	}
 	return map[string]any{"accepted": true}
+}
+
+func ensureProductionGatewayConnected(
+	server *Server,
+	mode string,
+	notify func(map[string]any),
+) *shared.RPCError {
+	normalizedMode := strings.TrimSpace(strings.ToLower(mode))
+	if normalizedMode == "" {
+		normalizedMode = "openclaw"
+	}
+	if normalizedMode != "openclaw" {
+		return nil
+	}
+	if server.gateway == nil {
+		server.gateway = gatewayruntime.NewManager()
+	}
+
+	request := applyProductionGatewayRouting(
+		server,
+		gatewayruntime.ConnectRequest{
+			RuntimeID:   "xworkmate-bridge-openclaw",
+			Mode:        "openclaw",
+			ClientID:    "xworkmate-bridge",
+			Locale:      "en_US",
+			UserAgent:   "xworkmate-bridge",
+			Endpoint:    gatewayruntime.Endpoint{Host: "127.0.0.1", Port: 18789, TLS: false},
+			PackageInfo: gatewayruntime.PackageInfo{AppName: "XWorkmate Bridge", PackageName: "xworkmate-bridge", Version: "bridge", BuildNumber: "0"},
+			DeviceInfo:  gatewayruntime.DeviceInfo{Platform: "linux", DeviceFamily: "bridge"},
+			Identity:    newBridgeGatewayIdentity(),
+		},
+	)
+	request.ReportedRemoteAddress = resolveGatewayReportedRemoteAddress(server, request)
+	result := server.gateway.Connect(request, notify)
+	if result.OK {
+		return nil
+	}
+	message := strings.TrimSpace(shared.StringArg(result.Error, "message", "gateway connect failed"))
+	code := strings.TrimSpace(shared.StringArg(result.Error, "code", ""))
+	if code != "" {
+		message = code + ": " + message
+	}
+	return &shared.RPCError{Code: -32002, Message: "GATEWAY_CONNECT_FAILED: " + message}
+}
+
+func newBridgeGatewayIdentity() gatewayruntime.DeviceIdentity {
+	bridgeGatewayIdentity.Lock()
+	defer bridgeGatewayIdentity.Unlock()
+	if strings.TrimSpace(bridgeGatewayIdentity.value.DeviceID) != "" {
+		return bridgeGatewayIdentity.value
+	}
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return gatewayruntime.DeviceIdentity{}
+	}
+	sum := sha256.Sum256(publicKey)
+	bridgeGatewayIdentity.value = gatewayruntime.DeviceIdentity{
+		DeviceID:            "xworkmate-bridge-" + base64.RawURLEncoding.EncodeToString(sum[:9]),
+		PublicKeyBase64URL:  base64.RawURLEncoding.EncodeToString(publicKey),
+		PrivateKeyBase64URL: base64.RawURLEncoding.EncodeToString(privateKey),
+	}
+	return bridgeGatewayIdentity.value
 }
 
 // Helper functions are now in helpers.go

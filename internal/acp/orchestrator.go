@@ -127,6 +127,9 @@ func (o *SessionOrchestrator) runGateway(
 	if gatewayProvider == "" {
 		return nil, &shared.RPCError{Code: -32602, Message: "GATEWAY_PROVIDER_REQUIRED"}
 	}
+	if rpcErr := ensureProductionGatewayConnected(o.server, gatewayProvider, notify); rpcErr != nil {
+		return nil, rpcErr
+	}
 	params = withResolvedGatewayProvider(params, gatewayProvider)
 	result := o.server.gateway.RequestByMode(
 		gatewayProvider,
