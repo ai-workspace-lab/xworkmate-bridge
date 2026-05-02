@@ -263,12 +263,19 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ steps.release_meta.outputs.tag }}" \
-            dist/service-image-ref.txt#xworkmate-bridge-service-image-ref.txt \
-            --repo "${{ github.repository }}" \
-            --target "${{ github.sha }}" \
-            --title "${{ steps.release_meta.outputs.title }}" \
-            --notes "Automated release for ${GITHUB_SHA}."
+          tag="${{ steps.release_meta.outputs.tag }}"
+          asset="dist/service-image-ref.txt#xworkmate-bridge-service-image-ref.txt"
+          if gh release view "${tag}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "${tag}" "${asset}" \
+              --repo "${{ github.repository }}" \
+              --clobber
+          else
+            gh release create "${tag}" "${asset}" \
+              --repo "${{ github.repository }}" \
+              --target "${{ github.sha }}" \
+              --title "${{ steps.release_meta.outputs.title }}" \
+              --notes "Automated release for ${GITHUB_SHA}."
+          fi
 
   validate:
     name: Validate
