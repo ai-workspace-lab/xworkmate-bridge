@@ -643,6 +643,18 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 					})
 					return
 				}
+				if got, want := shared.StringArg(shared.AsMap(params["auth"]), "token", ""), os.Getenv("BRIDGE_AUTH_TOKEN"); got != want {
+					_ = conn.WriteJSON(map[string]any{
+						"type": "res",
+						"id":   id,
+						"ok":   false,
+						"error": map[string]any{
+							"code":    "INVALID_REQUEST",
+							"message": "unauthorized: gateway token mismatch",
+						},
+					})
+					return
+				}
 				fake.lastConnectClient.Store(shared.AsMap(params["client"]))
 				_ = conn.WriteJSON(map[string]any{
 					"type": "res",

@@ -53,11 +53,15 @@ func resolveURL(yamlVal string, envKeys ...string) string {
 }
 
 func bridgeUpstreamAuthorizationHeader() string {
-	token := strings.TrimSpace(shared.EnvOrDefault("BRIDGE_AUTH_TOKEN", ""))
+	token := bridgeSharedAuthToken()
 	if token != "" && !strings.HasPrefix(strings.ToLower(token), "bearer ") {
 		return "Bearer " + token
 	}
 	return token
+}
+
+func bridgeSharedAuthToken() string {
+	return strings.TrimSpace(shared.EnvOrDefault("BRIDGE_AUTH_TOKEN", ""))
 }
 
 func newProductionProviderCatalog() (*BridgeConfig, map[string]syncedProvider, []string) {
