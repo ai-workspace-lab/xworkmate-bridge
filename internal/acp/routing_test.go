@@ -523,6 +523,54 @@ func TestExecuteSessionTaskDefaultsExplicitGatewayToOpenClaw(t *testing.T) {
 	}
 }
 
+func TestExtractArtifactPayloadsPreservesDownloadURLOnlyArtifacts(t *testing.T) {
+	artifacts := extractArtifactPayloads(map[string]any{
+		"artifacts": []any{
+			map[string]any{
+				"name":        "reports/final.txt",
+				"downloadURL": "https://xworkmate-bridge.svc.plus/artifacts/final.txt",
+			},
+			map[string]any{
+				"download_url": "https://xworkmate-bridge.svc.plus/artifacts/from-url.md",
+			},
+		},
+	}, "")
+
+	if len(artifacts) != 2 {
+		t.Fatalf("expected two artifacts, got %#v", artifacts)
+	}
+	if got := artifacts[0]["relativePath"]; got != "reports/final.txt" {
+		t.Fatalf("expected name-derived path, got %#v", got)
+	}
+	if got := artifacts[0]["downloadUrl"]; got != "https://xworkmate-bridge.svc.plus/artifacts/final.txt" {
+		t.Fatalf("expected normalized downloadUrl, got %#v", got)
+	}
+	if _, ok := artifacts[0]["downloadURL"]; ok {
+		t.Fatalf("expected downloadURL alias to be removed: %#v", artifacts[0])
+	}
+	if got := artifacts[1]["relativePath"]; got != "from-url.md" {
+		t.Fatalf("expected URL basename path, got %#v", got)
+	}
+	if got := artifacts[1]["contentType"]; got != "text/plain" {
+		t.Fatalf("expected markdown content type, got %#v", got)
+	}
+}
+
+func TestExtractArtifactPayloadsRejectsUnsafeDownloadURLArtifactNames(t *testing.T) {
+	artifacts := extractArtifactPayloads(map[string]any{
+		"artifacts": []any{
+			map[string]any{
+				"name":        "../secrets.txt",
+				"downloadUrl": "https://xworkmate-bridge.svc.plus/artifacts/secrets.txt",
+			},
+		},
+	}, "")
+
+	if len(artifacts) != 0 {
+		t.Fatalf("expected unsafe artifact to be dropped, got %#v", artifacts)
+	}
+}
+
 type acpFakeOpenClawGateway struct {
 	server            *http.Server
 	listener          net.Listener

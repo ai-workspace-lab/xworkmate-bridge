@@ -34,6 +34,7 @@ Canonical app-facing contract families are:
 1. ACP control-plane
    - `POST /acp/rpc`
    - `GET /acp`
+   - `POST /gateway/openclaw` only for OpenClaw `session.start` and follow-up `session.message`
 2. Gateway runtime methods
    - `xworkmate.gateway.connect`
    - `xworkmate.gateway.request`
@@ -60,6 +61,11 @@ The APP should not depend on provider-specific public URLs such as:
 - `/opencode/acp/rpc`
 - `/gemini/acp/rpc`
 - `/openclaw/`
+
+The only OpenClaw-specific public path is `/gateway/openclaw`, and it is a
+task submit endpoint rather than a global ACP base. Capabilities, routing,
+gateway control-plane methods, cancel, and close remain on `/acp` or
+`/acp/rpc`.
 
 If the bridge reports execution-target metadata such as `single-agent`
 or `gateway`, the app should treat those values as routing
@@ -126,6 +132,7 @@ Upstream authentication is unified for both ACP and gateway routes:
 Use these terms consistently:
 
 - `canonical app-facing path`: `/acp/rpc` and `/acp`
+- `OpenClaw task submit path`: `/gateway/openclaw` for `session.start` / `session.message`
 - `gateway runtime method family`: `xworkmate.gateway.*`
 - `independent upstream service`: provider / gateway runtime behind bridge-owned compat
 - `bridge-owned routing`: provider / gateway selection performed inside bridge

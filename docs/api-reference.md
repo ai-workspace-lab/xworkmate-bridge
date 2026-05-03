@@ -5,9 +5,10 @@
 当前定位：
 
 - `xworkmate-bridge` 是 **APP-facing ACP control plane and provider runtime layer**
-- App-facing canonical HTTP transport 是 `POST /acp/rpc`
-- `GET /acp` WebSocket 仅保留为 ACP transport variant
-- `/acp-server/*`、`/gateway/openclaw` 不再是 public API，也不再提供 alias handler
+- App-facing canonical transport 是 `GET /acp` WebSocket upgrade 后的 JSON-RPC stream
+- `POST /acp/rpc` 仅作为 CI、脚本、调试和兼容 fallback
+- `POST /gateway/openclaw` 仅是 OpenClaw `session.start` / `session.message` task submit 专用入口，不是全局 ACP base endpoint
+- `/acp-server/*` 不属于 APP-facing contract，APP 不应保存或拼接这些 provider direct path
 
 ## 1. Runtime Entry Points
 
@@ -29,11 +30,12 @@
 | --- | --- | --- | --- |
 | `/` | `GET` | 否 | 纯文本运行状态 |
 | `/api/ping` | `GET` | 是 | 发布版本探针 |
-| `/acp` | `GET` + WebSocket upgrade | 是 | JSON-RPC WebSocket transport |
-| `/acp/rpc` | `POST` | 是 | App-facing JSON-RPC HTTP transport |
+| `/acp` | `GET` + WebSocket upgrade | 是 | App-facing JSON-RPC WebSocket 主入口 |
+| `/acp/rpc` | `POST` | 是 | JSON-RPC HTTP fallback / CI / 调试入口 |
 | `/acp/rpc` | `OPTIONS` | 否 | CORS preflight |
+| `/gateway/openclaw` | `POST` | 是 | OpenClaw `session.start` / `session.message` task submit 专用入口 |
 
-其他路径返回 `404 Not Found`。
+线上 Caddy 反代 `/api*`、`/acp*`、`/gateway/openclaw` 和 `/` 到 bridge origin。`/acp-server/*` 显式返回 `404`。
 
 ## 3. Auth / Origin
 
@@ -49,6 +51,17 @@
 - `/api/ping`、`/acp`、`/acp/rpc` 在 `BRIDGE_AUTH_TOKEN` 非空时都要求 bearer header
 - `BRIDGE_AUTH_TOKEN` 为空时默认放行
 - `BRIDGE_AUTH_TOKEN` 非空时，接受裸 token 或 `Bearer <token>`
+- `xworkmate-app` 生产 Origin 固定为 `https://xworkmate.svc.plus`
+
+推荐 APP 配置：
+
+```text
+BRIDGE_SERVER_URL=https://xworkmate-bridge.svc.plus
+BRIDGE_WS_URL=wss://xworkmate-bridge.svc.plus/acp
+BRIDGE_HTTP_RPC_URL=https://xworkmate-bridge.svc.plus/acp/rpc
+Authorization: Bearer $BRIDGE_AUTH_TOKEN
+Origin: https://xworkmate.svc.plus
+```
 
 错误行为：
 
@@ -125,6 +138,12 @@ bridge 对 app 的稳定 method family 只有：
 - `xworkmate.gateway.request`
 - `xworkmate.gateway.disconnect`
 
+路径约束：
+
+- `/acp/rpc` 是 capabilities、routing、agent、multi-agent、cancel、close 的 canonical HTTP RPC 入口。
+- `/gateway/openclaw` 只允许 OpenClaw `session.start` 和 follow-up `session.message`。
+- `/gateway/openclaw` 拒绝 `acp.capabilities`、`xworkmate.routing.resolve`、`xworkmate.gateway.*`、`session.cancel` 和 `session.close`。
+
 ## 6. `acp.capabilities`
 
 用途：返回 bridge-owned provider catalog、gatewayProviders、availableExecutionTargets。
@@ -138,7 +157,7 @@ bridge 对 app 的稳定 method family 只有：
   "availableExecutionTargets": ["agent", "gateway"],
   "providerCatalog": [
     { "providerId": "codex", "label": "Codex", "targets": ["agent"], "category": "native" },
-    { "providerId": "opencode", "label": "OpenCode", "targets": ["agent"], "category": "protocol-adapter" },
+    { "providerId": "opencode", "label": "OpenCode", "targets": ["agent"], "category": "native" },
     { "providerId": "gemini", "label": "Gemini", "targets": ["agent"], "category": "protocol-adapter" },
     { "providerId": "hermes", "label": "Hermes", "targets": ["agent"], "category": "protocol-adapter" }
   ],
@@ -155,6 +174,7 @@ bridge 对 app 的稳定 method family 只有：
 
 - app 只能从这里获取 `providerCatalog`、`gatewayProviders`、`availableExecutionTargets`
 - app 不应依赖 bridge 内部 provider URL / 端口 / service 名
+- app 不保存 `codex`、`opencode`、`gemini`、`hermes`、`openclaw` 的 URL
 
 ## 7. `xworkmate.routing.resolve`
 
@@ -248,6 +268,8 @@ bridge 保证：
 - bridge core 不暴露 stdio/runtime 细节
 - 中间通知统一通过 `session.update`
 
+OpenClaw gateway 任务的 HTTP task submit 路径是 `/gateway/openclaw`，并且只用于 `session.start` 与同一 OpenClaw task 的 follow-up `session.message`。Bridge 会强制 routing 到 `gateway/openclaw`，并拒绝 `multiAgent=true` 或 agent/provider 冲突参数。
+
 ## 9. `session.cancel` / `session.close`
 
 返回：
@@ -273,6 +295,7 @@ gateway method family 保留为 control-plane contract：
 
 - app 调 gateway runtime 时仍然只通过 bridge JSON-RPC methods
 - `openclaw` 是 bridge-owned gateway provider，不是 app-facing direct route
+- gateway control-plane method 仍走 `/acp` 或 `/acp/rpc`，不走 `/gateway/openclaw`
 
 ## 11. 非 Contract 内容
 
@@ -283,3 +306,7 @@ gateway method family 保留为 control-plane contract：
 - systemd service 名
 - stdio framing / process lifecycle / stderr / restart 语义
 - bridge 内部 compat/runtime 实现细节
+- `/acp-server/codex`
+- `/acp-server/opencode`
+- `/acp-server/gemini`
+- `/acp-server/hermes`

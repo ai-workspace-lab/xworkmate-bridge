@@ -13,8 +13,12 @@
 
 This repository exposes one APP-facing bridge entrypoint and proxies traffic
 to four independent upstream production services. The APP-facing canonical ACP
-paths remain `/acp/rpc` and `/acp` under
+path is WebSocket `/acp`; HTTP `/acp/rpc` remains available for CI, scripts,
+debugging, and compatibility fallback under
 `https://xworkmate-bridge.svc.plus`.
+OpenClaw task submission is the only dedicated HTTP task route:
+`POST /gateway/openclaw` for `session.start` and follow-up `session.message`.
+It is not a global ACP base endpoint.
 
 Architecture topology: [docs/architecture/acp-forwarding-topology.md](/Users/shenlan/workspaces/cloud-neutral-toolkit/xworkmate-bridge/docs/architecture/acp-forwarding-topology.md)
 
@@ -23,6 +27,8 @@ ADR for the unified APP-facing bridge contract: [docs/architecture/adr-unified-b
 Example provider sync config: [example/config.yaml](/Users/shenlan/workspaces/cloud-neutral-toolkit/xworkmate-bridge/example/config.yaml)
 
 API reference: [docs/api-reference.md](/Users/shenlan/workspaces/cloud-neutral-toolkit/xworkmate-bridge/docs/api-reference.md)
+
+Backend API design: [docs/backend-api-design.md](/Users/shenlan/workspaces/cloud-neutral-toolkit/xworkmate-bridge/docs/backend-api-design.md)
 
 ## Compatibility
 
@@ -66,7 +72,7 @@ contract:
 - bridge root and `/api/ping`
 - strict image / tag / commit / version match against the built image ref
 - upstream ACP capability probes for `codex`, `opencode`, and `gemini`
-- minimal `session.start` smoke tests through `https://xworkmate-bridge.svc.plus/acp/rpc`
+- minimal `session.start` smoke tests through the bridge JSON-RPC contract
 
 Required GitHub secrets:
 

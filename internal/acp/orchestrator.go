@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -376,11 +377,20 @@ func normalizeArtifactPayload(item map[string]any, remoteWorkingDirectory string
 	if relativePath == "" {
 		relativePath = strings.TrimSpace(shared.StringArg(artifact, "name", ""))
 	}
+	downloadURL := artifactDownloadURL(artifact)
+	if relativePath == "" && downloadURL != "" {
+		relativePath = artifactRelativePathFromDownloadURL(downloadURL)
+	}
 	relativePath = safeArtifactRelativePath(remoteWorkingDirectory, relativePath)
 	if relativePath == "" {
 		return nil
 	}
 	artifact["relativePath"] = relativePath
+	if downloadURL != "" {
+		artifact["downloadUrl"] = downloadURL
+		delete(artifact, "downloadURL")
+		delete(artifact, "download_url")
+	}
 	if strings.TrimSpace(shared.StringArg(artifact, "label", "")) == "" {
 		artifact["label"] = filepath.Base(relativePath)
 	}
@@ -395,6 +405,28 @@ func normalizeArtifactPayload(item map[string]any, remoteWorkingDirectory string
 		}
 	}
 	return artifact
+}
+
+func artifactDownloadURL(artifact map[string]any) string {
+	for _, key := range []string{"downloadUrl", "downloadURL", "download_url"} {
+		if value := strings.TrimSpace(shared.StringArg(artifact, key, "")); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func artifactRelativePathFromDownloadURL(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return ""
+	}
+	base := strings.TrimSpace(filepath.Base(parsed.Path))
+	if base == "" || base == "." || base == "/" {
+		sum := sha256.Sum256([]byte(raw))
+		base = fmt.Sprintf("artifact-%x.bin", sum[:6])
+	}
+	return base
 }
 
 func collectDirectoryArtifacts(root string) []map[string]any {

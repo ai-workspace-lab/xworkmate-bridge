@@ -53,7 +53,7 @@ app 只能通过 `acp.capabilities` 获取：
 app 不应依赖：
 
 - `/acp-server/*`
-- `/gateway/openclaw`
+- `/gateway/openclaw` 作为全局 ACP base endpoint
 - 本地端口
 - systemd service 名
 
@@ -77,13 +77,13 @@ bridge 继续保留：
 
 provider-specific 逻辑只能存在于 compat layer，不得污染公共 handler。
 
-### 5. App-facing HTTP RPC
+### 5. App-facing WebSocket RPC
 
 App-facing canonical transport 定义为：
 
-- `POST /acp/rpc`
+- `GET /acp` WebSocket upgrade
 
-`GET /acp` WebSocket 作为 ACP transport variant 保留，但不主导 App 运行时路由。
+`POST /acp/rpc` 作为 HTTP JSON-RPC fallback 保留，用于 CI、脚本、调试和兼容场景，不主导 App 运行时路由。
 
 ## Consequences
 
@@ -97,9 +97,13 @@ App-facing canonical transport 定义为：
 ### 有意删除
 
 - `/acp-server/*` public alias
-- `/gateway/openclaw` public alias
+- `/gateway/openclaw` 作为 provider/gateway public alias 或全局 ACP base
 - multi-agent 作为 bridge core 路径
 - 以 reverse proxy 为中心的 bridge 定位
+
+保留 `/gateway/openclaw` 的精确定义：它只是 OpenClaw `session.start` 与 follow-up
+`session.message` 的 task submit endpoint，capabilities、routing、cancel、close 和
+gateway control-plane method 继续走 `/acp` 或 `/acp/rpc`。
 
 ### 后续规则
 

@@ -105,7 +105,7 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
-	s.handleRPCWithTransform(w, r, nil)
+	s.handleRPCWithTransform(w, r, rejectOpenClawTaskSubmitOnCanonicalRPC)
 }
 
 func (s *Server) HandleOpenClawGatewayRPC(w http.ResponseWriter, r *http.Request) {
@@ -237,7 +237,7 @@ func (s *Server) handleRPCWithTransform(
 func forceOpenClawGatewayRequest(request shared.RPCRequest) (shared.RPCRequest, *shared.RPCError) {
 	method := strings.TrimSpace(request.Method)
 	switch method {
-	case "session.start", "session.message", "session.cancel", "session.close":
+	case "session.start", "session.message":
 	default:
 		return request, &shared.RPCError{Code: -32601, Message: "OPENCLAW_GATEWAY_METHOD_NOT_ALLOWED: " + method}
 	}
@@ -245,9 +245,36 @@ func forceOpenClawGatewayRequest(request shared.RPCRequest) (shared.RPCRequest, 
 	if params == nil {
 		params = map[string]any{}
 	}
+	if parseBool(params["multiAgent"]) {
+		return request, &shared.RPCError{Code: -32602, Message: "OPENCLAW_GATEWAY_CONFLICT: multiAgent is not supported on /gateway/openclaw"}
+	}
+	if provider := strings.TrimSpace(shared.StringArg(params, "provider", "")); provider != "" {
+		return request, &shared.RPCError{Code: -32602, Message: "OPENCLAW_GATEWAY_CONFLICT: provider must not be set on /gateway/openclaw"}
+	}
+	for _, key := range []string{"executionTarget", "requestedExecutionTarget"} {
+		if target := strings.TrimSpace(shared.StringArg(params, key, "")); target != "" && !strings.EqualFold(target, "gateway") {
+			return request, &shared.RPCError{Code: -32602, Message: "OPENCLAW_GATEWAY_CONFLICT: " + key + " must be gateway"}
+		}
+	}
+	for _, key := range []string{"preferredGatewayProviderId", "gatewayProviderId", "gatewayProvider"} {
+		if provider := strings.TrimSpace(shared.StringArg(params, key, "")); provider != "" && !strings.EqualFold(provider, "openclaw") {
+			return request, &shared.RPCError{Code: -32602, Message: "OPENCLAW_GATEWAY_CONFLICT: gateway provider must be openclaw"}
+		}
+	}
 	routing := shared.AsMap(params["routing"])
 	if routing == nil {
 		routing = map[string]any{}
+	}
+	if provider := strings.TrimSpace(shared.StringArg(routing, "explicitProviderId", "")); provider != "" {
+		return request, &shared.RPCError{Code: -32602, Message: "OPENCLAW_GATEWAY_CONFLICT: explicitProviderId must not be set on /gateway/openclaw"}
+	}
+	if target := strings.TrimSpace(shared.StringArg(routing, "explicitExecutionTarget", "")); target != "" && !strings.EqualFold(target, "gateway") {
+		return request, &shared.RPCError{Code: -32602, Message: "OPENCLAW_GATEWAY_CONFLICT: explicitExecutionTarget must be gateway"}
+	}
+	for _, key := range []string{"preferredGatewayProviderId", "gatewayProviderId", "gatewayProvider"} {
+		if provider := strings.TrimSpace(shared.StringArg(routing, key, "")); provider != "" && !strings.EqualFold(provider, "openclaw") {
+			return request, &shared.RPCError{Code: -32602, Message: "OPENCLAW_GATEWAY_CONFLICT: gateway provider must be openclaw"}
+		}
 	}
 	routing["routingMode"] = "explicit"
 	routing["explicitExecutionTarget"] = "gateway"
@@ -258,6 +285,82 @@ func forceOpenClawGatewayRequest(request shared.RPCRequest) (shared.RPCRequest, 
 	params["executionTarget"] = "gateway"
 	request.Params = params
 	return request, nil
+}
+
+func rejectOpenClawTaskSubmitOnCanonicalRPC(request shared.RPCRequest) (shared.RPCRequest, *shared.RPCError) {
+	method := strings.TrimSpace(request.Method)
+	if method != "session.start" && method != "session.message" {
+		return request, nil
+	}
+	params := shared.AsMap(request.Params)
+	if parseBool(params["multiAgent"]) || strings.EqualFold(strings.TrimSpace(shared.StringArg(params, "mode", "")), "multi-agent") {
+		return request, nil
+	}
+	if requestUsesOpenClawGatewaySubmit(params) {
+		return request, &shared.RPCError{Code: -32602, Message: "OPENCLAW_TASK_ENDPOINT_REQUIRED: use /gateway/openclaw for OpenClaw task submission"}
+	}
+	return request, nil
+}
+
+func requestUsesOpenClawGatewaySubmit(params map[string]any) bool {
+	if len(params) == 0 {
+		return false
+	}
+	if requestHasExplicitAgentRouting(params) {
+		return false
+	}
+	for _, key := range []string{"executionTarget", "requestedExecutionTarget"} {
+		if isGatewayExecutionTarget(shared.StringArg(params, key, "")) {
+			return true
+		}
+	}
+	for _, key := range []string{"gatewayProvider", "gatewayProviderId"} {
+		if isOpenClawProvider(shared.StringArg(params, key, "")) {
+			return true
+		}
+	}
+	routing := shared.AsMap(params["routing"])
+	if isGatewayExecutionTarget(shared.StringArg(routing, "explicitExecutionTarget", "")) {
+		return true
+	}
+	for _, key := range []string{"preferredGatewayProviderId", "gatewayProviderId", "gatewayProvider"} {
+		if isOpenClawProvider(shared.StringArg(routing, key, "")) {
+			return true
+		}
+	}
+	return false
+}
+
+func requestHasExplicitAgentRouting(params map[string]any) bool {
+	for _, key := range []string{"executionTarget", "requestedExecutionTarget"} {
+		if isAgentExecutionTarget(shared.StringArg(params, key, "")) {
+			return true
+		}
+	}
+	if provider := strings.TrimSpace(shared.StringArg(params, "provider", "")); provider != "" && !isOpenClawProvider(provider) {
+		return true
+	}
+	routing := shared.AsMap(params["routing"])
+	if isAgentExecutionTarget(shared.StringArg(routing, "explicitExecutionTarget", "")) {
+		return true
+	}
+	if provider := strings.TrimSpace(shared.StringArg(routing, "explicitProviderId", "")); provider != "" && !isOpenClawProvider(provider) {
+		return true
+	}
+	return false
+}
+
+func isAgentExecutionTarget(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	return normalized == "agent" || normalized == "single-agent" || normalized == "singleagent"
+}
+
+func isGatewayExecutionTarget(value string) bool {
+	return strings.EqualFold(strings.TrimSpace(value), "gateway")
+}
+
+func isOpenClawProvider(value string) bool {
+	return strings.EqualFold(strings.TrimSpace(value), "openclaw")
 }
 
 func (s *Server) authorized(r *http.Request) bool {

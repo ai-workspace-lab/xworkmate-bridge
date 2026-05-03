@@ -139,6 +139,111 @@ func TestHTTPHandlerGatewayOpenClawRejectsNonSessionMethods(t *testing.T) {
 	}
 }
 
+func TestHTTPHandlerGatewayOpenClawAllowsOnlyTaskSubmitMethods(t *testing.T) {
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
+	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
+	server := NewServer()
+	handler := server.Handler()
+
+	for _, method := range []string{"session.cancel", "session.close", "xworkmate.routing.resolve", "xworkmate.gateway.request"} {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(
+			http.MethodPost,
+			"http://127.0.0.1/gateway/openclaw",
+			strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"`+method+`","params":{}}`),
+		)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Authorization", "Bearer bridge-test-token")
+		handler.ServeHTTP(recorder, request)
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s: expected JSON-RPC 200, got %d", method, recorder.Code)
+		}
+		if !strings.Contains(recorder.Body.String(), "OPENCLAW_GATEWAY_METHOD_NOT_ALLOWED") {
+			t.Fatalf("%s: expected method allowlist error, got %q", method, recorder.Body.String())
+		}
+	}
+}
+
+func TestHTTPHandlerGatewayOpenClawRejectsConflictingRouting(t *testing.T) {
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
+	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
+	server := NewServer()
+	handler := server.Handler()
+
+	for _, payload := range []string{
+		`{"jsonrpc":"2.0","id":1,"method":"session.start","params":{"multiAgent":true}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"session.start","params":{"provider":"codex"}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"session.start","params":{"executionTarget":"agent"}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"session.start","params":{"gatewayProviderId":"other"}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"session.start","params":{"routing":{"explicitProviderId":"codex"}}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"session.start","params":{"routing":{"explicitExecutionTarget":"agent"}}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"session.start","params":{"routing":{"preferredGatewayProviderId":"other"}}}`,
+	} {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(
+			http.MethodPost,
+			"http://127.0.0.1/gateway/openclaw",
+			strings.NewReader(payload),
+		)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Authorization", "Bearer bridge-test-token")
+		handler.ServeHTTP(recorder, request)
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("expected JSON-RPC 200, got %d", recorder.Code)
+		}
+		if !strings.Contains(recorder.Body.String(), "OPENCLAW_GATEWAY_CONFLICT") {
+			t.Fatalf("expected conflict error, got %q", recorder.Body.String())
+		}
+	}
+}
+
+func TestHTTPHandlerCanonicalRPCRejectsOpenClawTaskSubmit(t *testing.T) {
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
+	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
+	server := NewServer()
+	handler := server.Handler()
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"http://127.0.0.1/acp/rpc",
+		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"session.start","params":{"routing":{"explicitExecutionTarget":"gateway","preferredGatewayProviderId":"openclaw"}}}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer bridge-test-token")
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected JSON-RPC 200, got %d", recorder.Code)
+	}
+	if !strings.Contains(recorder.Body.String(), "OPENCLAW_TASK_ENDPOINT_REQUIRED") {
+		t.Fatalf("expected dedicated endpoint error, got %q", recorder.Body.String())
+	}
+}
+
+func TestCanonicalRPCAllowsAgentTaskWithPreferredGatewayMetadata(t *testing.T) {
+	request := shared.RPCRequest{
+		Method: "session.start",
+		Params: map[string]any{
+			"provider":                 "codex",
+			"requestedExecutionTarget": "agent",
+			"routing": map[string]any{
+				"routingMode":                "explicit",
+				"explicitExecutionTarget":    "agent",
+				"explicitProviderId":         "codex",
+				"preferredGatewayProviderId": "openclaw",
+			},
+		},
+	}
+
+	_, rpcErr := rejectOpenClawTaskSubmitOnCanonicalRPC(request)
+	if rpcErr != nil {
+		t.Fatalf("expected agent task to stay on /acp/rpc, got %#v", rpcErr)
+	}
+}
+
 func TestHTTPHandlerGatewayOpenClawForcesGatewayRouting(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()

@@ -56,13 +56,13 @@ APISIX / Caddy 这类外层网关负责：
 
 bridge 当前采用：
 
-- App-facing canonical HTTP transport: `POST /acp/rpc`
-- ACP WebSocket transport variant: `GET /acp`
+- App-facing canonical transport: `GET /acp` WebSocket upgrade
+- HTTP JSON-RPC fallback: `POST /acp/rpc`
 
 设计含义：
 
-- HTTP RPC 是 App 运行时主链
-- WS 作为 ACP transport variant，不反向塑造 App 路由
+- WebSocket 是 App 运行时主链
+- HTTP RPC 只用于 CI、脚本、调试和兼容 fallback
 - provider / gateway alias route 不再属于 public surface
 
 ## 4. 模块边界
@@ -121,7 +121,7 @@ bridge 当前采用：
 
 ## 5. 数据流
 
-1. app 通过 `/acp` 或 `/acp/rpc` 发送 JSON-RPC request
+1. app 默认通过 `/acp` WebSocket 发送 JSON-RPC request
 2. bridge contract decode request
 3. `acp.capabilities` 从 catalog 读取 bridge-owned truth
 4. `xworkmate.routing.resolve` 由 routing engine 计算
