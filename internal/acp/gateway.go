@@ -197,12 +197,12 @@ func ensureProductionGatewayConnected(
 		gatewayruntime.ConnectRequest{
 			RuntimeID:   "xworkmate-bridge-openclaw",
 			Mode:        "openclaw",
-			ClientID:    "xworkmate-bridge",
+			ClientID:    "openclaw-macos",
 			Locale:      "en_US",
 			UserAgent:   "xworkmate-bridge",
 			Endpoint:    gatewayruntime.Endpoint{Host: "127.0.0.1", Port: 18789, TLS: false},
 			PackageInfo: gatewayruntime.PackageInfo{AppName: "XWorkmate Bridge", PackageName: "xworkmate-bridge", Version: "bridge", BuildNumber: "0"},
-			DeviceInfo:  gatewayruntime.DeviceInfo{Platform: "linux", DeviceFamily: "bridge"},
+			DeviceInfo:  gatewayruntime.DeviceInfo{Platform: "macos", DeviceFamily: "Mac", ModelIdentifier: "Mac14,5"},
 			Identity:    newBridgeGatewayIdentity(),
 		},
 	)

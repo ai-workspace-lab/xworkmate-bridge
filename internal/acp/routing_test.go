@@ -489,6 +489,13 @@ func TestExecuteSessionTaskGatewayAutoConnectsLocalOpenClaw(t *testing.T) {
 	if gateway.SessionStartCount() != 1 {
 		t.Fatalf("expected one session.start request, got %d", gateway.SessionStartCount())
 	}
+	client := gateway.LastConnectClient()
+	if got := client["id"]; got != "openclaw-macos" {
+		t.Fatalf("expected OpenClaw-compatible client id, got %#v", client)
+	}
+	if got := strings.TrimSpace(shared.StringArg(client, "modelIdentifier", "")); got == "" {
+		t.Fatalf("expected non-empty modelIdentifier, got %#v", client)
+	}
 }
 
 func TestExecuteSessionTaskDefaultsExplicitGatewayToOpenClaw(t *testing.T) {
@@ -521,6 +528,7 @@ type acpFakeOpenClawGateway struct {
 	listener          net.Listener
 	connectCount      atomic.Int32
 	sessionStartCount atomic.Int32
+	lastConnectClient atomic.Value
 }
 
 func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
@@ -563,6 +571,7 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 			switch strings.TrimSpace(shared.StringArg(frame, "method", "")) {
 			case "connect":
 				fake.connectCount.Add(1)
+				fake.lastConnectClient.Store(shared.AsMap(shared.AsMap(frame["params"])["client"]))
 				_ = conn.WriteJSON(map[string]any{
 					"type": "res",
 					"id":   id,
@@ -617,6 +626,14 @@ func (f *acpFakeOpenClawGateway) ConnectCount() int {
 
 func (f *acpFakeOpenClawGateway) SessionStartCount() int {
 	return int(f.sessionStartCount.Load())
+}
+
+func (f *acpFakeOpenClawGateway) LastConnectClient() map[string]any {
+	value := f.lastConnectClient.Load()
+	if value == nil {
+		return nil
+	}
+	return value.(map[string]any)
 }
 
 func (f *acpFakeOpenClawGateway) Close() {

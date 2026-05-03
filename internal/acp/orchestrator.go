@@ -2,7 +2,11 @@ package acp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -323,7 +327,7 @@ func buildArtifactRecord(sess *session, result map[string]any, output string) Ar
 	if record.RemoteWorkspaceRefKind == "" && record.RemoteWorkingDirectory != "" {
 		record.RemoteWorkspaceRefKind = "remotePath"
 	}
-	record.Artifacts = extractArtifactPayloads(result)
+	record.Artifacts = extractArtifactPayloads(result, record.RemoteWorkingDirectory)
 	sess.mu.Lock()
 	sess.artifacts = record
 	sess.control.UpdatedAt = record.UpdatedAt
@@ -331,24 +335,166 @@ func buildArtifactRecord(sess *session, result map[string]any, output string) Ar
 	return record
 }
 
-func extractArtifactPayloads(result map[string]any) []map[string]any {
-	rawArtifacts := result["artifacts"]
-	items, ok := rawArtifacts.([]any)
-	if !ok {
-		if typed, ok := rawArtifacts.([]map[string]any); ok {
-			copied := make([]map[string]any, 0, len(typed))
-			copied = append(copied, typed...)
-			return copied
+func extractArtifactPayloads(result map[string]any, remoteWorkingDirectory string) []map[string]any {
+	artifacts := make([]map[string]any, 0)
+	for _, key := range []string{"artifacts", "files", "attachments"} {
+		rawArtifacts := result[key]
+		items, ok := rawArtifacts.([]any)
+		if !ok {
+			if typed, ok := rawArtifacts.([]map[string]any); ok {
+				for _, item := range typed {
+					if artifact := normalizeArtifactPayload(item, remoteWorkingDirectory); len(artifact) > 0 {
+						artifacts = append(artifacts, artifact)
+					}
+				}
+			}
+			continue
 		}
-		return nil
+		for _, item := range items {
+			if mapped := shared.AsMap(item); len(mapped) > 0 {
+				if artifact := normalizeArtifactPayload(mapped, remoteWorkingDirectory); len(artifact) > 0 {
+					artifacts = append(artifacts, artifact)
+				}
+			}
+		}
 	}
-	artifacts := make([]map[string]any, 0, len(items))
-	for _, item := range items {
-		if mapped := shared.AsMap(item); len(mapped) > 0 {
-			artifacts = append(artifacts, mapped)
-		}
+	if len(artifacts) == 0 {
+		artifacts = append(artifacts, collectDirectoryArtifacts(remoteWorkingDirectory)...)
 	}
 	return artifacts
+}
+
+func normalizeArtifactPayload(item map[string]any, remoteWorkingDirectory string) map[string]any {
+	artifact := make(map[string]any, len(item)+4)
+	for key, value := range item {
+		artifact[key] = value
+	}
+	relativePath := strings.TrimSpace(shared.StringArg(artifact, "relativePath", ""))
+	if relativePath == "" {
+		relativePath = strings.TrimSpace(shared.StringArg(artifact, "path", ""))
+	}
+	if relativePath == "" {
+		relativePath = strings.TrimSpace(shared.StringArg(artifact, "name", ""))
+	}
+	relativePath = safeArtifactRelativePath(remoteWorkingDirectory, relativePath)
+	if relativePath == "" {
+		return nil
+	}
+	artifact["relativePath"] = relativePath
+	if strings.TrimSpace(shared.StringArg(artifact, "label", "")) == "" {
+		artifact["label"] = filepath.Base(relativePath)
+	}
+	if strings.TrimSpace(shared.StringArg(artifact, "contentType", "")) == "" {
+		artifact["contentType"] = artifactContentType(relativePath)
+	}
+	if strings.TrimSpace(shared.StringArg(artifact, "content", "")) == "" {
+		if filled := readArtifactFile(remoteWorkingDirectory, relativePath); len(filled) > 0 {
+			for key, value := range filled {
+				artifact[key] = value
+			}
+		}
+	}
+	return artifact
+}
+
+func collectDirectoryArtifacts(root string) []map[string]any {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return nil
+	}
+	info, err := os.Stat(root)
+	if err != nil || !info.IsDir() {
+		return nil
+	}
+	artifacts := make([]map[string]any, 0)
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil || len(artifacts) >= 64 {
+			return nil
+		}
+		name := d.Name()
+		if d.IsDir() {
+			if name == ".git" || name == ".dart_tool" || name == "build" || name == "node_modules" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		relativePath, err := filepath.Rel(root, path)
+		if err != nil {
+			return nil
+		}
+		relativePath = filepath.ToSlash(relativePath)
+		if artifact := readArtifactFile(root, relativePath); len(artifact) > 0 {
+			artifact["relativePath"] = relativePath
+			artifact["label"] = filepath.Base(relativePath)
+			artifact["contentType"] = artifactContentType(relativePath)
+			artifacts = append(artifacts, artifact)
+		}
+		return nil
+	})
+	return artifacts
+}
+
+func readArtifactFile(root string, relativePath string) map[string]any {
+	root = strings.TrimSpace(root)
+	relativePath = safeArtifactRelativePath(root, relativePath)
+	if root == "" || relativePath == "" {
+		return nil
+	}
+	target := filepath.Clean(filepath.Join(root, filepath.FromSlash(relativePath)))
+	rootClean := filepath.Clean(root)
+	if target != rootClean && !strings.HasPrefix(target, rootClean+string(os.PathSeparator)) {
+		return nil
+	}
+	info, err := os.Stat(target)
+	if err != nil || info.IsDir() || info.Size() > 10*1024*1024 {
+		return nil
+	}
+	content, err := os.ReadFile(target)
+	if err != nil {
+		return nil
+	}
+	sum := sha256.Sum256(content)
+	return map[string]any{
+		"encoding":  "base64",
+		"content":   base64.StdEncoding.EncodeToString(content),
+		"sizeBytes": len(content),
+		"sha256":    fmt.Sprintf("%x", sum[:]),
+	}
+}
+
+func safeArtifactRelativePath(root string, rawPath string) string {
+	path := strings.TrimSpace(rawPath)
+	if path == "" || strings.Contains(path, "\x00") {
+		return ""
+	}
+	path = filepath.ToSlash(path)
+	if strings.TrimSpace(root) != "" && filepath.IsAbs(path) {
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return ""
+		}
+		path = filepath.ToSlash(rel)
+	}
+	path = filepath.Clean(filepath.FromSlash(path))
+	if path == "." || filepath.IsAbs(path) || strings.HasPrefix(path, ".."+string(os.PathSeparator)) || path == ".." {
+		return ""
+	}
+	return filepath.ToSlash(path)
+}
+
+func artifactContentType(relativePath string) string {
+	switch strings.ToLower(filepath.Ext(relativePath)) {
+	case ".pdf":
+		return "application/pdf"
+	case ".pptx":
+		return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+	case ".docx":
+		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	case ".txt", ".md":
+		return "text/plain"
+	default:
+		return "application/octet-stream"
+	}
 }
 
 func (s *Server) getOrCreateSession(sessionID, threadID string) *session {

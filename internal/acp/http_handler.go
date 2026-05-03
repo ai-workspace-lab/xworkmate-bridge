@@ -41,6 +41,14 @@ func (s *Server) Handler() http.Handler {
 		case "/acp":
 			s.HandleWebSocket(w, r)
 		default:
+			if r.URL.Path == "/gateway/openclaw" {
+				s.HandleOpenClawGatewayRPC(w, r)
+				return
+			}
+			if strings.HasPrefix(r.URL.Path, "/acp-server/") {
+				s.HandleDisabledProviderDirectPath(w, r)
+				return
+			}
 			http.NotFound(w, r)
 		}
 	})
@@ -97,6 +105,41 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
+	s.handleRPCWithTransform(w, r, nil)
+}
+
+func (s *Server) HandleOpenClawGatewayRPC(w http.ResponseWriter, r *http.Request) {
+	s.handleRPCWithTransform(w, r, forceOpenClawGatewayRequest)
+}
+
+func (s *Server) HandleDisabledProviderDirectPath(w http.ResponseWriter, r *http.Request) {
+	shared.ApplyCORS(w, r, s.allowedOrigins)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if !s.authorized(r) {
+		shared.WriteJSONError(w, nil, http.StatusUnauthorized, -32001, "missing bearer authorization")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusGone)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"jsonrpc": "2.0",
+		"error": map[string]any{
+			"code":    -32004,
+			"message": "PROVIDER_DIRECT_PATH_DISABLED: use /acp/rpc provider catalog and routing",
+		},
+		"type": "res",
+		"ok":   false,
+	})
+}
+
+func (s *Server) handleRPCWithTransform(
+	w http.ResponseWriter,
+	r *http.Request,
+	transform func(shared.RPCRequest) (shared.RPCRequest, *shared.RPCError),
+) {
 	shared.ApplyCORS(w, r, s.allowedOrigins)
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
@@ -128,6 +171,15 @@ func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	request.Params = injectInboundAuthorizationHeader(request.Params, r.Header.Get("Authorization"))
+	if transform != nil {
+		transformed, rpcErr := transform(request)
+		if rpcErr != nil {
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(shared.ErrorEnvelope(request.ID, rpcErr.Code, rpcErr.Message))
+			return
+		}
+		request = transformed
+	}
 
 	accept := strings.ToLower(r.Header.Get("Accept"))
 	stream := strings.Contains(accept, "text/event-stream")
@@ -180,6 +232,32 @@ func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(shared.ResultEnvelope(request.ID, response))
+}
+
+func forceOpenClawGatewayRequest(request shared.RPCRequest) (shared.RPCRequest, *shared.RPCError) {
+	method := strings.TrimSpace(request.Method)
+	switch method {
+	case "session.start", "session.message", "session.cancel", "session.close":
+	default:
+		return request, &shared.RPCError{Code: -32601, Message: "OPENCLAW_GATEWAY_METHOD_NOT_ALLOWED: " + method}
+	}
+	params := shared.AsMap(request.Params)
+	if params == nil {
+		params = map[string]any{}
+	}
+	routing := shared.AsMap(params["routing"])
+	if routing == nil {
+		routing = map[string]any{}
+	}
+	routing["routingMode"] = "explicit"
+	routing["explicitExecutionTarget"] = "gateway"
+	routing["preferredGatewayProviderId"] = "openclaw"
+	delete(routing, "explicitProviderId")
+	params["routing"] = routing
+	params["requestedExecutionTarget"] = "gateway"
+	params["executionTarget"] = "gateway"
+	request.Params = params
+	return request, nil
 }
 
 func (s *Server) authorized(r *http.Request) bool {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -61,32 +62,111 @@ func TestHTTPHandlerRootAndPingExposeRuntimeVersionInfo(t *testing.T) {
 }
 
 func TestHTTPHandlerRejectsLegacyACPCodexPath(t *testing.T) {
-	t.Setenv("BRIDGE_AUTH_TOKEN", "")
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
 	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
 	handler := server.Handler()
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/acp-server/codex", nil)
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/acp-server/codex", nil)
+	request.Header.Set("Authorization", "Bearer bridge-test-token")
 	handler.ServeHTTP(recorder, request)
 
-	if recorder.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d", recorder.Code)
+	if recorder.Code != http.StatusGone {
+		t.Fatalf("expected 410, got %d", recorder.Code)
+	}
+	if !strings.Contains(recorder.Body.String(), "PROVIDER_DIRECT_PATH_DISABLED") {
+		t.Fatalf("expected disabled provider path error, got %q", recorder.Body.String())
 	}
 }
 
-func TestHTTPHandlerRejectsGatewayOpenClawPublicAlias(t *testing.T) {
-	t.Setenv("BRIDGE_AUTH_TOKEN", "")
+func TestHTTPHandlerProviderDirectPathRequiresAuthorization(t *testing.T) {
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
 	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
 	handler := server.Handler()
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/gateway/openclaw", nil)
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/acp-server/hermes", nil)
 	handler.ServeHTTP(recorder, request)
 
-	if recorder.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d", recorder.Code)
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", recorder.Code)
+	}
+}
+
+func TestHTTPHandlerGatewayOpenClawRequiresAuthorization(t *testing.T) {
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
+	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
+	server := NewServer()
+	handler := server.Handler()
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"http://127.0.0.1/gateway/openclaw",
+		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"session.start","params":{"sessionId":"test"}}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", recorder.Code)
+	}
+}
+
+func TestHTTPHandlerGatewayOpenClawRejectsNonSessionMethods(t *testing.T) {
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
+	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
+	server := NewServer()
+	handler := server.Handler()
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"http://127.0.0.1/gateway/openclaw",
+		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"acp.capabilities","params":{}}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer bridge-test-token")
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected JSON-RPC 200, got %d", recorder.Code)
+	}
+	if !strings.Contains(recorder.Body.String(), "OPENCLAW_GATEWAY_METHOD_NOT_ALLOWED") {
+		t.Fatalf("expected method allowlist error, got %q", recorder.Body.String())
+	}
+}
+
+func TestHTTPHandlerGatewayOpenClawForcesGatewayRouting(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
+	t.Setenv("BRIDGE_CONFIG_PATH", filepath.Join(t.TempDir(), "missing-config.yaml"))
+	server := NewServer()
+	handler := server.Handler()
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"http://127.0.0.1/gateway/openclaw",
+		strings.NewReader(`{"jsonrpc":"2.0","id":"task-1","method":"session.start","params":{"sessionId":"s1","threadId":"t1","taskPrompt":"Reply pong","workingDirectory":"`+t.TempDir()+`"}}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer bridge-test-token")
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"resolvedGatewayProviderId":"openclaw"`) {
+		t.Fatalf("expected forced OpenClaw gateway result, got %q", recorder.Body.String())
+	}
+	if gateway.SessionStartCount() != 1 {
+		t.Fatalf("expected one OpenClaw session.start, got %d", gateway.SessionStartCount())
 	}
 }
 
