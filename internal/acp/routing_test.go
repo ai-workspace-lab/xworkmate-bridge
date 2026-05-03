@@ -2,6 +2,9 @@ package acp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -619,7 +622,28 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 			switch strings.TrimSpace(shared.StringArg(frame, "method", "")) {
 			case "connect":
 				fake.connectCount.Add(1)
-				fake.lastConnectClient.Store(shared.AsMap(shared.AsMap(frame["params"])["client"]))
+				params := shared.AsMap(frame["params"])
+				device := shared.AsMap(params["device"])
+				publicKey, err := base64.RawURLEncoding.DecodeString(
+					strings.TrimSpace(shared.StringArg(device, "publicKey", "")),
+				)
+				sum := sha256.Sum256(publicKey)
+				if err != nil || shared.StringArg(device, "id", "") != hex.EncodeToString(sum[:]) {
+					_ = conn.WriteJSON(map[string]any{
+						"type": "res",
+						"id":   id,
+						"ok":   false,
+						"error": map[string]any{
+							"code":    "INVALID_REQUEST",
+							"message": "device identity mismatch",
+							"details": map[string]any{
+								"code": "DEVICE_AUTH_DEVICE_ID_MISMATCH",
+							},
+						},
+					})
+					return
+				}
+				fake.lastConnectClient.Store(shared.AsMap(params["client"]))
 				_ = conn.WriteJSON(map[string]any{
 					"type": "res",
 					"id":   id,
