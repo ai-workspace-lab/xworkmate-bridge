@@ -179,6 +179,16 @@ func handleGatewayDisconnect(
 	return map[string]any{"accepted": true}
 }
 
+func runtimeGatewayMethod(gatewayProvider string, method string) string {
+	if isOpenClawMode(gatewayProvider) {
+		switch strings.TrimSpace(method) {
+		case "session.start", "session.message":
+			return "chat.run"
+		}
+	}
+	return method
+}
+
 func ensureProductionGatewayConnected(
 	server *Server,
 	mode string,

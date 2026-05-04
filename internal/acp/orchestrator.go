@@ -136,9 +136,10 @@ func (o *SessionOrchestrator) runGateway(
 		return nil, rpcErr
 	}
 	params = withResolvedGatewayProvider(params, gatewayProvider)
+	gatewayMethod := runtimeGatewayMethod(gatewayProvider, method)
 	result := o.server.gateway.RequestByMode(
 		gatewayProvider,
-		method,
+		gatewayMethod,
 		params,
 		2*time.Minute,
 		notify,

@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -489,8 +490,11 @@ func TestExecuteSessionTaskGatewayAutoConnectsLocalOpenClaw(t *testing.T) {
 	if gateway.ConnectCount() != 1 {
 		t.Fatalf("expected one automatic gateway connect, got %d", gateway.ConnectCount())
 	}
-	if gateway.SessionStartCount() != 1 {
-		t.Fatalf("expected one session.start request, got %d", gateway.SessionStartCount())
+	if gateway.ChatRunCount() != 1 {
+		t.Fatalf("expected one OpenClaw chat.run request, got %d", gateway.ChatRunCount())
+	}
+	if got := gateway.Methods(); len(got) != 2 || got[0] != "connect" || got[1] != "chat.run" {
+		t.Fatalf("expected connect then chat.run, got %#v", got)
 	}
 	client := gateway.LastConnectClient()
 	if got := client["id"]; got != "openclaw-macos" {
@@ -498,6 +502,79 @@ func TestExecuteSessionTaskGatewayAutoConnectsLocalOpenClaw(t *testing.T) {
 	}
 	if got := strings.TrimSpace(shared.StringArg(client, "modelIdentifier", "")); got == "" {
 		t.Fatalf("expected non-empty modelIdentifier, got %#v", client)
+	}
+}
+
+func TestExecuteSessionMessageGatewayUsesOpenClawChatRun(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	response, rpcErr := server.executeSessionTask(task{
+		req: shared.RPCRequest{
+			Method: "session.message",
+			Params: map[string]any{
+				"sessionId":        "session-openclaw",
+				"threadId":         "thread-openclaw",
+				"taskPrompt":       "continue",
+				"workingDirectory": t.TempDir(),
+				"routing": map[string]any{
+					"routingMode":                "explicit",
+					"explicitExecutionTarget":    "gateway",
+					"preferredGatewayProviderId": "openclaw",
+				},
+			},
+		},
+	})
+	if rpcErr != nil {
+		t.Fatalf("expected gateway response, got rpc error: %#v", rpcErr)
+	}
+	if got := response["output"]; got != "gateway pong" {
+		t.Fatalf("expected gateway pong output, got %#v", response)
+	}
+	if gateway.ChatRunCount() != 1 {
+		t.Fatalf("expected one OpenClaw chat.run request, got %d", gateway.ChatRunCount())
+	}
+	if got := gateway.Methods(); len(got) != 2 || got[0] != "connect" || got[1] != "chat.run" {
+		t.Fatalf("expected connect then chat.run, got %#v", got)
+	}
+}
+
+func TestExecuteSessionTaskGatewaySurfacesOpenClawChatRunError(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	response, rpcErr := server.executeSessionTask(task{
+		req: shared.RPCRequest{
+			Method: "session.start",
+			Params: map[string]any{
+				"sessionId":        "session-openclaw-fail",
+				"threadId":         "thread-openclaw-fail",
+				"taskPrompt":       "fail",
+				"workingDirectory": t.TempDir(),
+				"routing": map[string]any{
+					"routingMode":                "explicit",
+					"explicitExecutionTarget":    "gateway",
+					"preferredGatewayProviderId": "openclaw",
+				},
+			},
+		},
+	})
+	if rpcErr == nil {
+		t.Fatalf("expected OpenClaw chat.run error, got response: %#v", response)
+	}
+	if rpcErr.Code != -32002 || !strings.Contains(rpcErr.Message, "openclaw chat failed") {
+		t.Fatalf("expected surfaced chat.run failure, got %#v", rpcErr)
+	}
+	if got := gateway.Methods(); len(got) != 2 || got[0] != "connect" || got[1] != "chat.run" {
+		t.Fatalf("expected connect then chat.run, got %#v", got)
 	}
 }
 
@@ -578,8 +655,10 @@ type acpFakeOpenClawGateway struct {
 	server            *http.Server
 	listener          net.Listener
 	connectCount      atomic.Int32
-	sessionStartCount atomic.Int32
+	chatRunCount      atomic.Int32
 	lastConnectClient atomic.Value
+	mu                sync.Mutex
+	methods           []string
 }
 
 func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
@@ -619,7 +698,9 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 				continue
 			}
 			id := frame["id"]
-			switch strings.TrimSpace(shared.StringArg(frame, "method", "")) {
+			method := strings.TrimSpace(shared.StringArg(frame, "method", ""))
+			fake.recordMethod(method)
+			switch method {
 			case "connect":
 				fake.connectCount.Add(1)
 				params := shared.AsMap(frame["params"])
@@ -672,8 +753,21 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 						},
 					},
 				})
-			case "session.start":
-				fake.sessionStartCount.Add(1)
+			case "chat.run":
+				fake.chatRunCount.Add(1)
+				params := shared.AsMap(frame["params"])
+				if strings.TrimSpace(shared.StringArg(params, "taskPrompt", "")) == "fail" {
+					_ = conn.WriteJSON(map[string]any{
+						"type": "res",
+						"id":   id,
+						"ok":   false,
+						"error": map[string]any{
+							"code":    "OPENCLAW_CHAT_FAILED",
+							"message": "openclaw chat failed",
+						},
+					})
+					continue
+				}
 				_ = conn.WriteJSON(map[string]any{
 					"type": "res",
 					"id":   id,
@@ -681,6 +775,16 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 					"payload": map[string]any{
 						"success": true,
 						"output":  "gateway pong",
+					},
+				})
+			case "session.start":
+				_ = conn.WriteJSON(map[string]any{
+					"type": "res",
+					"id":   id,
+					"ok":   false,
+					"error": map[string]any{
+						"code":    "UNKNOWN_METHOD",
+						"message": "unknown method: session.start",
 					},
 				})
 			default:
@@ -704,12 +808,24 @@ func (f *acpFakeOpenClawGateway) URL() string {
 	return "ws://" + f.listener.Addr().String() + "/"
 }
 
+func (f *acpFakeOpenClawGateway) recordMethod(method string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.methods = append(f.methods, method)
+}
+
+func (f *acpFakeOpenClawGateway) Methods() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.methods...)
+}
+
 func (f *acpFakeOpenClawGateway) ConnectCount() int {
 	return int(f.connectCount.Load())
 }
 
-func (f *acpFakeOpenClawGateway) SessionStartCount() int {
-	return int(f.sessionStartCount.Load())
+func (f *acpFakeOpenClawGateway) ChatRunCount() int {
+	return int(f.chatRunCount.Load())
 }
 
 func (f *acpFakeOpenClawGateway) LastConnectClient() map[string]any {

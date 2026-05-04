@@ -270,8 +270,8 @@ func TestHTTPHandlerGatewayOpenClawForcesGatewayRouting(t *testing.T) {
 	if !strings.Contains(recorder.Body.String(), `"resolvedGatewayProviderId":"openclaw"`) {
 		t.Fatalf("expected forced OpenClaw gateway result, got %q", recorder.Body.String())
 	}
-	if gateway.SessionStartCount() != 1 {
-		t.Fatalf("expected one OpenClaw session.start, got %d", gateway.SessionStartCount())
+	if gateway.ChatRunCount() != 1 {
+		t.Fatalf("expected one OpenClaw chat.run, got %d", gateway.ChatRunCount())
 	}
 }
 
