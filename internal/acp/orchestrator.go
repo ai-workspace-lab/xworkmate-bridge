@@ -238,6 +238,7 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 		artifactSinceUnixMs,
 		notifyWithCollection,
 	))
+	o.server.decorateOpenClawArtifactDownloadURLs(result, shared.StringArg(chatParams, "sessionKey", ""), runID)
 	guardOpenClawArtifactResult(result, artifactDeliveryRequired)
 	return result, nil
 }

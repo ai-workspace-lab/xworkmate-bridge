@@ -42,6 +42,8 @@ func (s *Server) Handler() http.Handler {
 			s.HandleRPC(w, r)
 		case "/acp":
 			s.HandleWebSocket(w, r)
+		case openClawArtifactDownloadPath:
+			s.HandleOpenClawArtifactDownload(w, r)
 		default:
 			if r.URL.Path == "/gateway/openclaw" {
 				s.HandleOpenClawGatewayRPC(w, r)

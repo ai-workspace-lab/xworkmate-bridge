@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -679,8 +680,170 @@ func TestExecuteSessionTaskGatewayExportsOpenClawArtifacts(t *testing.T) {
 	if got := artifacts[0]["encoding"]; got != "base64" {
 		t.Fatalf("expected inline base64 artifact, got %#v", artifacts[0])
 	}
+	downloadURL := strings.TrimSpace(shared.StringArg(artifacts[0], "downloadUrl", ""))
+	if downloadURL == "" {
+		t.Fatalf("expected bridge downloadUrl on artifact, got %#v", artifacts[0])
+	}
+	parsedDownloadURL, err := url.Parse(downloadURL)
+	if err != nil {
+		t.Fatalf("parse downloadUrl: %v", err)
+	}
+	if got := parsedDownloadURL.Path; got != openClawArtifactDownloadPath {
+		t.Fatalf("expected bridge artifact download path, got %q from %q", got, downloadURL)
+	}
+	if got := parsedDownloadURL.Query().Get("sessionKey"); got != "thread-openclaw-artifact" {
+		t.Fatalf("expected thread sessionKey in downloadUrl, got %q", got)
+	}
+	if got := parsedDownloadURL.Query().Get("relativePath"); got != "reports/final.md" {
+		t.Fatalf("expected artifact relativePath in downloadUrl, got %q", got)
+	}
+	if parsedDownloadURL.Query().Get("sig") == "" {
+		t.Fatalf("expected signed downloadUrl, got %q", downloadURL)
+	}
 	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "chat.send", "agent.wait", "xworkmate.artifacts.export"}) {
 		t.Fatalf("expected connect, chat.send, agent.wait, then artifact export, got %#v", got)
+	}
+}
+
+func TestHTTPHandlerOpenClawArtifactDownloadReadsViaGateway(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	downloadURL := server.openClawArtifactDownloadURL("thread-openclaw-artifact", "run-1", "reports/final.md", time.Now())
+	if downloadURL == "" {
+		t.Fatal("expected signed download URL")
+	}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, downloadURL, nil)
+	request.Header.Set("Authorization", "Bearer bridge-token")
+	server.Handler().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%q", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Body.String(); got != "final report" {
+		t.Fatalf("expected artifact content from OpenClaw read, got %q", got)
+	}
+	if got := recorder.Header().Get("Content-Type"); got != "text/markdown" {
+		t.Fatalf("expected content type from artifact metadata, got %q", got)
+	}
+	if gateway.ArtifactReadCount() != 1 {
+		t.Fatalf("expected one OpenClaw artifact read request, got %d", gateway.ArtifactReadCount())
+	}
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.read"}) {
+		t.Fatalf("expected connect, then artifact read, got %#v", got)
+	}
+}
+
+func TestHTTPHandlerOpenClawArtifactDownloadReturnsArtifactMissing(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	downloadURL := server.openClawArtifactDownloadURL("thread-openclaw-artifact", "run-1", "missing.txt", time.Now())
+	if downloadURL == "" {
+		t.Fatal("expected signed download URL")
+	}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, downloadURL, nil)
+	request.Header.Set("Authorization", "Bearer bridge-token")
+	server.Handler().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d body=%q", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "artifact_missing") {
+		t.Fatalf("expected artifact_missing response, got %q", recorder.Body.String())
+	}
+	if gateway.ArtifactReadCount() != 1 {
+		t.Fatalf("expected one OpenClaw artifact read request, got %d", gateway.ArtifactReadCount())
+	}
+}
+
+func TestHTTPHandlerOpenClawArtifactDownloadRequiresBearer(t *testing.T) {
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	downloadURL := server.openClawArtifactDownloadURL("thread-openclaw-artifact", "run-1", "reports/final.md", time.Now())
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, downloadURL, nil)
+	server.Handler().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d body=%q", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestHTTPHandlerOpenClawArtifactDownloadRejectsInvalidSignature(t *testing.T) {
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	downloadURL := server.openClawArtifactDownloadURL("thread-openclaw-artifact", "run-1", "reports/final.md", time.Now())
+	parsed, err := url.Parse(downloadURL)
+	if err != nil {
+		t.Fatalf("parse downloadUrl: %v", err)
+	}
+	query := parsed.Query()
+	query.Set("sig", "bad")
+	parsed.RawQuery = query.Encode()
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, parsed.String(), nil)
+	request.Header.Set("Authorization", "Bearer bridge-token")
+	server.Handler().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d body=%q", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestHTTPHandlerOpenClawArtifactDownloadRejectsExpiredSignature(t *testing.T) {
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	values := url.Values{}
+	expires := fmt.Sprintf("%d", time.Now().Add(-time.Minute).Unix())
+	values.Set("sessionKey", "thread-openclaw-artifact")
+	values.Set("runId", "run-1")
+	values.Set("relativePath", "reports/final.md")
+	values.Set("expires", expires)
+	values.Set("sig", signOpenClawArtifactDownload("thread-openclaw-artifact", "run-1", "reports/final.md", expires))
+
+	server := NewServer()
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, openClawArtifactDownloadPath+"?"+values.Encode(), nil)
+	request.Header.Set("Authorization", "Bearer bridge-token")
+	server.Handler().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusGone {
+		t.Fatalf("expected 410, got %d body=%q", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestHTTPHandlerOpenClawArtifactDownloadRejectsTraversalPath(t *testing.T) {
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	values := url.Values{}
+	values.Set("sessionKey", "thread-openclaw-artifact")
+	values.Set("runId", "run-1")
+	values.Set("relativePath", "../secret.txt")
+	values.Set("expires", fmt.Sprintf("%d", time.Now().Add(time.Hour).Unix()))
+	values.Set("sig", "irrelevant")
+
+	server := NewServer()
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, openClawArtifactDownloadPath+"?"+values.Encode(), nil)
+	request.Header.Set("Authorization", "Bearer bridge-token")
+	server.Handler().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%q", recorder.Code, recorder.Body.String())
 	}
 }
 
@@ -943,6 +1106,7 @@ type acpFakeOpenClawGateway struct {
 	chatSendCount     atomic.Int32
 	agentWaitCount    atomic.Int32
 	artifactCount     atomic.Int32
+	artifactReadCount atomic.Int32
 	lastConnectClient atomic.Value
 	mu                sync.Mutex
 	methods           []string
@@ -1186,6 +1350,46 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 					"ok":      true,
 					"payload": payload,
 				})
+			case "xworkmate.artifacts.read":
+				fake.artifactReadCount.Add(1)
+				params := shared.AsMap(frame["params"])
+				relativePath := strings.TrimSpace(shared.StringArg(params, "relativePath", ""))
+				if relativePath != "reports/final.md" {
+					_ = conn.WriteJSON(map[string]any{
+						"type": "res",
+						"id":   id,
+						"ok":   false,
+						"error": map[string]any{
+							"code":    "ARTIFACT_NOT_FOUND",
+							"message": "artifact not found",
+						},
+					})
+					continue
+				}
+				content := []byte("final report")
+				sum := sha256.Sum256(content)
+				_ = conn.WriteJSON(map[string]any{
+					"type": "res",
+					"id":   id,
+					"ok":   true,
+					"payload": map[string]any{
+						"runId":                  strings.TrimSpace(shared.StringArg(params, "runId", "")),
+						"sessionKey":             strings.TrimSpace(shared.StringArg(params, "sessionKey", "")),
+						"remoteWorkingDirectory": "/remote/openclaw/workspace",
+						"remoteWorkspaceRefKind": "remotePath",
+						"artifacts": []any{
+							map[string]any{
+								"relativePath": "reports/final.md",
+								"label":        "final.md",
+								"contentType":  "text/markdown",
+								"sizeBytes":    len(content),
+								"sha256":       hex.EncodeToString(sum[:]),
+								"encoding":     "base64",
+								"content":      base64.StdEncoding.EncodeToString(content),
+							},
+						},
+					},
+				})
 			case "chat.run":
 				_ = conn.WriteJSON(map[string]any{
 					"type": "res",
@@ -1265,6 +1469,10 @@ func (f *acpFakeOpenClawGateway) AgentWaitCount() int {
 
 func (f *acpFakeOpenClawGateway) ArtifactExportCount() int {
 	return int(f.artifactCount.Load())
+}
+
+func (f *acpFakeOpenClawGateway) ArtifactReadCount() int {
+	return int(f.artifactReadCount.Load())
 }
 
 func (f *acpFakeOpenClawGateway) LastConnectClient() map[string]any {
