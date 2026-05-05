@@ -3,7 +3,6 @@ package acp
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"fmt"
 	"net/url"
 	"os"
@@ -185,6 +184,7 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
+	artifactDeliveryRequired := openClawArtifactDeliveryRequired(params)
 	artifactSinceUnixMs := time.Now().Add(-1 * time.Second).UnixMilli()
 	sendResult := o.server.gateway.RequestByMode(
 		gatewayProvider,
@@ -238,6 +238,7 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 		artifactSinceUnixMs,
 		notifyWithCollection,
 	))
+	guardOpenClawArtifactResult(result, artifactDeliveryRequired)
 	return result, nil
 }
 
@@ -255,6 +256,9 @@ func openClawChatSendParams(params map[string]any, turnID string) (map[string]an
 	if message == "" {
 		return nil, &shared.RPCError{Code: -32602, Message: "OPENCLAW_TASK_PROMPT_REQUIRED"}
 	}
+	if openClawArtifactDeliveryRequired(params) {
+		message = withOpenClawArtifactDeliveryInstructions(message)
+	}
 	sessionKey := openClawSessionKey(params, turnID)
 	chatParams := map[string]any{
 		"sessionKey":     sessionKey,
@@ -268,6 +272,57 @@ func openClawChatSendParams(params map[string]any, turnID string) (map[string]an
 		chatParams["thinking"] = thinking
 	}
 	return chatParams, nil
+}
+
+func openClawArtifactDeliveryRequired(params map[string]any) bool {
+	text := strings.ToLower(firstNonEmptyString(params, "taskPrompt", "prompt", "message"))
+	if strings.TrimSpace(text) == "" {
+		return false
+	}
+	fileSignals := []string{
+		"ppt", "pptx", "powerpoint", "slide", "slides",
+		"pdf", "docx", "word", "xlsx", "excel",
+		"artifact", "artifacts", "file", "files", "download", "attachment", "asset", "output",
+		"image", "photo", "picture", "screenshot", "video", "audio", "csv", "json", "html",
+		"zip", "tar", "archive", "dataset", "report", "document", "markdown", "code",
+		"文件", "制品", "产物", "下载", "附件", "素材", "输出", "图片", "截图", "图像",
+		"视频", "音频", "压缩包", "数据集", "文档", "报告", "演示", "幻灯片", "表格", "代码",
+	}
+	actionSignals := []string{
+		"create", "generate", "build", "write", "export", "output", "deliver", "download",
+		"save", "produce", "render", "attach", "return",
+		"生成", "制作", "输出", "导出", "下载", "交付", "收取", "保存", "渲染", "返回", "提供",
+	}
+	hasFileSignal := false
+	for _, signal := range fileSignals {
+		if strings.Contains(text, signal) {
+			hasFileSignal = true
+			break
+		}
+	}
+	if !hasFileSignal {
+		return false
+	}
+	for _, signal := range actionSignals {
+		if strings.Contains(text, signal) {
+			return true
+		}
+	}
+	return false
+}
+
+func withOpenClawArtifactDeliveryInstructions(message string) string {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return message
+	}
+	return message + "\n\n" + strings.Join([]string{
+		"XWorkmate artifact delivery requirements:",
+		"- Create the requested files in the current OpenClaw workspace as real files before finishing.",
+		"- If multiple formats are requested, write each requested format as a separate file with the correct extension.",
+		"- Do not claim that files are ready, downloadable, or clickable unless the files actually exist on disk.",
+		"- In the final response, list only the real file names you created. Do not invent download links.",
+	}, "\n")
 }
 
 func openClawSessionKey(params map[string]any, turnID string) string {
@@ -316,6 +371,26 @@ func (o *SessionOrchestrator) openClawArtifactExport(
 	return map[string]any{
 		"artifactWarnings": []any{message},
 	}
+}
+
+func guardOpenClawArtifactResult(result map[string]any, artifactDeliveryRequired bool) {
+	if !artifactDeliveryRequired || result == nil {
+		return
+	}
+	remoteWorkingDirectory := strings.TrimSpace(shared.StringArg(result, "remoteWorkingDirectory", ""))
+	if len(extractArtifactPayloads(result, remoteWorkingDirectory)) > 0 {
+		return
+	}
+	message := "未检测到 OpenClaw 本轮导出的实际文件。已阻止口头下载声明进入 artifacts 面板；请重新执行并要求 OpenClaw 在 workspace 中真实生成文件。"
+	result["success"] = false
+	result["status"] = "artifact_missing"
+	result["output"] = message
+	result["message"] = message
+	result["summary"] = message
+	result["artifactWarnings"] = appendArtifactList(
+		result["artifactWarnings"],
+		[]any{"OpenClaw artifact export returned no files for a file-delivery request."},
+	)
 }
 
 func mergeOpenClawArtifactPayload(result map[string]any, source map[string]any) {
@@ -661,9 +736,6 @@ func extractArtifactPayloads(result map[string]any, remoteWorkingDirectory strin
 			}
 		}
 	}
-	if len(artifacts) == 0 {
-		artifacts = append(artifacts, collectDirectoryArtifacts(remoteWorkingDirectory)...)
-	}
 	return artifacts
 }
 
@@ -699,13 +771,6 @@ func normalizeArtifactPayload(item map[string]any, remoteWorkingDirectory string
 	if strings.TrimSpace(shared.StringArg(artifact, "contentType", "")) == "" {
 		artifact["contentType"] = artifactContentType(relativePath)
 	}
-	if strings.TrimSpace(shared.StringArg(artifact, "content", "")) == "" {
-		if filled := readArtifactFile(remoteWorkingDirectory, relativePath); len(filled) > 0 {
-			for key, value := range filled {
-				artifact[key] = value
-			}
-		}
-	}
 	return artifact
 }
 
@@ -729,71 +794,6 @@ func artifactRelativePathFromDownloadURL(raw string) string {
 		base = fmt.Sprintf("artifact-%x.bin", sum[:6])
 	}
 	return base
-}
-
-func collectDirectoryArtifacts(root string) []map[string]any {
-	root = strings.TrimSpace(root)
-	if root == "" {
-		return nil
-	}
-	info, err := os.Stat(root)
-	if err != nil || !info.IsDir() {
-		return nil
-	}
-	artifacts := make([]map[string]any, 0)
-	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil || len(artifacts) >= 64 {
-			return nil
-		}
-		name := d.Name()
-		if d.IsDir() {
-			if name == ".git" || name == ".dart_tool" || name == "build" || name == "node_modules" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		relativePath, err := filepath.Rel(root, path)
-		if err != nil {
-			return nil
-		}
-		relativePath = filepath.ToSlash(relativePath)
-		if artifact := readArtifactFile(root, relativePath); len(artifact) > 0 {
-			artifact["relativePath"] = relativePath
-			artifact["label"] = filepath.Base(relativePath)
-			artifact["contentType"] = artifactContentType(relativePath)
-			artifacts = append(artifacts, artifact)
-		}
-		return nil
-	})
-	return artifacts
-}
-
-func readArtifactFile(root string, relativePath string) map[string]any {
-	root = strings.TrimSpace(root)
-	relativePath = safeArtifactRelativePath(root, relativePath)
-	if root == "" || relativePath == "" {
-		return nil
-	}
-	target := filepath.Clean(filepath.Join(root, filepath.FromSlash(relativePath)))
-	rootClean := filepath.Clean(root)
-	if target != rootClean && !strings.HasPrefix(target, rootClean+string(os.PathSeparator)) {
-		return nil
-	}
-	info, err := os.Stat(target)
-	if err != nil || info.IsDir() || info.Size() > 10*1024*1024 {
-		return nil
-	}
-	content, err := os.ReadFile(target)
-	if err != nil {
-		return nil
-	}
-	sum := sha256.Sum256(content)
-	return map[string]any{
-		"encoding":  "base64",
-		"content":   base64.StdEncoding.EncodeToString(content),
-		"sizeBytes": len(content),
-		"sha256":    fmt.Sprintf("%x", sum[:]),
-	}
 }
 
 func safeArtifactRelativePath(root string, rawPath string) string {

@@ -684,6 +684,35 @@ func TestExecuteSessionTaskGatewayExportsOpenClawArtifacts(t *testing.T) {
 	}
 }
 
+func TestOpenClawChatSendParamsAddsArtifactDeliveryInstructions(t *testing.T) {
+	for _, prompt := range []string{
+		"输出 PPT PDF docx 文件",
+		"生成一张图片并返回制品",
+		"render a video artifact for download",
+		"write a csv dataset file",
+	} {
+		t.Run(prompt, func(t *testing.T) {
+			chatParams, rpcErr := openClawChatSendParams(map[string]any{
+				"threadId":   "thread-artifact-instructions",
+				"taskPrompt": prompt,
+			}, "turn-artifact-instructions")
+			if rpcErr != nil {
+				t.Fatalf("expected chat params, got rpc error: %#v", rpcErr)
+			}
+			message := strings.TrimSpace(shared.StringArg(chatParams, "message", ""))
+			if !strings.Contains(message, prompt) {
+				t.Fatalf("expected original prompt to be preserved, got %q", message)
+			}
+			if !strings.Contains(message, "Create the requested files in the current OpenClaw workspace as real files") {
+				t.Fatalf("expected artifact delivery instructions, got %q", message)
+			}
+			if !strings.Contains(message, "Do not claim that files are ready") {
+				t.Fatalf("expected anti-hallucination download instruction, got %q", message)
+			}
+		})
+	}
+}
+
 func TestExecuteSessionTaskGatewayCollectsOpenClawEventArtifacts(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	gateway.artifactMode = "unknown"
@@ -771,6 +800,66 @@ func TestExecuteSessionTaskGatewayKeepsTextWhenArtifactExportUnavailable(t *test
 	warnings := response["artifactWarnings"].([]any)
 	if len(warnings) != 1 || !strings.Contains(fmt.Sprint(warnings[0]), "unknown method") {
 		t.Fatalf("expected artifact warning for unknown method, got %#v", response["artifactWarnings"])
+	}
+}
+
+func TestExecuteSessionTaskGatewayRejectsMissingOpenClawFilesForDeliveryRequest(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	response, rpcErr := server.executeSessionTask(task{
+		req: shared.RPCRequest{
+			Method: "session.start",
+			Params: map[string]any{
+				"sessionId":        "session-openclaw-missing-files",
+				"threadId":         "thread-openclaw-missing-files",
+				"taskPrompt":       "输出 PPT PDF docx 文件 hallucinate-files",
+				"workingDirectory": t.TempDir(),
+				"routing": map[string]any{
+					"routingMode":                "explicit",
+					"explicitExecutionTarget":    "gateway",
+					"preferredGatewayProviderId": "openclaw",
+				},
+			},
+		},
+	})
+	if rpcErr != nil {
+		t.Fatalf("expected bridge response, got rpc error: %#v", rpcErr)
+	}
+	if success, _ := response["success"].(bool); success {
+		t.Fatalf("expected missing artifact delivery to be marked unsuccessful, got %#v", response)
+	}
+	output := strings.TrimSpace(shared.StringArg(response, "output", ""))
+	if strings.Contains(output, "点击直接下载") || strings.Contains(output, "文件已就绪") {
+		t.Fatalf("expected hallucinated download text to be replaced, got %q", output)
+	}
+	if !strings.Contains(output, "未检测到 OpenClaw 本轮导出的实际文件") {
+		t.Fatalf("expected explicit missing artifact message, got %q", output)
+	}
+	if _, ok := response["artifacts"]; ok {
+		t.Fatalf("expected no artifacts when export returned none, got %#v", response["artifacts"])
+	}
+	warnings := response["artifactWarnings"].([]any)
+	if len(warnings) != 1 || !strings.Contains(fmt.Sprint(warnings[0]), "returned no files") {
+		t.Fatalf("expected missing artifact warning, got %#v", response["artifactWarnings"])
+	}
+}
+
+func TestExtractArtifactPayloadsDoesNotScanRemoteDirectoryFallback(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "stale.txt"), []byte("stale"), 0o644); err != nil {
+		t.Fatalf("write stale file: %v", err)
+	}
+	artifacts := extractArtifactPayloads(map[string]any{
+		"remoteWorkingDirectory": root,
+		"artifacts":              []any{},
+	}, root)
+	if len(artifacts) != 0 {
+		t.Fatalf("expected no directory fallback artifacts, got %#v", artifacts)
 	}
 }
 
@@ -1007,6 +1096,10 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 					})
 					continue
 				}
+				message := "gateway pong"
+				if strings.Contains(fake.runMessage(runID), "hallucinate-files") {
+					message = "文件已就绪，点击直接下载👇 三个格式一键收取："
+				}
 				_ = conn.WriteJSON(map[string]any{
 					"type":  "event",
 					"event": "chat",
@@ -1016,11 +1109,11 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 						"state": "final",
 						"message": map[string]any{
 							"role":    "assistant",
-							"content": "gateway pong",
+							"content": message,
 						},
 					},
 				})
-				if fake.runMessage(runID) == "event artifact" {
+				if strings.Contains(fake.runMessage(runID), "event artifact") {
 					_ = conn.WriteJSON(map[string]any{
 						"type":  "event",
 						"event": "chat",
@@ -1074,7 +1167,7 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 					"artifacts":              []any{},
 					"warnings":               []any{},
 				}
-				if fake.runMessage(runID) == "make artifact" {
+				if strings.Contains(fake.runMessage(runID), "make artifact") {
 					payload["artifacts"] = []any{
 						map[string]any{
 							"relativePath": "reports/final.md",
