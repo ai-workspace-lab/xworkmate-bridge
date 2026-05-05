@@ -2,6 +2,7 @@ package acp
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"xworkmate-bridge/internal/shared"
 )
@@ -189,32 +191,27 @@ func (s *Server) handleRPCWithTransform(
 		w.Header().Set("Connection", "keep-alive")
 	}
 
-	flusher, _ := w.(http.Flusher)
+	streamWriter := newSafeSSEStream(r.Context(), w)
 	writeNotification := func(message map[string]any) {
 		if !stream {
 			return
 		}
-		shared.WriteSSE(w, message)
-		if flusher != nil {
-			flusher.Flush()
-		}
+		streamWriter.write(message)
 	}
+	defer streamWriter.close()
 
 	response, rpcErr := s.handleRequest(request, writeNotification)
 	if request.ID == nil {
 		if stream {
-			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+			streamWriter.done()
 		}
 		return
 	}
 	if rpcErr != nil {
 		envelope := shared.ErrorEnvelope(request.ID, rpcErr.Code, rpcErr.Message)
 		if stream {
-			shared.WriteSSE(w, envelope)
-			_, _ = w.Write([]byte("data: [DONE]\n\n"))
-			if flusher != nil {
-				flusher.Flush()
-			}
+			streamWriter.write(envelope)
+			streamWriter.done()
 			return
 		}
 		w.WriteHeader(http.StatusOK)
@@ -222,16 +219,74 @@ func (s *Server) handleRPCWithTransform(
 		return
 	}
 	if stream {
-		shared.WriteSSE(w, shared.ResultEnvelope(request.ID, response))
-		_, _ = w.Write([]byte("data: [DONE]\n\n"))
-		if flusher != nil {
-			flusher.Flush()
-		}
+		streamWriter.write(shared.ResultEnvelope(request.ID, response))
+		streamWriter.done()
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(shared.ResultEnvelope(request.ID, response))
+}
+
+type safeSSEStream struct {
+	ctx     context.Context
+	w       http.ResponseWriter
+	flusher http.Flusher
+	closed  atomic.Bool
+	mu      sync.Mutex
+}
+
+func newSafeSSEStream(ctx context.Context, w http.ResponseWriter) *safeSSEStream {
+	flusher, _ := w.(http.Flusher)
+	return &safeSSEStream{ctx: ctx, w: w, flusher: flusher}
+}
+
+func (s *safeSSEStream) write(payload map[string]any) bool {
+	return s.writeRaw(func() error {
+		return shared.WriteSSE(s.w, payload)
+	})
+}
+
+func (s *safeSSEStream) done() bool {
+	return s.writeRaw(func() error {
+		_, err := s.w.Write([]byte("data: [DONE]\n\n"))
+		return err
+	})
+}
+
+func (s *safeSSEStream) close() {
+	s.closed.Store(true)
+}
+
+func (s *safeSSEStream) writeRaw(write func() error) (ok bool) {
+	if s == nil || s.closed.Load() {
+		return false
+	}
+	select {
+	case <-s.ctx.Done():
+		s.closed.Store(true)
+		return false
+	default:
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed.Load() {
+		return false
+	}
+	defer func() {
+		if recover() != nil {
+			s.closed.Store(true)
+			ok = false
+		}
+	}()
+	if err := write(); err != nil {
+		s.closed.Store(true)
+		return false
+	}
+	if s.flusher != nil {
+		s.flusher.Flush()
+	}
+	return true
 }
 
 func forceOpenClawGatewayRequest(request shared.RPCRequest) (shared.RPCRequest, *shared.RPCError) {

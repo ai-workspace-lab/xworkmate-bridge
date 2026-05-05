@@ -136,10 +136,12 @@ func (o *SessionOrchestrator) runGateway(
 		return nil, rpcErr
 	}
 	params = withResolvedGatewayProvider(params, gatewayProvider)
-	gatewayMethod := runtimeGatewayMethod(gatewayProvider, method)
+	if isOpenClawMode(gatewayProvider) && isSessionTaskMethod(method) {
+		return o.runOpenClawGatewayChat(ctx, params, gatewayProvider, turnID, notify)
+	}
 	result := o.server.gateway.RequestByMode(
 		gatewayProvider,
-		gatewayMethod,
+		method,
 		params,
 		2*time.Minute,
 		notify,
@@ -163,6 +165,181 @@ func (o *SessionOrchestrator) runGateway(
 		payload["mode"] = router.ExecutionTargetGatewayChat
 	}
 	return payload, nil
+}
+
+func (o *SessionOrchestrator) runOpenClawGatewayChat(
+	_ context.Context,
+	params map[string]any,
+	gatewayProvider string,
+	turnID string,
+	notify func(map[string]any),
+) (map[string]any, *shared.RPCError) {
+	collector := newOpenClawChatCollector()
+	notifyWithCollection := func(message map[string]any) {
+		collector.observe(message)
+		if notify != nil {
+			notify(message)
+		}
+	}
+	chatParams, rpcErr := openClawChatSendParams(params, turnID)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	sendResult := o.server.gateway.RequestByMode(
+		gatewayProvider,
+		"chat.send",
+		chatParams,
+		2*time.Minute,
+		notifyWithCollection,
+	)
+	if !sendResult.OK {
+		return nil, gatewayRPCError(sendResult.Error, "openclaw chat.send failed")
+	}
+	sendPayload := shared.AsMap(sendResult.Payload)
+	runID := strings.TrimSpace(shared.StringArg(sendPayload, "runId", turnID))
+	waitResult := o.server.gateway.RequestByMode(
+		gatewayProvider,
+		"agent.wait",
+		map[string]any{
+			"runId":     runID,
+			"timeoutMs": 120000,
+		},
+		2*time.Minute,
+		notifyWithCollection,
+	)
+	if !waitResult.OK {
+		return nil, gatewayRPCError(waitResult.Error, "openclaw agent.wait failed")
+	}
+	waitPayload := shared.AsMap(waitResult.Payload)
+	output := collector.output()
+	if output == "" {
+		output = firstNonEmptyString(waitPayload, "output", "message", "summary", "assistantText", "text")
+	}
+	if output == "" {
+		output = "OpenClaw completed without displayable output."
+	}
+	return map[string]any{
+		"success":                   true,
+		"output":                    output,
+		"message":                   output,
+		"summary":                   output,
+		"turnId":                    turnID,
+		"runId":                     runID,
+		"mode":                      router.ExecutionTargetGatewayChat,
+		"resolvedGatewayProviderId": gatewayProvider,
+	}, nil
+}
+
+func isSessionTaskMethod(method string) bool {
+	switch strings.TrimSpace(method) {
+	case "session.start", "session.message":
+		return true
+	default:
+		return false
+	}
+}
+
+func openClawChatSendParams(params map[string]any, turnID string) (map[string]any, *shared.RPCError) {
+	message := firstNonEmptyString(params, "taskPrompt", "prompt", "message")
+	if message == "" {
+		return nil, &shared.RPCError{Code: -32602, Message: "OPENCLAW_TASK_PROMPT_REQUIRED"}
+	}
+	sessionKey := openClawSessionKey(params, turnID)
+	chatParams := map[string]any{
+		"sessionKey":     sessionKey,
+		"message":        message,
+		"idempotencyKey": turnID,
+	}
+	if attachments := shared.ListArg(params, "attachments"); len(attachments) > 0 {
+		chatParams["attachments"] = attachments
+	}
+	if thinking := strings.TrimSpace(shared.StringArg(params, "thinking", "")); thinking != "" {
+		chatParams["thinking"] = thinking
+	}
+	return chatParams, nil
+}
+
+func openClawSessionKey(params map[string]any, turnID string) string {
+	for _, key := range []string{"threadId", "sessionId"} {
+		if value := strings.TrimSpace(shared.StringArg(params, key, "")); value != "" {
+			return value
+		}
+	}
+	if trimmed := strings.TrimSpace(turnID); trimmed != "" {
+		return trimmed
+	}
+	return "main"
+}
+
+func gatewayRPCError(errorPayload map[string]any, fallback string) *shared.RPCError {
+	message := strings.TrimSpace(shared.StringArg(errorPayload, "message", fallback))
+	if message == "" {
+		message = fallback
+	}
+	return &shared.RPCError{Code: -32002, Message: message}
+}
+
+func firstNonEmptyString(values map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(shared.StringArg(values, key, "")); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+type openClawChatCollector struct {
+	parts []string
+	final string
+}
+
+func newOpenClawChatCollector() *openClawChatCollector {
+	return &openClawChatCollector{}
+}
+
+func (c *openClawChatCollector) observe(notification map[string]any) {
+	if c == nil {
+		return
+	}
+	event := shared.AsMap(shared.AsMap(notification["params"])["event"])
+	if len(event) == 0 || strings.TrimSpace(shared.StringArg(event, "event", "")) != "chat.run" {
+		return
+	}
+	payload := shared.AsMap(event["payload"])
+	text := firstNonEmptyString(payload, "assistantText", "text", "message", "output", "summary")
+	if text == "" {
+		return
+	}
+	if isTerminalGatewayPayload(payload) {
+		c.final = text
+		return
+	}
+	c.parts = append(c.parts, text)
+}
+
+func (c *openClawChatCollector) output() string {
+	if c == nil {
+		return ""
+	}
+	if strings.TrimSpace(c.final) != "" {
+		return strings.TrimSpace(c.final)
+	}
+	return strings.TrimSpace(strings.Join(c.parts, ""))
+}
+
+func isTerminalGatewayPayload(payload map[string]any) bool {
+	if payload == nil {
+		return false
+	}
+	if value, ok := payload["terminal"].(bool); ok && value {
+		return true
+	}
+	switch strings.TrimSpace(strings.ToLower(shared.StringArg(payload, "state", ""))) {
+	case "complete", "completed", "done", "ok", "success", "failed", "error", "timeout", "timed_out", "cancelled", "canceled":
+		return true
+	default:
+		return false
+	}
 }
 
 func resolvedGatewayProviderID(params map[string]any, routing RoutingResult) string {

@@ -1,6 +1,7 @@
 package acp
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -270,10 +271,55 @@ func TestHTTPHandlerGatewayOpenClawForcesGatewayRouting(t *testing.T) {
 	if !strings.Contains(recorder.Body.String(), `"resolvedGatewayProviderId":"openclaw"`) {
 		t.Fatalf("expected forced OpenClaw gateway result, got %q", recorder.Body.String())
 	}
-	if gateway.ChatRunCount() != 1 {
-		t.Fatalf("expected one OpenClaw chat.run, got %d", gateway.ChatRunCount())
+	if gateway.ChatSendCount() != 1 {
+		t.Fatalf("expected one OpenClaw chat.send, got %d", gateway.ChatSendCount())
+	}
+	if gateway.AgentWaitCount() != 1 {
+		t.Fatalf("expected one OpenClaw agent.wait, got %d", gateway.AgentWaitCount())
 	}
 }
+
+func TestSafeSSEStreamDropsLateNotificationsAfterClose(t *testing.T) {
+	writer := &panicSSEWriter{header: http.Header{}}
+	stream := newSafeSSEStream(context.Background(), writer)
+
+	stream.close()
+	if stream.write(map[string]any{"method": "xworkmate.gateway.push"}) {
+		t.Fatal("expected closed stream to drop late notification")
+	}
+	if writer.writes != 0 {
+		t.Fatalf("expected no write after close, got %d", writer.writes)
+	}
+
+	openStream := newSafeSSEStream(context.Background(), writer)
+	writer.panicOnWrite = true
+	if openStream.write(map[string]any{"method": "xworkmate.gateway.push"}) {
+		t.Fatal("expected panic writer to be marked closed")
+	}
+	if openStream.write(map[string]any{"method": "xworkmate.gateway.push"}) {
+		t.Fatal("expected writes after panic to stay closed")
+	}
+}
+
+type panicSSEWriter struct {
+	header       http.Header
+	writes       int
+	panicOnWrite bool
+}
+
+func (w *panicSSEWriter) Header() http.Header {
+	return w.header
+}
+
+func (w *panicSSEWriter) Write(payload []byte) (int, error) {
+	w.writes++
+	if w.panicOnWrite {
+		panic("closed response writer")
+	}
+	return len(payload), nil
+}
+
+func (w *panicSSEWriter) WriteHeader(int) {}
 
 func TestHTTPHandlerPingRequiresBearerAuthorizationWhenBridgeAuthTokenConfigured(t *testing.T) {
 	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")

@@ -40,9 +40,10 @@ func DecodeRPCRequest(payload []byte) (RPCRequest, error) {
 	return request, nil
 }
 
-func WriteSSE(w http.ResponseWriter, payload map[string]any) {
+func WriteSSE(w http.ResponseWriter, payload map[string]any) error {
 	encoded, _ := json.Marshal(payload)
-	_, _ = fmt.Fprintf(w, "data: %s\n\n", encoded)
+	_, err := fmt.Fprintf(w, "data: %s\n\n", encoded)
+	return err
 }
 
 func ResultEnvelope(id any, result map[string]any) map[string]any {
