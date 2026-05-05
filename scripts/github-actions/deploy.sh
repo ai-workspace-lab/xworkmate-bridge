@@ -30,6 +30,7 @@ args=(
   ansible-playbook
   -i inventory.ini
   deploy_xworkmate_bridge_vhosts.yml
+  --tags xworkmate_bridge
   -l "${TARGET_HOST}"
 )
 

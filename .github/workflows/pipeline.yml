@@ -230,6 +230,7 @@ jobs:
           fi
           ansible-playbook -i inventory.ini deploy_xworkmate_bridge_vhosts.yml \
             -D ${CHECK_MODE_FLAG} \
+            --tags xworkmate_bridge \
             -l "${{ steps.deploy_meta.outputs.target_host }}" \
             -e "service_compose_image=${SERVICE_COMPOSE_IMAGE}" \
             -e "ghcr_username=${{ env.GHCR_USERNAME }}" \
