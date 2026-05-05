@@ -185,6 +185,7 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
+	artifactSinceUnixMs := time.Now().Add(-1 * time.Second).UnixMilli()
 	sendResult := o.server.gateway.RequestByMode(
 		gatewayProvider,
 		"chat.send",
@@ -218,7 +219,7 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 	if output == "" {
 		output = "OpenClaw completed without displayable output."
 	}
-	return map[string]any{
+	result := map[string]any{
 		"success":                   true,
 		"output":                    output,
 		"message":                   output,
@@ -227,7 +228,17 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 		"runId":                     runID,
 		"mode":                      router.ExecutionTargetGatewayChat,
 		"resolvedGatewayProviderId": gatewayProvider,
-	}, nil
+	}
+	mergeOpenClawArtifactPayload(result, waitPayload)
+	mergeOpenClawArtifactPayload(result, collector.artifactPayload())
+	mergeOpenClawArtifactPayload(result, o.openClawArtifactExport(
+		gatewayProvider,
+		chatParams,
+		runID,
+		artifactSinceUnixMs,
+		notifyWithCollection,
+	))
+	return result, nil
 }
 
 func isSessionTaskMethod(method string) bool {
@@ -271,6 +282,89 @@ func openClawSessionKey(params map[string]any, turnID string) string {
 	return "main"
 }
 
+func (o *SessionOrchestrator) openClawArtifactExport(
+	gatewayProvider string,
+	chatParams map[string]any,
+	runID string,
+	sinceUnixMs int64,
+	notify func(map[string]any),
+) map[string]any {
+	sessionKey := strings.TrimSpace(shared.StringArg(chatParams, "sessionKey", ""))
+	if sessionKey == "" || strings.TrimSpace(runID) == "" {
+		return nil
+	}
+	exportResult := o.server.gateway.RequestByMode(
+		gatewayProvider,
+		"xworkmate.artifacts.export",
+		map[string]any{
+			"sessionKey":     sessionKey,
+			"runId":          strings.TrimSpace(runID),
+			"sinceUnixMs":    sinceUnixMs,
+			"maxFiles":       64,
+			"maxInlineBytes": 10 * 1024 * 1024,
+		},
+		30*time.Second,
+		notify,
+	)
+	if exportResult.OK {
+		return shared.AsMap(exportResult.Payload)
+	}
+	message := strings.TrimSpace(shared.StringArg(exportResult.Error, "message", ""))
+	if message == "" {
+		message = "openclaw artifact export unavailable"
+	}
+	return map[string]any{
+		"artifactWarnings": []any{message},
+	}
+}
+
+func mergeOpenClawArtifactPayload(result map[string]any, source map[string]any) {
+	if result == nil || len(source) == 0 {
+		return
+	}
+	if strings.TrimSpace(shared.StringArg(result, "remoteWorkingDirectory", "")) == "" {
+		if remoteWorkingDirectory := strings.TrimSpace(shared.StringArg(source, "remoteWorkingDirectory", "")); remoteWorkingDirectory != "" {
+			result["remoteWorkingDirectory"] = remoteWorkingDirectory
+		}
+	}
+	if strings.TrimSpace(shared.StringArg(result, "remoteWorkspaceRefKind", "")) == "" {
+		if remoteWorkspaceRefKind := strings.TrimSpace(shared.StringArg(source, "remoteWorkspaceRefKind", "")); remoteWorkspaceRefKind != "" {
+			result["remoteWorkspaceRefKind"] = remoteWorkspaceRefKind
+		}
+	}
+	for _, key := range []string{"artifacts", "files", "attachments", "artifactWarnings", "warnings"} {
+		merged := appendArtifactList(result[key], source[key])
+		if len(merged) > 0 {
+			if key == "warnings" {
+				result["artifactWarnings"] = appendArtifactList(result["artifactWarnings"], source[key])
+				continue
+			}
+			result[key] = merged
+		}
+	}
+}
+
+func appendArtifactList(existing any, incoming any) []any {
+	merged := make([]any, 0)
+	switch typed := existing.(type) {
+	case []any:
+		merged = append(merged, typed...)
+	case []map[string]any:
+		for _, item := range typed {
+			merged = append(merged, item)
+		}
+	}
+	switch typed := incoming.(type) {
+	case []any:
+		merged = append(merged, typed...)
+	case []map[string]any:
+		for _, item := range typed {
+			merged = append(merged, item)
+		}
+	}
+	return merged
+}
+
 func gatewayRPCError(errorPayload map[string]any, fallback string) *shared.RPCError {
 	message := strings.TrimSpace(shared.StringArg(errorPayload, "message", fallback))
 	if message == "" {
@@ -289,8 +383,9 @@ func firstNonEmptyString(values map[string]any, keys ...string) string {
 }
 
 type openClawChatCollector struct {
-	parts []string
-	final string
+	parts            []string
+	final            string
+	artifactPayloads []map[string]any
 }
 
 func newOpenClawChatCollector() *openClawChatCollector {
@@ -302,10 +397,16 @@ func (c *openClawChatCollector) observe(notification map[string]any) {
 		return
 	}
 	event := shared.AsMap(shared.AsMap(notification["params"])["event"])
-	if len(event) == 0 || strings.TrimSpace(shared.StringArg(event, "event", "")) != "chat.run" {
+	if len(event) == 0 {
 		return
 	}
 	payload := shared.AsMap(event["payload"])
+	if hasArtifactPayload(payload) {
+		c.artifactPayloads = append(c.artifactPayloads, payload)
+	}
+	if strings.TrimSpace(shared.StringArg(event, "event", "")) != "chat.run" {
+		return
+	}
 	text := firstNonEmptyString(payload, "assistantText", "text", "message", "output", "summary")
 	if text == "" {
 		return
@@ -325,6 +426,29 @@ func (c *openClawChatCollector) output() string {
 		return strings.TrimSpace(c.final)
 	}
 	return strings.TrimSpace(strings.Join(c.parts, ""))
+}
+
+func (c *openClawChatCollector) artifactPayload() map[string]any {
+	if c == nil || len(c.artifactPayloads) == 0 {
+		return nil
+	}
+	result := map[string]any{}
+	for _, payload := range c.artifactPayloads {
+		mergeOpenClawArtifactPayload(result, payload)
+	}
+	return result
+}
+
+func hasArtifactPayload(payload map[string]any) bool {
+	if len(payload) == 0 {
+		return false
+	}
+	for _, key := range []string{"artifacts", "files", "attachments", "remoteWorkingDirectory", "remoteWorkspaceRefKind"} {
+		if _, ok := payload[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func isTerminalGatewayPayload(payload map[string]any) bool {
