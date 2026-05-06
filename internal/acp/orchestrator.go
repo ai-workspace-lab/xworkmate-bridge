@@ -755,7 +755,7 @@ func (o *SessionOrchestrator) normalizeResult(sess *session, result map[string]a
 	if len(artifactRecord.Artifacts) > 0 {
 		result["artifacts"] = artifactRecord.Artifacts
 	}
-	if routing.TargetID == "gateway" && isOpenClawMode(routing.GatewayProviderID) {
+	if openClawArtifactResponse(result, routing, params) {
 		stripOpenClawArtifactInlineContent(result)
 	}
 
@@ -773,6 +773,31 @@ func (o *SessionOrchestrator) normalizeResult(sess *session, result map[string]a
 	}
 
 	return result
+}
+
+func openClawArtifactResponse(result map[string]any, routing RoutingResult, params map[string]any) bool {
+	if routing.TargetID != "gateway" {
+		return false
+	}
+	for _, provider := range []string{
+		routing.GatewayProviderID,
+		shared.StringArg(result, "resolvedGatewayProviderId", ""),
+		shared.StringArg(result, "gatewayProviderId", ""),
+		shared.StringArg(result, "gatewayProvider", ""),
+		shared.StringArg(params, "gatewayProviderId", ""),
+		shared.StringArg(params, "gatewayProvider", ""),
+	} {
+		if isOpenClawMode(provider) {
+			return true
+		}
+	}
+	routingParams := shared.AsMap(params["routing"])
+	for _, key := range []string{"preferredGatewayProviderId", "gatewayProviderId", "gatewayProvider"} {
+		if isOpenClawMode(shared.StringArg(routingParams, key, "")) {
+			return true
+		}
+	}
+	return strings.HasPrefix(strings.TrimSpace(shared.StringArg(result, "artifactScope", "")), ".xworkmate/artifacts/tasks/")
 }
 
 func taskKindFromParams(params map[string]any, routing RoutingResult) TaskKind {
