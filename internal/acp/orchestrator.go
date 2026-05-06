@@ -246,7 +246,7 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 	}
 	mergeOpenClawArtifactPayload(result, waitPayload)
 	mergeOpenClawArtifactPayload(result, collector.artifactPayload())
-	mergeOpenClawArtifactPayload(result, o.openClawArtifactExport(
+	mergeOpenClawArtifactPayload(result, o.openClawArtifactExportForDelivery(
 		gatewayProvider,
 		chatParams,
 		artifactRunID,
@@ -259,6 +259,49 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 	stripOpenClawArtifactInlineContent(result)
 	guardOpenClawArtifactResult(result, artifactDeliveryRequired)
 	return result, nil
+}
+
+func (o *SessionOrchestrator) openClawArtifactExportForDelivery(
+	gatewayProvider string,
+	chatParams map[string]any,
+	runID string,
+	sinceUnixMs int64,
+	preparedArtifact *openClawPreparedArtifactScope,
+	artifactDeliveryRequired bool,
+	notify func(map[string]any),
+) map[string]any {
+	if !artifactDeliveryRequired {
+		return o.openClawArtifactExport(
+			gatewayProvider,
+			chatParams,
+			runID,
+			sinceUnixMs,
+			preparedArtifact,
+			false,
+			notify,
+		)
+	}
+	const attempts = 5
+	var payload map[string]any
+	for attempt := 0; attempt < attempts; attempt++ {
+		payload = o.openClawArtifactExport(
+			gatewayProvider,
+			chatParams,
+			runID,
+			sinceUnixMs,
+			preparedArtifact,
+			true,
+			notify,
+		)
+		remoteWorkingDirectory := strings.TrimSpace(shared.StringArg(payload, "remoteWorkingDirectory", ""))
+		if len(extractArtifactPayloads(payload, remoteWorkingDirectory)) > 0 {
+			return payload
+		}
+		if attempt < attempts-1 {
+			time.Sleep(time.Duration(attempt+1) * 400 * time.Millisecond)
+		}
+	}
+	return payload
 }
 
 func isSessionTaskMethod(method string) bool {
