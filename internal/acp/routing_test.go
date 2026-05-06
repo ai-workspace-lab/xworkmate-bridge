@@ -709,6 +709,75 @@ func TestExecuteSessionTaskGatewayExportsOpenClawArtifacts(t *testing.T) {
 	}
 }
 
+func TestExecuteSessionTaskGatewayExportsLatestWorkspaceArtifactsWhenScopedDirectoryEmpty(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	gateway.artifactMode = "workspace-latest"
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	response, rpcErr := server.executeSessionTask(task{
+		req: shared.RPCRequest{
+			Method: "session.start",
+			Params: map[string]any{
+				"sessionId":        "session-openclaw-latest-artifact",
+				"threadId":         "thread-openclaw-latest-artifact",
+				"taskPrompt":       "检查 workspace 已有真实制品，输出 artifacts files download。不要生成新文件，只简短说明。",
+				"workingDirectory": t.TempDir(),
+				"routing": map[string]any{
+					"routingMode":                "explicit",
+					"explicitExecutionTarget":    "gateway",
+					"preferredGatewayProviderId": "openclaw",
+				},
+			},
+		},
+	})
+	if rpcErr != nil {
+		t.Fatalf("expected latest workspace artifact response, got rpc error: %#v", rpcErr)
+	}
+	if got := response["success"]; got != true {
+		t.Fatalf("expected successful artifact response, got %#v", response)
+	}
+	if got := response["status"]; got == "artifact_missing" {
+		t.Fatalf("expected latest workspace artifact fallback, got %#v", response)
+	}
+	artifacts, ok := response["artifacts"].([]map[string]any)
+	if !ok {
+		raw, ok := response["artifacts"].([]any)
+		if !ok {
+			t.Fatalf("expected artifacts payload, got %#v", response["artifacts"])
+		}
+		artifacts = make([]map[string]any, 0, len(raw))
+		for _, item := range raw {
+			artifacts = append(artifacts, shared.AsMap(item))
+		}
+	}
+	if len(artifacts) != 1 {
+		t.Fatalf("expected one latest workspace artifact, got %#v", artifacts)
+	}
+	if got := artifacts[0]["relativePath"]; got != "existing/report.pdf" {
+		t.Fatalf("expected latest workspace artifact relative path, got %#v", artifacts[0])
+	}
+	if got := artifacts[0]["scopeKind"]; got != "workspace-latest" {
+		t.Fatalf("expected workspace-latest artifact scope kind, got %#v", artifacts[0])
+	}
+	if got := strings.TrimSpace(shared.StringArg(artifacts[0], "downloadUrl", "")); got == "" {
+		t.Fatalf("expected bridge downloadUrl on latest workspace artifact, got %#v", artifacts[0])
+	}
+	exportParams := gateway.LastArtifactExportParams()
+	if got := strings.TrimSpace(shared.StringArg(exportParams, "artifactScope", "")); !strings.HasPrefix(got, ".xworkmate/artifacts/tasks/thread-openclaw-latest-artifact/") {
+		t.Fatalf("expected scoped artifact export params, got %#v", exportParams)
+	}
+	if got := shared.BoolArg(shared.StringArg(exportParams, "latestIfEmpty", ""), false); !got {
+		t.Fatalf("expected latestIfEmpty export param, got %#v", exportParams)
+	}
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "agent.wait", "xworkmate.artifacts.export"}) {
+		t.Fatalf("expected connect, artifact prepare, chat.send, agent.wait, then artifact export, got %#v", got)
+	}
+}
+
 func TestHTTPHandlerOpenClawArtifactDownloadReadsViaGateway(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
@@ -1164,18 +1233,19 @@ func TestExtractArtifactPayloadsRejectsUnsafeDownloadURLArtifactNames(t *testing
 }
 
 type acpFakeOpenClawGateway struct {
-	server            *http.Server
-	listener          net.Listener
-	connectCount      atomic.Int32
-	chatSendCount     atomic.Int32
-	agentWaitCount    atomic.Int32
-	artifactCount     atomic.Int32
-	artifactReadCount atomic.Int32
-	lastConnectClient atomic.Value
-	mu                sync.Mutex
-	methods           []string
-	runMessages       map[string]string
-	artifactMode      string
+	server                   *http.Server
+	listener                 net.Listener
+	connectCount             atomic.Int32
+	chatSendCount            atomic.Int32
+	agentWaitCount           atomic.Int32
+	artifactCount            atomic.Int32
+	artifactReadCount        atomic.Int32
+	lastConnectClient        atomic.Value
+	lastArtifactExportParams atomic.Value
+	mu                       sync.Mutex
+	methods                  []string
+	runMessages              map[string]string
+	artifactMode             string
 }
 
 func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
@@ -1407,6 +1477,7 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 					continue
 				}
 				params := shared.AsMap(frame["params"])
+				fake.lastArtifactExportParams.Store(params)
 				runID := strings.TrimSpace(shared.StringArg(params, "runId", "fake-run"))
 				artifactScope := strings.TrimSpace(shared.StringArg(params, "artifactScope", ""))
 				payload := map[string]any{
@@ -1434,6 +1505,24 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 							"scopeKind":     "task",
 							"encoding":      "base64",
 							"content":       "ZmluYWwgcmVwb3J0",
+						},
+					}
+				}
+				if fake.artifactMode == "workspace-latest" &&
+					shared.BoolArg(shared.StringArg(params, "latestIfEmpty", ""), false) &&
+					artifactScope != "" &&
+					len(payload["artifacts"].([]any)) == 0 {
+					payload["scopeKind"] = "workspace-latest"
+					payload["artifacts"] = []any{
+						map[string]any{
+							"relativePath": "existing/report.pdf",
+							"label":        "report.pdf",
+							"contentType":  "application/pdf",
+							"sizeBytes":    3,
+							"sha256":       "latest-sha256",
+							"scopeKind":    "workspace-latest",
+							"encoding":     "base64",
+							"content":      "cGRm",
 						},
 					}
 				}
@@ -1571,6 +1660,14 @@ func (f *acpFakeOpenClawGateway) ArtifactExportCount() int {
 
 func (f *acpFakeOpenClawGateway) ArtifactReadCount() int {
 	return int(f.artifactReadCount.Load())
+}
+
+func (f *acpFakeOpenClawGateway) LastArtifactExportParams() map[string]any {
+	value := f.lastArtifactExportParams.Load()
+	if value == nil {
+		return nil
+	}
+	return shared.AsMap(value)
 }
 
 func (f *acpFakeOpenClawGateway) LastConnectClient() map[string]any {
