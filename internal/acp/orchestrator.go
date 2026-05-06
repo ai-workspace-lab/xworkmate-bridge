@@ -246,13 +246,16 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 	}
 	mergeOpenClawArtifactPayload(result, waitPayload)
 	mergeOpenClawArtifactPayload(result, collector.artifactPayload())
+	if preparedArtifact == nil {
+		preparedArtifact = openClawPreparedArtifactScopeFromPayload(result)
+	}
 	mergeOpenClawArtifactPayload(result, o.openClawArtifactExportForDelivery(
 		gatewayProvider,
 		chatParams,
 		artifactRunID,
 		artifactSinceUnixMs,
 		preparedArtifact,
-		artifactDeliveryRequired,
+		artifactDeliveryRequired || preparedArtifact != nil,
 		notifyWithCollection,
 	))
 	o.server.decorateOpenClawArtifactDownloadURLs(result, shared.StringArg(chatParams, "sessionKey", ""), artifactRunID)
@@ -317,6 +320,24 @@ type openClawPreparedArtifactScope struct {
 	ArtifactScope     string
 	ArtifactDirectory string
 	ScopeKind         string
+}
+
+func openClawPreparedArtifactScopeFromPayload(payload map[string]any) *openClawPreparedArtifactScope {
+	if payload == nil {
+		return nil
+	}
+	prepared := &openClawPreparedArtifactScope{
+		ArtifactScope:     strings.TrimSpace(shared.StringArg(payload, "artifactScope", "")),
+		ArtifactDirectory: strings.TrimSpace(shared.StringArg(payload, "artifactDirectory", "")),
+		ScopeKind:         strings.TrimSpace(shared.StringArg(payload, "scopeKind", "")),
+	}
+	if prepared.ArtifactScope == "" || prepared.ArtifactDirectory == "" {
+		return nil
+	}
+	if prepared.ScopeKind == "" {
+		prepared.ScopeKind = "task"
+	}
+	return prepared
 }
 
 func openClawChatSendParams(
@@ -869,7 +890,7 @@ func openClawArtifactResponse(result map[string]any, routing RoutingResult, para
 			return true
 		}
 	}
-	if strings.HasPrefix(strings.TrimSpace(shared.StringArg(result, "artifactScope", "")), ".xworkmate/artifacts/tasks/") {
+	if strings.HasPrefix(strings.TrimSpace(shared.StringArg(result, "artifactScope", "")), "tasks/") {
 		return true
 	}
 	for _, key := range []string{"artifacts", "files", "attachments"} {
@@ -900,7 +921,7 @@ func openClawArtifactListHasScopedArtifact(raw any) bool {
 }
 
 func openClawArtifactHasBridgeDownloadRef(artifact map[string]any) bool {
-	if strings.HasPrefix(strings.TrimSpace(shared.StringArg(artifact, "artifactScope", "")), ".xworkmate/artifacts/tasks/") {
+	if strings.HasPrefix(strings.TrimSpace(shared.StringArg(artifact, "artifactScope", "")), "tasks/") {
 		return true
 	}
 	downloadURL := strings.TrimSpace(shared.StringArg(artifact, "downloadUrl", ""))
