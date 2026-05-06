@@ -256,6 +256,7 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 		notifyWithCollection,
 	))
 	o.server.decorateOpenClawArtifactDownloadURLs(result, shared.StringArg(chatParams, "sessionKey", ""), artifactRunID)
+	stripOpenClawArtifactInlineContent(result)
 	guardOpenClawArtifactResult(result, artifactDeliveryRequired)
 	return result, nil
 }
@@ -432,7 +433,8 @@ func (o *SessionOrchestrator) openClawArtifactExport(
 		"runId":          strings.TrimSpace(runID),
 		"sinceUnixMs":    sinceUnixMs,
 		"maxFiles":       64,
-		"maxInlineBytes": 10 * 1024 * 1024,
+		"maxInlineBytes": 0,
+		"includeContent": false,
 	}
 	if preparedArtifact != nil && strings.TrimSpace(preparedArtifact.ArtifactScope) != "" {
 		exportParams["artifactScope"] = strings.TrimSpace(preparedArtifact.ArtifactScope)

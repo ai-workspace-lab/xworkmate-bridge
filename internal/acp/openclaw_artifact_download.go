@@ -175,6 +175,32 @@ func (s *Server) decorateOpenClawArtifactDownloadURLs(result map[string]any, ses
 	}
 }
 
+func stripOpenClawArtifactInlineContent(result map[string]any) {
+	if result == nil {
+		return
+	}
+	for _, key := range []string{"artifacts", "files", "attachments"} {
+		switch items := result[key].(type) {
+		case []any:
+			for _, item := range items {
+				stripOpenClawArtifactMapInlineContent(shared.AsMap(item))
+			}
+		case []map[string]any:
+			for _, item := range items {
+				stripOpenClawArtifactMapInlineContent(item)
+			}
+		}
+	}
+}
+
+func stripOpenClawArtifactMapInlineContent(artifact map[string]any) {
+	if artifact == nil {
+		return
+	}
+	delete(artifact, "encoding")
+	delete(artifact, "content")
+}
+
 func (s *Server) decorateOpenClawArtifactDownloadURL(
 	artifact map[string]any,
 	sessionKey string,

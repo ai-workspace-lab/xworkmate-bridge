@@ -677,8 +677,11 @@ func TestExecuteSessionTaskGatewayExportsOpenClawArtifacts(t *testing.T) {
 	if got := artifacts[0]["relativePath"]; got != "reports/final.md" {
 		t.Fatalf("expected manifest artifact relative path, got %#v", artifacts[0])
 	}
-	if got := artifacts[0]["encoding"]; got != "base64" {
-		t.Fatalf("expected inline base64 artifact, got %#v", artifacts[0])
+	if _, ok := artifacts[0]["encoding"]; ok {
+		t.Fatalf("expected OpenClaw task response to omit inline artifact encoding, got %#v", artifacts[0])
+	}
+	if _, ok := artifacts[0]["content"]; ok {
+		t.Fatalf("expected OpenClaw task response to omit inline artifact content, got %#v", artifacts[0])
 	}
 	downloadURL := strings.TrimSpace(shared.StringArg(artifacts[0], "downloadUrl", ""))
 	if downloadURL == "" {
@@ -703,6 +706,13 @@ func TestExecuteSessionTaskGatewayExportsOpenClawArtifacts(t *testing.T) {
 	}
 	if parsedDownloadURL.Query().Get("sig") == "" {
 		t.Fatalf("expected signed downloadUrl, got %q", downloadURL)
+	}
+	exportParams := gateway.LastArtifactExportParams()
+	if got := strings.TrimSpace(shared.StringArg(exportParams, "maxInlineBytes", "")); got != "0" {
+		t.Fatalf("expected OpenClaw artifact export to disable inline content, got %#v", exportParams)
+	}
+	if got := shared.BoolArg(shared.StringArg(exportParams, "includeContent", ""), true); got {
+		t.Fatalf("expected OpenClaw artifact export to omit content, got %#v", exportParams)
 	}
 	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "agent.wait", "xworkmate.artifacts.export"}) {
 		t.Fatalf("expected connect, artifact prepare, chat.send, agent.wait, then artifact export, got %#v", got)
@@ -766,12 +776,24 @@ func TestExecuteSessionTaskGatewayExportsLatestWorkspaceArtifactsWhenScopedDirec
 	if got := strings.TrimSpace(shared.StringArg(artifacts[0], "downloadUrl", "")); got == "" {
 		t.Fatalf("expected bridge downloadUrl on latest workspace artifact, got %#v", artifacts[0])
 	}
+	if _, ok := artifacts[0]["encoding"]; ok {
+		t.Fatalf("expected latest workspace artifact response to omit inline encoding, got %#v", artifacts[0])
+	}
+	if _, ok := artifacts[0]["content"]; ok {
+		t.Fatalf("expected latest workspace artifact response to omit inline content, got %#v", artifacts[0])
+	}
 	exportParams := gateway.LastArtifactExportParams()
 	if got := strings.TrimSpace(shared.StringArg(exportParams, "artifactScope", "")); !strings.HasPrefix(got, ".xworkmate/artifacts/tasks/thread-openclaw-latest-artifact/") {
 		t.Fatalf("expected scoped artifact export params, got %#v", exportParams)
 	}
 	if got := shared.BoolArg(shared.StringArg(exportParams, "latestIfEmpty", ""), false); !got {
 		t.Fatalf("expected latestIfEmpty export param, got %#v", exportParams)
+	}
+	if got := strings.TrimSpace(shared.StringArg(exportParams, "maxInlineBytes", "")); got != "0" {
+		t.Fatalf("expected latest workspace export to disable inline content, got %#v", exportParams)
+	}
+	if got := shared.BoolArg(shared.StringArg(exportParams, "includeContent", ""), true); got {
+		t.Fatalf("expected latest workspace export to omit content, got %#v", exportParams)
 	}
 	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "agent.wait", "xworkmate.artifacts.export"}) {
 		t.Fatalf("expected connect, artifact prepare, chat.send, agent.wait, then artifact export, got %#v", got)
