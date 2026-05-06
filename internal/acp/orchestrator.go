@@ -281,7 +281,7 @@ func (o *SessionOrchestrator) openClawArtifactExportForDelivery(
 			notify,
 		)
 	}
-	const attempts = 5
+	const attempts = 20
 	var payload map[string]any
 	for attempt := 0; attempt < attempts; attempt++ {
 		payload = o.openClawArtifactExport(
@@ -298,7 +298,7 @@ func (o *SessionOrchestrator) openClawArtifactExportForDelivery(
 			return payload
 		}
 		if attempt < attempts-1 {
-			time.Sleep(time.Duration(attempt+1) * 400 * time.Millisecond)
+			time.Sleep(1 * time.Second)
 		}
 	}
 	return payload
