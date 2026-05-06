@@ -182,9 +182,14 @@ func stripOpenClawArtifactInlineContent(result map[string]any) {
 	for _, key := range []string{"artifacts", "files", "attachments"} {
 		switch items := result[key].(type) {
 		case []any:
-			for _, item := range items {
-				stripOpenClawArtifactMapInlineContent(shared.AsMap(item))
+			for index, item := range items {
+				mapped := shared.AsMap(item)
+				stripOpenClawArtifactMapInlineContent(mapped)
+				if mapped != nil {
+					items[index] = mapped
+				}
 			}
+			result[key] = items
 		case []map[string]any:
 			for _, item := range items {
 				stripOpenClawArtifactMapInlineContent(item)
