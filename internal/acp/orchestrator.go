@@ -809,19 +809,30 @@ func openClawArtifactListHasScopedArtifact(raw any) bool {
 	switch values := raw.(type) {
 	case []map[string]any:
 		for _, artifact := range values {
-			if strings.HasPrefix(strings.TrimSpace(shared.StringArg(artifact, "artifactScope", "")), ".xworkmate/artifacts/tasks/") {
+			if openClawArtifactHasBridgeDownloadRef(artifact) {
 				return true
 			}
 		}
 	case []any:
 		for _, item := range values {
 			artifact := shared.AsMap(item)
-			if strings.HasPrefix(strings.TrimSpace(shared.StringArg(artifact, "artifactScope", "")), ".xworkmate/artifacts/tasks/") {
+			if openClawArtifactHasBridgeDownloadRef(artifact) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+func openClawArtifactHasBridgeDownloadRef(artifact map[string]any) bool {
+	if strings.HasPrefix(strings.TrimSpace(shared.StringArg(artifact, "artifactScope", "")), ".xworkmate/artifacts/tasks/") {
+		return true
+	}
+	downloadURL := strings.TrimSpace(shared.StringArg(artifact, "downloadUrl", ""))
+	if downloadURL == "" {
+		downloadURL = strings.TrimSpace(shared.StringArg(artifact, "downloadURL", ""))
+	}
+	return strings.Contains(downloadURL, "/artifacts/openclaw/download")
 }
 
 func taskKindFromParams(params map[string]any, routing RoutingResult) TaskKind {
