@@ -755,6 +755,9 @@ func (o *SessionOrchestrator) normalizeResult(sess *session, result map[string]a
 	if len(artifactRecord.Artifacts) > 0 {
 		result["artifacts"] = artifactRecord.Artifacts
 	}
+	if routing.TargetID == "gateway" && isOpenClawMode(routing.GatewayProviderID) {
+		stripOpenClawArtifactInlineContent(result)
+	}
 
 	workingDirectory := shared.StringArg(params, "workingDirectory", "")
 	routingParams := shared.AsMap(params["routing"])

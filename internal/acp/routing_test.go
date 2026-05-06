@@ -800,6 +800,55 @@ func TestExecuteSessionTaskGatewayExportsLatestWorkspaceArtifactsWhenScopedDirec
 	}
 }
 
+func TestNormalizeResultStripsOpenClawInlineArtifactsAfterRecordNormalization(t *testing.T) {
+	server := NewServer()
+	orchestrator := NewSessionOrchestrator(server)
+	sess := server.getOrCreateSession("session-openclaw-normalize", "thread-openclaw-normalize")
+	response := orchestrator.normalizeResult(
+		sess,
+		map[string]any{
+			"success": true,
+			"output":  "created files",
+			"artifacts": []any{
+				map[string]any{
+					"relativePath": "reports/final.md",
+					"label":        "final.md",
+					"contentType":  "text/markdown",
+					"sizeBytes":    12,
+					"sha256":       "fake-sha256",
+					"downloadUrl":  "https://xworkmate-bridge.svc.plus/artifacts/openclaw/download?relativePath=reports%2Ffinal.md",
+					"encoding":     "base64",
+					"content":      "ZmluYWwgcmVwb3J0",
+				},
+			},
+		},
+		RoutingResult{
+			TargetID:          "gateway",
+			ProviderID:        "gateway",
+			GatewayProviderID: "openclaw",
+		},
+		"turn-openclaw-normalize",
+		map[string]any{},
+	)
+
+	artifacts, ok := response["artifacts"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected normalized artifacts, got %#v", response["artifacts"])
+	}
+	if len(artifacts) != 1 {
+		t.Fatalf("expected one artifact, got %#v", artifacts)
+	}
+	if _, ok := artifacts[0]["encoding"]; ok {
+		t.Fatalf("expected normalized OpenClaw artifact to omit encoding, got %#v", artifacts[0])
+	}
+	if _, ok := artifacts[0]["content"]; ok {
+		t.Fatalf("expected normalized OpenClaw artifact to omit content, got %#v", artifacts[0])
+	}
+	if got := strings.TrimSpace(shared.StringArg(artifacts[0], "downloadUrl", "")); got == "" {
+		t.Fatalf("expected normalized artifact to keep downloadUrl, got %#v", artifacts[0])
+	}
+}
+
 func TestHTTPHandlerOpenClawArtifactDownloadReadsViaGateway(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
