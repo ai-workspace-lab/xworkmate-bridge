@@ -220,6 +220,9 @@ func (s *Server) handleRPCWithTransform(
 		_ = json.NewEncoder(w).Encode(envelope)
 		return
 	}
+	if r.URL.Path == "/gateway/openclaw" {
+		stripOpenClawArtifactInlineContent(response)
+	}
 	if stream {
 		streamWriter.write(shared.ResultEnvelope(request.ID, response))
 		streamWriter.done()
