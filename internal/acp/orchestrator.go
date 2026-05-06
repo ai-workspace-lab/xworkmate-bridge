@@ -776,9 +776,6 @@ func (o *SessionOrchestrator) normalizeResult(sess *session, result map[string]a
 }
 
 func openClawArtifactResponse(result map[string]any, routing RoutingResult, params map[string]any) bool {
-	if routing.TargetID != "gateway" {
-		return false
-	}
 	for _, provider := range []string{
 		routing.GatewayProviderID,
 		shared.StringArg(result, "resolvedGatewayProviderId", ""),
@@ -797,7 +794,34 @@ func openClawArtifactResponse(result map[string]any, routing RoutingResult, para
 			return true
 		}
 	}
-	return strings.HasPrefix(strings.TrimSpace(shared.StringArg(result, "artifactScope", "")), ".xworkmate/artifacts/tasks/")
+	if strings.HasPrefix(strings.TrimSpace(shared.StringArg(result, "artifactScope", "")), ".xworkmate/artifacts/tasks/") {
+		return true
+	}
+	for _, key := range []string{"artifacts", "files", "attachments"} {
+		if openClawArtifactListHasScopedArtifact(result[key]) {
+			return true
+		}
+	}
+	return false
+}
+
+func openClawArtifactListHasScopedArtifact(raw any) bool {
+	switch values := raw.(type) {
+	case []map[string]any:
+		for _, artifact := range values {
+			if strings.HasPrefix(strings.TrimSpace(shared.StringArg(artifact, "artifactScope", "")), ".xworkmate/artifacts/tasks/") {
+				return true
+			}
+		}
+	case []any:
+		for _, item := range values {
+			artifact := shared.AsMap(item)
+			if strings.HasPrefix(strings.TrimSpace(shared.StringArg(artifact, "artifactScope", "")), ".xworkmate/artifacts/tasks/") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func taskKindFromParams(params map[string]any, routing RoutingResult) TaskKind {
