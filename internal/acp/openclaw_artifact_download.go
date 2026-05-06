@@ -46,11 +46,17 @@ func (s *Server) HandleOpenClawArtifactDownload(w http.ResponseWriter, r *http.R
 	query := r.URL.Query()
 	sessionKey := strings.TrimSpace(query.Get("sessionKey"))
 	runID := strings.TrimSpace(query.Get("runId"))
+	rawArtifactScope := strings.TrimSpace(query.Get("artifactScope"))
+	artifactScope := safeOpenClawArtifactDownloadArtifactScope(rawArtifactScope)
 	relativePath := safeOpenClawArtifactDownloadRelativePath(query.Get("relativePath"))
 	expires := strings.TrimSpace(query.Get("expires"))
 	signature := strings.TrimSpace(query.Get("sig"))
 	if sessionKey == "" || runID == "" || relativePath == "" || expires == "" || signature == "" {
 		shared.WriteJSONError(w, nil, http.StatusBadRequest, -32602, "missing artifact download parameters")
+		return
+	}
+	if rawArtifactScope != "" && artifactScope == "" {
+		shared.WriteJSONError(w, nil, http.StatusBadRequest, -32602, "invalid artifact scope")
 		return
 	}
 	expiresUnix, err := strconv.ParseInt(expires, 10, 64)
@@ -62,7 +68,7 @@ func (s *Server) HandleOpenClawArtifactDownload(w http.ResponseWriter, r *http.R
 		shared.WriteJSONError(w, nil, http.StatusGone, -32041, "artifact download link expired")
 		return
 	}
-	if !validOpenClawArtifactDownloadSignature(sessionKey, runID, relativePath, expires, signature) {
+	if !validOpenClawArtifactDownloadSignature(sessionKey, runID, artifactScope, relativePath, expires, signature) {
 		shared.WriteJSONError(w, nil, http.StatusForbidden, -32042, "invalid artifact download signature")
 		return
 	}
@@ -71,15 +77,19 @@ func (s *Server) HandleOpenClawArtifactDownload(w http.ResponseWriter, r *http.R
 		shared.WriteJSONError(w, nil, http.StatusBadGateway, rpcErr.Code, rpcErr.Message)
 		return
 	}
+	readParams := map[string]any{
+		"sessionKey":     sessionKey,
+		"runId":          runID,
+		"relativePath":   relativePath,
+		"maxInlineBytes": openClawArtifactDownloadMaxBytes,
+	}
+	if artifactScope != "" {
+		readParams["artifactScope"] = artifactScope
+	}
 	readResult := s.gateway.RequestByMode(
 		"openclaw",
 		"xworkmate.artifacts.read",
-		map[string]any{
-			"sessionKey":     sessionKey,
-			"runId":          runID,
-			"relativePath":   relativePath,
-			"maxInlineBytes": openClawArtifactDownloadMaxBytes,
-		},
+		readParams,
 		time.Minute,
 		nil,
 	)
@@ -95,7 +105,7 @@ func (s *Server) HandleOpenClawArtifactDownload(w http.ResponseWriter, r *http.R
 
 	payload := shared.AsMap(readResult.Payload)
 	remoteWorkingDirectory := strings.TrimSpace(shared.StringArg(payload, "remoteWorkingDirectory", ""))
-	artifact, ok := firstOpenClawArtifactForPath(payload, remoteWorkingDirectory, relativePath)
+	artifact, ok := firstOpenClawArtifactForPath(payload, remoteWorkingDirectory, artifactScope, relativePath)
 	if !ok {
 		shared.WriteJSONError(w, nil, http.StatusNotFound, -32044, "artifact_missing")
 		return
@@ -144,6 +154,7 @@ func (s *Server) decorateOpenClawArtifactDownloadURLs(result map[string]any, ses
 	if result == nil || strings.TrimSpace(sessionKey) == "" || strings.TrimSpace(runID) == "" {
 		return
 	}
+	resultArtifactScope := safeOpenClawArtifactDownloadArtifactScope(shared.StringArg(result, "artifactScope", ""))
 	for _, key := range []string{"artifacts", "files", "attachments"} {
 		switch items := result[key].(type) {
 		case []any:
@@ -152,19 +163,24 @@ func (s *Server) decorateOpenClawArtifactDownloadURLs(result map[string]any, ses
 				if len(mapped) == 0 {
 					continue
 				}
-				s.decorateOpenClawArtifactDownloadURL(mapped, sessionKey, runID)
+				s.decorateOpenClawArtifactDownloadURL(mapped, sessionKey, runID, resultArtifactScope)
 				items[index] = mapped
 			}
 			result[key] = items
 		case []map[string]any:
 			for _, mapped := range items {
-				s.decorateOpenClawArtifactDownloadURL(mapped, sessionKey, runID)
+				s.decorateOpenClawArtifactDownloadURL(mapped, sessionKey, runID, resultArtifactScope)
 			}
 		}
 	}
 }
 
-func (s *Server) decorateOpenClawArtifactDownloadURL(artifact map[string]any, sessionKey string, runID string) {
+func (s *Server) decorateOpenClawArtifactDownloadURL(
+	artifact map[string]any,
+	sessionKey string,
+	runID string,
+	resultArtifactScope string,
+) {
 	if artifact == nil {
 		return
 	}
@@ -179,20 +195,38 @@ func (s *Server) decorateOpenClawArtifactDownloadURL(artifact map[string]any, se
 	if relativePath == "" {
 		return
 	}
-	downloadURL := s.openClawArtifactDownloadURL(sessionKey, runID, relativePath, time.Now())
+	artifactScope := safeOpenClawArtifactDownloadArtifactScope(shared.StringArg(artifact, "artifactScope", ""))
+	if artifactScope == "" {
+		artifactScope = resultArtifactScope
+	}
+	downloadURL := s.openClawArtifactDownloadURL(sessionKey, runID, artifactScope, relativePath, time.Now())
 	if downloadURL == "" {
 		return
 	}
 	artifact["relativePath"] = relativePath
+	if artifactScope != "" {
+		artifact["artifactScope"] = artifactScope
+	}
 	artifact["downloadUrl"] = downloadURL
 	delete(artifact, "downloadURL")
 	delete(artifact, "download_url")
 }
 
-func (s *Server) openClawArtifactDownloadURL(sessionKey string, runID string, relativePath string, now time.Time) string {
+func (s *Server) openClawArtifactDownloadURL(
+	sessionKey string,
+	runID string,
+	artifactScope string,
+	relativePath string,
+	now time.Time,
+) string {
 	sessionKey = strings.TrimSpace(sessionKey)
 	runID = strings.TrimSpace(runID)
+	rawArtifactScope := strings.TrimSpace(artifactScope)
+	artifactScope = safeOpenClawArtifactDownloadArtifactScope(artifactScope)
 	relativePath = safeOpenClawArtifactDownloadRelativePath(relativePath)
+	if rawArtifactScope != "" && artifactScope == "" {
+		return ""
+	}
 	if sessionKey == "" || runID == "" || relativePath == "" || openClawArtifactSigningSecret() == "" {
 		return ""
 	}
@@ -216,9 +250,10 @@ func (s *Server) openClawArtifactDownloadURL(sessionKey string, runID string, re
 	query := parsed.Query()
 	query.Set("sessionKey", sessionKey)
 	query.Set("runId", runID)
+	query.Set("artifactScope", artifactScope)
 	query.Set("relativePath", relativePath)
 	query.Set("expires", expires)
-	query.Set("sig", signOpenClawArtifactDownload(sessionKey, runID, relativePath, expires))
+	query.Set("sig", signOpenClawArtifactDownload(sessionKey, runID, artifactScope, relativePath, expires))
 	parsed.RawQuery = query.Encode()
 	return parsed.String()
 }
@@ -226,10 +261,15 @@ func (s *Server) openClawArtifactDownloadURL(sessionKey string, runID string, re
 func firstOpenClawArtifactForPath(
 	payload map[string]any,
 	remoteWorkingDirectory string,
+	artifactScope string,
 	relativePath string,
 ) (map[string]any, bool) {
 	artifacts := extractArtifactPayloads(payload, remoteWorkingDirectory)
 	for _, artifact := range artifacts {
+		if artifactScope != "" &&
+			safeOpenClawArtifactDownloadArtifactScope(shared.StringArg(artifact, "artifactScope", "")) != artifactScope {
+			continue
+		}
 		if safeOpenClawArtifactDownloadRelativePath(shared.StringArg(artifact, "relativePath", "")) == relativePath {
 			return artifact, true
 		}
@@ -258,14 +298,26 @@ func safeOpenClawArtifactDownloadRelativePath(rawPath string) string {
 	return cleaned
 }
 
+func safeOpenClawArtifactDownloadArtifactScope(rawScope string) string {
+	scope := safeOpenClawArtifactDownloadRelativePath(rawScope)
+	if scope == "" {
+		return ""
+	}
+	if !strings.HasPrefix(scope, ".xworkmate/artifacts/tasks/") {
+		return ""
+	}
+	return scope
+}
+
 func validOpenClawArtifactDownloadSignature(
 	sessionKey string,
 	runID string,
+	artifactScope string,
 	relativePath string,
 	expires string,
 	signature string,
 ) bool {
-	expected := signOpenClawArtifactDownload(sessionKey, runID, relativePath, expires)
+	expected := signOpenClawArtifactDownload(sessionKey, runID, artifactScope, relativePath, expires)
 	if expected == "" || signature == "" {
 		return false
 	}
@@ -280,15 +332,23 @@ func validOpenClawArtifactDownloadSignature(
 	return hmac.Equal(expectedBytes, actualBytes)
 }
 
-func signOpenClawArtifactDownload(sessionKey string, runID string, relativePath string, expires string) string {
+func signOpenClawArtifactDownload(
+	sessionKey string,
+	runID string,
+	artifactScope string,
+	relativePath string,
+	expires string,
+) string {
 	secret := openClawArtifactSigningSecret()
 	if secret == "" {
 		return ""
 	}
 	mac := hmac.New(sha256.New, []byte(secret))
+	artifactScope = safeOpenClawArtifactDownloadArtifactScope(artifactScope)
 	_, _ = mac.Write([]byte(strings.Join([]string{
 		strings.TrimSpace(sessionKey),
 		strings.TrimSpace(runID),
+		artifactScope,
 		safeOpenClawArtifactDownloadRelativePath(relativePath),
 		strings.TrimSpace(expires),
 	}, "\n")))

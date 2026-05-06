@@ -180,11 +180,26 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 			notify(message)
 		}
 	}
-	chatParams, rpcErr := openClawChatSendParams(params, turnID)
+	artifactDeliveryRequired := openClawArtifactDeliveryRequired(params)
+	sessionKey := openClawSessionKey(params, turnID)
+	artifactRunID := turnID
+	var preparedArtifact *openClawPreparedArtifactScope
+	if artifactDeliveryRequired {
+		var rpcErr *shared.RPCError
+		preparedArtifact, rpcErr = o.openClawArtifactPrepare(
+			gatewayProvider,
+			sessionKey,
+			artifactRunID,
+			notifyWithCollection,
+		)
+		if rpcErr != nil {
+			return nil, rpcErr
+		}
+	}
+	chatParams, rpcErr := openClawChatSendParams(params, turnID, preparedArtifact)
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	artifactDeliveryRequired := openClawArtifactDeliveryRequired(params)
 	artifactSinceUnixMs := time.Now().Add(-1 * time.Second).UnixMilli()
 	sendResult := o.server.gateway.RequestByMode(
 		gatewayProvider,
@@ -234,11 +249,13 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 	mergeOpenClawArtifactPayload(result, o.openClawArtifactExport(
 		gatewayProvider,
 		chatParams,
-		runID,
+		artifactRunID,
 		artifactSinceUnixMs,
+		preparedArtifact,
+		artifactDeliveryRequired,
 		notifyWithCollection,
 	))
-	o.server.decorateOpenClawArtifactDownloadURLs(result, shared.StringArg(chatParams, "sessionKey", ""), runID)
+	o.server.decorateOpenClawArtifactDownloadURLs(result, shared.StringArg(chatParams, "sessionKey", ""), artifactRunID)
 	guardOpenClawArtifactResult(result, artifactDeliveryRequired)
 	return result, nil
 }
@@ -252,13 +269,23 @@ func isSessionTaskMethod(method string) bool {
 	}
 }
 
-func openClawChatSendParams(params map[string]any, turnID string) (map[string]any, *shared.RPCError) {
+type openClawPreparedArtifactScope struct {
+	ArtifactScope     string
+	ArtifactDirectory string
+	ScopeKind         string
+}
+
+func openClawChatSendParams(
+	params map[string]any,
+	turnID string,
+	preparedArtifact *openClawPreparedArtifactScope,
+) (map[string]any, *shared.RPCError) {
 	message := firstNonEmptyString(params, "taskPrompt", "prompt", "message")
 	if message == "" {
 		return nil, &shared.RPCError{Code: -32602, Message: "OPENCLAW_TASK_PROMPT_REQUIRED"}
 	}
 	if openClawArtifactDeliveryRequired(params) {
-		message = withOpenClawArtifactDeliveryInstructions(message)
+		message = withOpenClawArtifactDeliveryInstructions(message, preparedArtifact)
 	}
 	sessionKey := openClawSessionKey(params, turnID)
 	chatParams := map[string]any{
@@ -290,7 +317,7 @@ func openClawArtifactDeliveryRequired(params map[string]any) bool {
 		"视频", "音频", "压缩包", "数据集", "文档", "报告", "演示", "幻灯片", "表格", "代码",
 	}
 	actionSignals := []string{
-		"create", "generate", "build", "write", "export", "output", "deliver", "download",
+		"create", "generate", "build", "make", "write", "export", "output", "deliver", "download",
 		"save", "produce", "render", "attach", "return",
 		"生成", "制作", "输出", "导出", "下载", "交付", "收取", "保存", "渲染", "返回", "提供",
 	}
@@ -312,18 +339,31 @@ func openClawArtifactDeliveryRequired(params map[string]any) bool {
 	return false
 }
 
-func withOpenClawArtifactDeliveryInstructions(message string) string {
+func withOpenClawArtifactDeliveryInstructions(
+	message string,
+	preparedArtifact *openClawPreparedArtifactScope,
+) string {
 	message = strings.TrimSpace(message)
 	if message == "" {
 		return message
 	}
-	return message + "\n\n" + strings.Join([]string{
+	lines := []string{
 		"XWorkmate artifact delivery requirements:",
-		"- Create the requested files in the current OpenClaw workspace as real files before finishing.",
+		"- Create the requested files as real files before finishing.",
+	}
+	if preparedArtifact != nil && strings.TrimSpace(preparedArtifact.ArtifactDirectory) != "" {
+		lines = append(lines,
+			"- Write every deliverable file into this exact directory:",
+			fmt.Sprintf("  `%s`", strings.TrimSpace(preparedArtifact.ArtifactDirectory)),
+			"- Do not write deliverable files outside that directory.",
+		)
+	}
+	lines = append(lines,
 		"- If multiple formats are requested, write each requested format as a separate file with the correct extension.",
 		"- Do not claim that files are ready, downloadable, or clickable unless the files actually exist on disk.",
 		"- In the final response, list only the real file names you created. Do not invent download links.",
-	}, "\n")
+	)
+	return message + "\n\n" + strings.Join(lines, "\n")
 }
 
 func openClawSessionKey(params map[string]any, turnID string) string {
@@ -338,27 +378,72 @@ func openClawSessionKey(params map[string]any, turnID string) string {
 	return "main"
 }
 
+func (o *SessionOrchestrator) openClawArtifactPrepare(
+	gatewayProvider string,
+	sessionKey string,
+	runID string,
+	notify func(map[string]any),
+) (*openClawPreparedArtifactScope, *shared.RPCError) {
+	sessionKey = strings.TrimSpace(sessionKey)
+	runID = strings.TrimSpace(runID)
+	if sessionKey == "" || runID == "" {
+		return nil, &shared.RPCError{Code: -32602, Message: "OPENCLAW_ARTIFACT_SCOPE_REQUIRED"}
+	}
+	prepareResult := o.server.gateway.RequestByMode(
+		gatewayProvider,
+		"xworkmate.artifacts.prepare",
+		map[string]any{
+			"sessionKey": sessionKey,
+			"runId":      runID,
+		},
+		30*time.Second,
+		notify,
+	)
+	if !prepareResult.OK {
+		return nil, gatewayRPCError(prepareResult.Error, "openclaw artifact prepare failed")
+	}
+	payload := shared.AsMap(prepareResult.Payload)
+	prepared := &openClawPreparedArtifactScope{
+		ArtifactScope:     strings.TrimSpace(shared.StringArg(payload, "artifactScope", "")),
+		ArtifactDirectory: strings.TrimSpace(shared.StringArg(payload, "artifactDirectory", "")),
+		ScopeKind:         strings.TrimSpace(shared.StringArg(payload, "scopeKind", "")),
+	}
+	if prepared.ArtifactScope == "" || prepared.ArtifactDirectory == "" {
+		return nil, &shared.RPCError{Code: -32002, Message: "openclaw artifact prepare returned invalid scope"}
+	}
+	return prepared, nil
+}
+
 func (o *SessionOrchestrator) openClawArtifactExport(
 	gatewayProvider string,
 	chatParams map[string]any,
 	runID string,
 	sinceUnixMs int64,
+	preparedArtifact *openClawPreparedArtifactScope,
+	latestIfEmpty bool,
 	notify func(map[string]any),
 ) map[string]any {
 	sessionKey := strings.TrimSpace(shared.StringArg(chatParams, "sessionKey", ""))
 	if sessionKey == "" || strings.TrimSpace(runID) == "" {
 		return nil
 	}
+	exportParams := map[string]any{
+		"sessionKey":     sessionKey,
+		"runId":          strings.TrimSpace(runID),
+		"sinceUnixMs":    sinceUnixMs,
+		"maxFiles":       64,
+		"maxInlineBytes": 10 * 1024 * 1024,
+	}
+	if preparedArtifact != nil && strings.TrimSpace(preparedArtifact.ArtifactScope) != "" {
+		exportParams["artifactScope"] = strings.TrimSpace(preparedArtifact.ArtifactScope)
+	}
+	if latestIfEmpty {
+		exportParams["latestIfEmpty"] = true
+	}
 	exportResult := o.server.gateway.RequestByMode(
 		gatewayProvider,
 		"xworkmate.artifacts.export",
-		map[string]any{
-			"sessionKey":     sessionKey,
-			"runId":          strings.TrimSpace(runID),
-			"sinceUnixMs":    sinceUnixMs,
-			"maxFiles":       64,
-			"maxInlineBytes": 10 * 1024 * 1024,
-		},
+		exportParams,
 		30*time.Second,
 		notify,
 	)
@@ -406,6 +491,16 @@ func mergeOpenClawArtifactPayload(result map[string]any, source map[string]any) 
 	if strings.TrimSpace(shared.StringArg(result, "remoteWorkspaceRefKind", "")) == "" {
 		if remoteWorkspaceRefKind := strings.TrimSpace(shared.StringArg(source, "remoteWorkspaceRefKind", "")); remoteWorkspaceRefKind != "" {
 			result["remoteWorkspaceRefKind"] = remoteWorkspaceRefKind
+		}
+	}
+	if strings.TrimSpace(shared.StringArg(result, "artifactScope", "")) == "" {
+		if artifactScope := strings.TrimSpace(shared.StringArg(source, "artifactScope", "")); artifactScope != "" {
+			result["artifactScope"] = artifactScope
+		}
+	}
+	if strings.TrimSpace(shared.StringArg(result, "scopeKind", "")) == "" {
+		if scopeKind := strings.TrimSpace(shared.StringArg(source, "scopeKind", "")); scopeKind != "" {
+			result["scopeKind"] = scopeKind
 		}
 	}
 	for _, key := range []string{"artifacts", "files", "attachments", "artifactWarnings", "warnings"} {

@@ -697,11 +697,15 @@ func TestExecuteSessionTaskGatewayExportsOpenClawArtifacts(t *testing.T) {
 	if got := parsedDownloadURL.Query().Get("relativePath"); got != "reports/final.md" {
 		t.Fatalf("expected artifact relativePath in downloadUrl, got %q", got)
 	}
+	artifactScope := parsedDownloadURL.Query().Get("artifactScope")
+	if !strings.HasPrefix(artifactScope, ".xworkmate/artifacts/tasks/") {
+		t.Fatalf("expected artifact scope in downloadUrl, got %q", artifactScope)
+	}
 	if parsedDownloadURL.Query().Get("sig") == "" {
 		t.Fatalf("expected signed downloadUrl, got %q", downloadURL)
 	}
-	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "chat.send", "agent.wait", "xworkmate.artifacts.export"}) {
-		t.Fatalf("expected connect, chat.send, agent.wait, then artifact export, got %#v", got)
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "agent.wait", "xworkmate.artifacts.export"}) {
+		t.Fatalf("expected connect, artifact prepare, chat.send, agent.wait, then artifact export, got %#v", got)
 	}
 }
 
@@ -713,7 +717,13 @@ func TestHTTPHandlerOpenClawArtifactDownloadReadsViaGateway(t *testing.T) {
 	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
 
 	server := NewServer()
-	downloadURL := server.openClawArtifactDownloadURL("thread-openclaw-artifact", "run-1", "reports/final.md", time.Now())
+	downloadURL := server.openClawArtifactDownloadURL(
+		"thread-openclaw-artifact",
+		"run-1",
+		".xworkmate/artifacts/tasks/thread-openclaw-artifact/run-1",
+		"reports/final.md",
+		time.Now(),
+	)
 	if downloadURL == "" {
 		t.Fatal("expected signed download URL")
 	}
@@ -747,7 +757,13 @@ func TestHTTPHandlerOpenClawArtifactDownloadReturnsArtifactMissing(t *testing.T)
 	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
 
 	server := NewServer()
-	downloadURL := server.openClawArtifactDownloadURL("thread-openclaw-artifact", "run-1", "missing.txt", time.Now())
+	downloadURL := server.openClawArtifactDownloadURL(
+		"thread-openclaw-artifact",
+		"run-1",
+		".xworkmate/artifacts/tasks/thread-openclaw-artifact/run-1",
+		"missing.txt",
+		time.Now(),
+	)
 	if downloadURL == "" {
 		t.Fatal("expected signed download URL")
 	}
@@ -771,7 +787,13 @@ func TestHTTPHandlerOpenClawArtifactDownloadRequiresBearer(t *testing.T) {
 	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
 
 	server := NewServer()
-	downloadURL := server.openClawArtifactDownloadURL("thread-openclaw-artifact", "run-1", "reports/final.md", time.Now())
+	downloadURL := server.openClawArtifactDownloadURL(
+		"thread-openclaw-artifact",
+		"run-1",
+		".xworkmate/artifacts/tasks/thread-openclaw-artifact/run-1",
+		"reports/final.md",
+		time.Now(),
+	)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, downloadURL, nil)
 	server.Handler().ServeHTTP(recorder, request)
@@ -785,7 +807,13 @@ func TestHTTPHandlerOpenClawArtifactDownloadRejectsInvalidSignature(t *testing.T
 	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
 
 	server := NewServer()
-	downloadURL := server.openClawArtifactDownloadURL("thread-openclaw-artifact", "run-1", "reports/final.md", time.Now())
+	downloadURL := server.openClawArtifactDownloadURL(
+		"thread-openclaw-artifact",
+		"run-1",
+		".xworkmate/artifacts/tasks/thread-openclaw-artifact/run-1",
+		"reports/final.md",
+		time.Now(),
+	)
 	parsed, err := url.Parse(downloadURL)
 	if err != nil {
 		t.Fatalf("parse downloadUrl: %v", err)
@@ -811,9 +839,16 @@ func TestHTTPHandlerOpenClawArtifactDownloadRejectsExpiredSignature(t *testing.T
 	expires := fmt.Sprintf("%d", time.Now().Add(-time.Minute).Unix())
 	values.Set("sessionKey", "thread-openclaw-artifact")
 	values.Set("runId", "run-1")
+	values.Set("artifactScope", ".xworkmate/artifacts/tasks/thread-openclaw-artifact/run-1")
 	values.Set("relativePath", "reports/final.md")
 	values.Set("expires", expires)
-	values.Set("sig", signOpenClawArtifactDownload("thread-openclaw-artifact", "run-1", "reports/final.md", expires))
+	values.Set("sig", signOpenClawArtifactDownload(
+		"thread-openclaw-artifact",
+		"run-1",
+		".xworkmate/artifacts/tasks/thread-openclaw-artifact/run-1",
+		"reports/final.md",
+		expires,
+	))
 
 	server := NewServer()
 	recorder := httptest.NewRecorder()
@@ -847,6 +882,28 @@ func TestHTTPHandlerOpenClawArtifactDownloadRejectsTraversalPath(t *testing.T) {
 	}
 }
 
+func TestHTTPHandlerOpenClawArtifactDownloadRejectsInvalidArtifactScope(t *testing.T) {
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	values := url.Values{}
+	values.Set("sessionKey", "thread-openclaw-artifact")
+	values.Set("runId", "run-1")
+	values.Set("artifactScope", "../outside")
+	values.Set("relativePath", "reports/final.md")
+	values.Set("expires", fmt.Sprintf("%d", time.Now().Add(time.Hour).Unix()))
+	values.Set("sig", "irrelevant")
+
+	server := NewServer()
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, openClawArtifactDownloadPath+"?"+values.Encode(), nil)
+	request.Header.Set("Authorization", "Bearer bridge-token")
+	server.Handler().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%q", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestOpenClawChatSendParamsAddsArtifactDeliveryInstructions(t *testing.T) {
 	for _, prompt := range []string{
 		"输出 PPT PDF docx 文件",
@@ -858,7 +915,11 @@ func TestOpenClawChatSendParamsAddsArtifactDeliveryInstructions(t *testing.T) {
 			chatParams, rpcErr := openClawChatSendParams(map[string]any{
 				"threadId":   "thread-artifact-instructions",
 				"taskPrompt": prompt,
-			}, "turn-artifact-instructions")
+			}, "turn-artifact-instructions", &openClawPreparedArtifactScope{
+				ArtifactScope:     ".xworkmate/artifacts/tasks/thread-artifact-instructions/turn-artifact-instructions",
+				ArtifactDirectory: "/remote/openclaw/workspace/.xworkmate/artifacts/tasks/thread-artifact-instructions/turn-artifact-instructions",
+				ScopeKind:         "task",
+			})
 			if rpcErr != nil {
 				t.Fatalf("expected chat params, got rpc error: %#v", rpcErr)
 			}
@@ -866,8 +927,11 @@ func TestOpenClawChatSendParamsAddsArtifactDeliveryInstructions(t *testing.T) {
 			if !strings.Contains(message, prompt) {
 				t.Fatalf("expected original prompt to be preserved, got %q", message)
 			}
-			if !strings.Contains(message, "Create the requested files in the current OpenClaw workspace as real files") {
+			if !strings.Contains(message, "Create the requested files as real files") {
 				t.Fatalf("expected artifact delivery instructions, got %q", message)
+			}
+			if !strings.Contains(message, "/remote/openclaw/workspace/.xworkmate/artifacts/tasks/thread-artifact-instructions/turn-artifact-instructions") {
+				t.Fatalf("expected scoped artifact directory instruction, got %q", message)
 			}
 			if !strings.Contains(message, "Do not claim that files are ready") {
 				t.Fatalf("expected anti-hallucination download instruction, got %q", message)
@@ -1232,6 +1296,27 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 						"status": "started",
 					},
 				})
+			case "xworkmate.artifacts.prepare":
+				params := shared.AsMap(frame["params"])
+				runID := strings.TrimSpace(shared.StringArg(params, "runId", "fake-run"))
+				sessionKey := strings.TrimSpace(shared.StringArg(params, "sessionKey", "main"))
+				artifactScope := ".xworkmate/artifacts/tasks/" + sessionKey + "/" + runID
+				_ = conn.WriteJSON(map[string]any{
+					"type": "res",
+					"id":   id,
+					"ok":   true,
+					"payload": map[string]any{
+						"runId":                     runID,
+						"sessionKey":                sessionKey,
+						"remoteWorkingDirectory":    "/remote/openclaw/workspace",
+						"remoteWorkspaceRefKind":    "remotePath",
+						"artifactScope":             artifactScope,
+						"scopeKind":                 "task",
+						"artifactDirectory":         "/remote/openclaw/workspace/" + artifactScope,
+						"relativeArtifactDirectory": artifactScope,
+						"warnings":                  []any{},
+					},
+				})
 			case "agent.wait":
 				fake.agentWaitCount.Add(1)
 				params := shared.AsMap(frame["params"])
@@ -1323,24 +1408,32 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 				}
 				params := shared.AsMap(frame["params"])
 				runID := strings.TrimSpace(shared.StringArg(params, "runId", "fake-run"))
+				artifactScope := strings.TrimSpace(shared.StringArg(params, "artifactScope", ""))
 				payload := map[string]any{
 					"runId":                  runID,
 					"sessionKey":             strings.TrimSpace(shared.StringArg(params, "sessionKey", "")),
 					"remoteWorkingDirectory": "/remote/openclaw/workspace",
 					"remoteWorkspaceRefKind": "remotePath",
+					"scopeKind":              "workspace",
 					"artifacts":              []any{},
 					"warnings":               []any{},
+				}
+				if artifactScope != "" {
+					payload["artifactScope"] = artifactScope
+					payload["scopeKind"] = "task"
 				}
 				if strings.Contains(fake.runMessage(runID), "make artifact") {
 					payload["artifacts"] = []any{
 						map[string]any{
-							"relativePath": "reports/final.md",
-							"label":        "final.md",
-							"contentType":  "text/markdown",
-							"sizeBytes":    12,
-							"sha256":       "fake-sha256",
-							"encoding":     "base64",
-							"content":      "ZmluYWwgcmVwb3J0",
+							"relativePath":  "reports/final.md",
+							"label":         "final.md",
+							"contentType":   "text/markdown",
+							"sizeBytes":     12,
+							"sha256":        "fake-sha256",
+							"artifactScope": artifactScope,
+							"scopeKind":     "task",
+							"encoding":      "base64",
+							"content":       "ZmluYWwgcmVwb3J0",
 						},
 					}
 				}
@@ -1354,6 +1447,7 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 				fake.artifactReadCount.Add(1)
 				params := shared.AsMap(frame["params"])
 				relativePath := strings.TrimSpace(shared.StringArg(params, "relativePath", ""))
+				artifactScope := strings.TrimSpace(shared.StringArg(params, "artifactScope", ""))
 				if relativePath != "reports/final.md" {
 					_ = conn.WriteJSON(map[string]any{
 						"type": "res",
@@ -1377,15 +1471,19 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 						"sessionKey":             strings.TrimSpace(shared.StringArg(params, "sessionKey", "")),
 						"remoteWorkingDirectory": "/remote/openclaw/workspace",
 						"remoteWorkspaceRefKind": "remotePath",
+						"artifactScope":          artifactScope,
+						"scopeKind":              "task",
 						"artifacts": []any{
 							map[string]any{
-								"relativePath": "reports/final.md",
-								"label":        "final.md",
-								"contentType":  "text/markdown",
-								"sizeBytes":    len(content),
-								"sha256":       hex.EncodeToString(sum[:]),
-								"encoding":     "base64",
-								"content":      base64.StdEncoding.EncodeToString(content),
+								"relativePath":  "reports/final.md",
+								"label":         "final.md",
+								"contentType":   "text/markdown",
+								"sizeBytes":     len(content),
+								"sha256":        hex.EncodeToString(sum[:]),
+								"artifactScope": artifactScope,
+								"scopeKind":     "task",
+								"encoding":      "base64",
+								"content":       base64.StdEncoding.EncodeToString(content),
 							},
 						},
 					},
