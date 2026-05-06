@@ -915,6 +915,41 @@ func TestHTTPHandlerOpenClawArtifactDownloadReadsViaGateway(t *testing.T) {
 	}
 }
 
+func TestHTTPHandlerOpenClawArtifactDownloadRetriesTransientReadFailure(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	gateway.FailNextArtifactReads(1)
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	downloadURL := server.openClawArtifactDownloadURL(
+		"thread-openclaw-artifact",
+		"run-1",
+		"tasks/thread-openclaw-artifact/run-1",
+		"reports/final.md",
+		time.Now(),
+	)
+	if downloadURL == "" {
+		t.Fatal("expected signed download URL")
+	}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, downloadURL, nil)
+	request.Header.Set("Authorization", "Bearer bridge-token")
+	server.Handler().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected retry to return 200, got %d body=%q", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Body.String(); got != "final report" {
+		t.Fatalf("expected artifact content from retry, got %q", got)
+	}
+	if gateway.ArtifactReadCount() != 2 {
+		t.Fatalf("expected one failed read and one retry, got %d", gateway.ArtifactReadCount())
+	}
+}
+
 func TestHTTPHandlerOpenClawArtifactDownloadReturnsArtifactMissing(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
@@ -1350,6 +1385,7 @@ type acpFakeOpenClawGateway struct {
 	agentWaitCount           atomic.Int32
 	artifactCount            atomic.Int32
 	artifactReadCount        atomic.Int32
+	artifactReadFailures     atomic.Int32
 	lastConnectClient        atomic.Value
 	lastArtifactExportParams atomic.Value
 	mu                       sync.Mutex
@@ -1647,6 +1683,18 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 				params := shared.AsMap(frame["params"])
 				relativePath := strings.TrimSpace(shared.StringArg(params, "relativePath", ""))
 				artifactScope := strings.TrimSpace(shared.StringArg(params, "artifactScope", ""))
+				if fake.consumeArtifactReadFailure() {
+					_ = conn.WriteJSON(map[string]any{
+						"type": "res",
+						"id":   id,
+						"ok":   false,
+						"error": map[string]any{
+							"code":    "OPENCLAW_ARTIFACT_READ_FAILED",
+							"message": "openclaw artifact read failed",
+						},
+					})
+					continue
+				}
 				if relativePath != "reports/final.md" {
 					_ = conn.WriteJSON(map[string]any{
 						"type": "res",
@@ -1770,6 +1818,22 @@ func (f *acpFakeOpenClawGateway) ArtifactExportCount() int {
 
 func (f *acpFakeOpenClawGateway) ArtifactReadCount() int {
 	return int(f.artifactReadCount.Load())
+}
+
+func (f *acpFakeOpenClawGateway) FailNextArtifactReads(count int) {
+	f.artifactReadFailures.Store(int32(count))
+}
+
+func (f *acpFakeOpenClawGateway) consumeArtifactReadFailure() bool {
+	for {
+		remaining := f.artifactReadFailures.Load()
+		if remaining <= 0 {
+			return false
+		}
+		if f.artifactReadFailures.CompareAndSwap(remaining, remaining-1) {
+			return true
+		}
+	}
 }
 
 func (f *acpFakeOpenClawGateway) LastArtifactExportParams() map[string]any {

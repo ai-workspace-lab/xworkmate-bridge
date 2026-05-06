@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"xworkmate-bridge/internal/gatewayruntime"
 	"xworkmate-bridge/internal/shared"
 )
 
@@ -21,6 +22,7 @@ const (
 	openClawArtifactDownloadPath     = "/artifacts/openclaw/download"
 	openClawArtifactDownloadTTL      = 24 * time.Hour
 	openClawArtifactDownloadMaxBytes = 64 * 1024 * 1024
+	openClawArtifactReadAttempts     = 3
 	defaultBridgePublicURL           = "https://xworkmate-bridge.svc.plus"
 )
 
@@ -86,11 +88,9 @@ func (s *Server) HandleOpenClawArtifactDownload(w http.ResponseWriter, r *http.R
 	if artifactScope != "" {
 		readParams["artifactScope"] = artifactScope
 	}
-	readResult := s.gateway.RequestByMode(
+	readResult := s.readOpenClawArtifactWithRetry(
 		"openclaw",
-		"xworkmate.artifacts.read",
 		readParams,
-		time.Minute,
 		nil,
 	)
 	if !readResult.OK {
@@ -148,6 +148,32 @@ func (s *Server) HandleOpenClawArtifactDownload(w http.ResponseWriter, r *http.R
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(content)
+}
+
+func (s *Server) readOpenClawArtifactWithRetry(
+	gatewayProvider string,
+	readParams map[string]any,
+	notify func(map[string]any),
+) gatewayruntime.RequestResult {
+	var readResult gatewayruntime.RequestResult
+	for attempt := 1; attempt <= openClawArtifactReadAttempts; attempt++ {
+		readResult = s.gateway.RequestByMode(
+			gatewayProvider,
+			"xworkmate.artifacts.read",
+			readParams,
+			time.Minute,
+			notify,
+		)
+		if readResult.OK {
+			return readResult
+		}
+		message := strings.TrimSpace(shared.StringArg(readResult.Error, "message", ""))
+		if openClawArtifactReadMissing(readResult.Error, message) || attempt == openClawArtifactReadAttempts {
+			return readResult
+		}
+		time.Sleep(time.Duration(attempt) * 250 * time.Millisecond)
+	}
+	return readResult
 }
 
 func (s *Server) decorateOpenClawArtifactDownloadURLs(result map[string]any, sessionKey string, runID string) {
