@@ -347,7 +347,7 @@ func openClawChatSendParams(
 }
 
 func openClawArtifactDeliveryRequired(params map[string]any) bool {
-	text := strings.ToLower(firstNonEmptyString(params, "taskPrompt", "prompt", "message"))
+	text := strings.ToLower(strings.Join(openClawArtifactDeliveryText(params), "\n"))
 	if strings.TrimSpace(text) == "" {
 		return false
 	}
@@ -381,6 +381,38 @@ func openClawArtifactDeliveryRequired(params map[string]any) bool {
 		}
 	}
 	return false
+}
+
+func openClawArtifactDeliveryText(raw any) []string {
+	switch value := raw.(type) {
+	case string:
+		if text := strings.TrimSpace(value); text != "" {
+			return []string{text}
+		}
+	case map[string]any:
+		texts := make([]string, 0, len(value))
+		for key, item := range value {
+			switch strings.TrimSpace(key) {
+			case "taskPrompt", "prompt", "message":
+				texts = append(texts, openClawArtifactDeliveryText(item)...)
+			default:
+				if _, ok := item.(map[string]any); ok {
+					texts = append(texts, openClawArtifactDeliveryText(item)...)
+				}
+				if _, ok := item.([]any); ok {
+					texts = append(texts, openClawArtifactDeliveryText(item)...)
+				}
+			}
+		}
+		return texts
+	case []any:
+		texts := make([]string, 0, len(value))
+		for _, item := range value {
+			texts = append(texts, openClawArtifactDeliveryText(item)...)
+		}
+		return texts
+	}
+	return nil
 }
 
 func withOpenClawArtifactDeliveryInstructions(

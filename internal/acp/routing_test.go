@@ -1079,6 +1079,19 @@ func TestOpenClawChatSendParamsAddsArtifactDeliveryInstructions(t *testing.T) {
 	}
 }
 
+func TestOpenClawArtifactDeliveryRequiredScansNestedParams(t *testing.T) {
+	params := map[string]any{
+		"request": map[string]any{
+			"params": map[string]any{
+				"taskPrompt": "请在当前任务制品目录中真实生成一个文件",
+			},
+		},
+	}
+	if !openClawArtifactDeliveryRequired(params) {
+		t.Fatal("expected nested artifact delivery prompt to be detected")
+	}
+}
+
 func TestExecuteSessionTaskGatewayCollectsOpenClawEventArtifacts(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	gateway.artifactMode = "unknown"
