@@ -141,13 +141,31 @@ func (s *Server) HandleOpenClawArtifactDownload(w http.ResponseWriter, r *http.R
 	if contentType == "" {
 		contentType = artifactContentType(relativePath)
 	}
+	rangeStart, rangeEnd, partialContent, rangeOK := openClawArtifactContentRange(
+		r.Header.Get("Range"),
+		len(content),
+	)
+	if !rangeOK {
+		w.Header().Set("Accept-Ranges", "bytes")
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", len(content)))
+		shared.WriteJSONError(w, nil, http.StatusRequestedRangeNotSatisfiable, -32049, "invalid artifact range")
+		return
+	}
+	body := content
+	statusCode := http.StatusOK
+	if partialContent {
+		body = content[rangeStart : rangeEnd+1]
+		statusCode = http.StatusPartialContent
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", rangeStart, rangeEnd, len(content)))
+	}
 	filename := filepath.Base(relativePath)
+	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Length", strconv.Itoa(len(content)))
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, strings.ReplaceAll(filename, `"`, "")))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(content)
+	w.WriteHeader(statusCode)
+	_, _ = w.Write(body)
 }
 
 func (s *Server) readOpenClawArtifactWithRetry(
@@ -424,6 +442,52 @@ func openClawArtifactSigningSecret() string {
 		}
 	}
 	return ""
+}
+
+func openClawArtifactContentRange(rawRange string, contentLength int) (int, int, bool, bool) {
+	if strings.TrimSpace(rawRange) == "" {
+		return 0, contentLength - 1, false, true
+	}
+	if contentLength <= 0 {
+		return 0, 0, false, false
+	}
+	rawRange = strings.TrimSpace(rawRange)
+	if !strings.HasPrefix(rawRange, "bytes=") || strings.Contains(rawRange, ",") {
+		return 0, 0, false, false
+	}
+	spec := strings.TrimSpace(strings.TrimPrefix(rawRange, "bytes="))
+	parts := strings.SplitN(spec, "-", 2)
+	if len(parts) != 2 {
+		return 0, 0, false, false
+	}
+	startRaw := strings.TrimSpace(parts[0])
+	endRaw := strings.TrimSpace(parts[1])
+	if startRaw == "" {
+		suffixLength, err := strconv.Atoi(endRaw)
+		if err != nil || suffixLength <= 0 {
+			return 0, 0, false, false
+		}
+		start := contentLength - suffixLength
+		if start < 0 {
+			start = 0
+		}
+		return start, contentLength - 1, true, true
+	}
+	start, err := strconv.Atoi(startRaw)
+	if err != nil || start < 0 || start >= contentLength {
+		return 0, 0, false, false
+	}
+	end := contentLength - 1
+	if endRaw != "" {
+		end, err = strconv.Atoi(endRaw)
+		if err != nil || end < start {
+			return 0, 0, false, false
+		}
+		if end >= contentLength {
+			end = contentLength - 1
+		}
+	}
+	return start, end, true, true
 }
 
 func artifactSHA256Matches(content []byte, expected string) bool {

@@ -915,6 +915,79 @@ func TestHTTPHandlerOpenClawArtifactDownloadReadsViaGateway(t *testing.T) {
 	}
 }
 
+func TestHTTPHandlerOpenClawArtifactDownloadSupportsRangeResume(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	downloadURL := server.openClawArtifactDownloadURL(
+		"thread-openclaw-artifact",
+		"run-1",
+		"tasks/thread-openclaw-artifact/run-1",
+		"reports/final.md",
+		time.Now(),
+	)
+	if downloadURL == "" {
+		t.Fatal("expected signed download URL")
+	}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, downloadURL, nil)
+	request.Header.Set("Authorization", "Bearer bridge-token")
+	request.Header.Set("Range", "bytes=6-")
+	server.Handler().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusPartialContent {
+		t.Fatalf("expected 206, got %d body=%q", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Body.String(); got != "report" {
+		t.Fatalf("expected resumed artifact content, got %q", got)
+	}
+	if got := recorder.Header().Get("Accept-Ranges"); got != "bytes" {
+		t.Fatalf("expected byte ranges to be advertised, got %q", got)
+	}
+	if got := recorder.Header().Get("Content-Range"); got != "bytes 6-11/12" {
+		t.Fatalf("expected content range, got %q", got)
+	}
+	if got := recorder.Header().Get("Content-Length"); got != "6" {
+		t.Fatalf("expected partial content length, got %q", got)
+	}
+}
+
+func TestHTTPHandlerOpenClawArtifactDownloadRejectsInvalidRange(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	downloadURL := server.openClawArtifactDownloadURL(
+		"thread-openclaw-artifact",
+		"run-1",
+		"tasks/thread-openclaw-artifact/run-1",
+		"reports/final.md",
+		time.Now(),
+	)
+	if downloadURL == "" {
+		t.Fatal("expected signed download URL")
+	}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, downloadURL, nil)
+	request.Header.Set("Authorization", "Bearer bridge-token")
+	request.Header.Set("Range", "bytes=99-")
+	server.Handler().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusRequestedRangeNotSatisfiable {
+		t.Fatalf("expected 416, got %d body=%q", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("Content-Range"); got != "bytes */12" {
+		t.Fatalf("expected unsatisfied content range, got %q", got)
+	}
+}
+
 func TestHTTPHandlerOpenClawArtifactDownloadRetriesTransientReadFailure(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	gateway.FailNextArtifactReads(1)
