@@ -848,6 +848,33 @@ func TestNormalizeResultStripsOpenClawInlineArtifactsAfterRecordNormalization(t 
 	}
 }
 
+func TestOpenClawArtifactResponseUsesRequestRoutingProvider(t *testing.T) {
+	result := map[string]any{
+		"success":           true,
+		"output":            "created files",
+		"artifactScope":     ".xworkmate/artifacts/tasks/thread-openclaw/run-openclaw",
+		"artifactDirectory": "/remote/openclaw/workspace/.xworkmate/artifacts/tasks/thread-openclaw/run-openclaw",
+	}
+	routing := RoutingResult{
+		TargetID:   "gateway",
+		ProviderID: "gateway",
+	}
+	params := map[string]any{
+		"routing": map[string]any{
+			"routingMode":                "explicit",
+			"explicitExecutionTarget":    "gateway",
+			"preferredGatewayProviderId": "openclaw",
+		},
+	}
+
+	if !openClawArtifactResponse(result, routing, params) {
+		t.Fatalf("expected scoped result with request routing to be treated as OpenClaw artifact response")
+	}
+	if got := openClawGatewayProviderForArtifacts(result, routing, params); got != "openclaw" {
+		t.Fatalf("expected OpenClaw provider from request routing, got %q", got)
+	}
+}
+
 func TestHTTPHandlerOpenClawArtifactDownloadReadsViaGateway(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()

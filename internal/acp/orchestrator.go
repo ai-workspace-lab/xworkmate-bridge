@@ -787,8 +787,8 @@ func (o *SessionOrchestrator) normalizeResult(sess *session, result map[string]a
 	if result == nil {
 		result = map[string]any{}
 	}
-	if isOpenClawMode(routing.GatewayProviderID) {
-		o.completeOpenClawScopedArtifactExport(result, params, routing.GatewayProviderID, turnID)
+	if openClawArtifactResponse(result, routing, params) {
+		o.completeOpenClawScopedArtifactExport(result, params, openClawGatewayProviderForArtifacts(result, routing, params), turnID)
 	}
 
 	successValue, hasSuccess := result["success"]
@@ -907,6 +907,28 @@ func (o *SessionOrchestrator) completeOpenClawScopedArtifactExport(
 	stripOpenClawArtifactInlineContent(result)
 }
 
+func openClawGatewayProviderForArtifacts(result map[string]any, routing RoutingResult, params map[string]any) string {
+	for _, provider := range []string{
+		routing.GatewayProviderID,
+		shared.StringArg(result, "resolvedGatewayProviderId", ""),
+		shared.StringArg(result, "gatewayProviderId", ""),
+		shared.StringArg(result, "gatewayProvider", ""),
+		shared.StringArg(params, "gatewayProviderId", ""),
+		shared.StringArg(params, "gatewayProvider", ""),
+	} {
+		if isOpenClawMode(provider) {
+			return strings.TrimSpace(provider)
+		}
+	}
+	routingParams := shared.AsMap(params["routing"])
+	for _, key := range []string{"preferredGatewayProviderId", "gatewayProviderId", "gatewayProvider"} {
+		if provider := strings.TrimSpace(shared.StringArg(routingParams, key, "")); isOpenClawMode(provider) {
+			return provider
+		}
+	}
+	return "openclaw"
+}
+
 func openClawArtifactResponse(result map[string]any, routing RoutingResult, params map[string]any) bool {
 	for _, provider := range []string{
 		routing.GatewayProviderID,
@@ -926,7 +948,7 @@ func openClawArtifactResponse(result map[string]any, routing RoutingResult, para
 			return true
 		}
 	}
-	if strings.HasPrefix(strings.TrimSpace(shared.StringArg(result, "artifactScope", "")), "tasks/") {
+	if strings.HasPrefix(strings.TrimSpace(shared.StringArg(result, "artifactScope", "")), ".xworkmate/artifacts/tasks/") {
 		return true
 	}
 	for _, key := range []string{"artifacts", "files", "attachments"} {
