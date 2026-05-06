@@ -948,7 +948,7 @@ func openClawArtifactResponse(result map[string]any, routing RoutingResult, para
 			return true
 		}
 	}
-	if strings.HasPrefix(strings.TrimSpace(shared.StringArg(result, "artifactScope", "")), ".xworkmate/artifacts/tasks/") {
+	if strings.HasPrefix(strings.TrimSpace(shared.StringArg(result, "artifactScope", "")), "tasks/") {
 		return true
 	}
 	for _, key := range []string{"artifacts", "files", "attachments"} {

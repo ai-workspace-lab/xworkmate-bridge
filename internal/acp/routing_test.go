@@ -701,7 +701,7 @@ func TestExecuteSessionTaskGatewayExportsOpenClawArtifacts(t *testing.T) {
 		t.Fatalf("expected artifact relativePath in downloadUrl, got %q", got)
 	}
 	artifactScope := parsedDownloadURL.Query().Get("artifactScope")
-	if !strings.HasPrefix(artifactScope, ".xworkmate/artifacts/tasks/") {
+	if !strings.HasPrefix(artifactScope, "tasks/") {
 		t.Fatalf("expected artifact scope in downloadUrl, got %q", artifactScope)
 	}
 	if parsedDownloadURL.Query().Get("sig") == "" {
@@ -783,7 +783,7 @@ func TestExecuteSessionTaskGatewayExportsLatestWorkspaceArtifactsWhenScopedDirec
 		t.Fatalf("expected latest workspace artifact response to omit inline content, got %#v", artifacts[0])
 	}
 	exportParams := gateway.LastArtifactExportParams()
-	if got := strings.TrimSpace(shared.StringArg(exportParams, "artifactScope", "")); !strings.HasPrefix(got, ".xworkmate/artifacts/tasks/thread-openclaw-latest-artifact/") {
+	if got := strings.TrimSpace(shared.StringArg(exportParams, "artifactScope", "")); !strings.HasPrefix(got, "tasks/thread-openclaw-latest-artifact/") {
 		t.Fatalf("expected scoped artifact export params, got %#v", exportParams)
 	}
 	if got := shared.BoolArg(shared.StringArg(exportParams, "latestIfEmpty", ""), false); !got {
@@ -852,8 +852,8 @@ func TestOpenClawArtifactResponseUsesRequestRoutingProvider(t *testing.T) {
 	result := map[string]any{
 		"success":           true,
 		"output":            "created files",
-		"artifactScope":     ".xworkmate/artifacts/tasks/thread-openclaw/run-openclaw",
-		"artifactDirectory": "/remote/openclaw/workspace/.xworkmate/artifacts/tasks/thread-openclaw/run-openclaw",
+		"artifactScope":     "tasks/thread-openclaw/run-openclaw",
+		"artifactDirectory": "/remote/openclaw/workspace/tasks/thread-openclaw/run-openclaw",
 	}
 	routing := RoutingResult{
 		TargetID:   "gateway",
@@ -886,7 +886,7 @@ func TestHTTPHandlerOpenClawArtifactDownloadReadsViaGateway(t *testing.T) {
 	downloadURL := server.openClawArtifactDownloadURL(
 		"thread-openclaw-artifact",
 		"run-1",
-		".xworkmate/artifacts/tasks/thread-openclaw-artifact/run-1",
+		"tasks/thread-openclaw-artifact/run-1",
 		"reports/final.md",
 		time.Now(),
 	)
@@ -926,7 +926,7 @@ func TestHTTPHandlerOpenClawArtifactDownloadReturnsArtifactMissing(t *testing.T)
 	downloadURL := server.openClawArtifactDownloadURL(
 		"thread-openclaw-artifact",
 		"run-1",
-		".xworkmate/artifacts/tasks/thread-openclaw-artifact/run-1",
+		"tasks/thread-openclaw-artifact/run-1",
 		"missing.txt",
 		time.Now(),
 	)
@@ -956,7 +956,7 @@ func TestHTTPHandlerOpenClawArtifactDownloadRequiresBearer(t *testing.T) {
 	downloadURL := server.openClawArtifactDownloadURL(
 		"thread-openclaw-artifact",
 		"run-1",
-		".xworkmate/artifacts/tasks/thread-openclaw-artifact/run-1",
+		"tasks/thread-openclaw-artifact/run-1",
 		"reports/final.md",
 		time.Now(),
 	)
@@ -976,7 +976,7 @@ func TestHTTPHandlerOpenClawArtifactDownloadRejectsInvalidSignature(t *testing.T
 	downloadURL := server.openClawArtifactDownloadURL(
 		"thread-openclaw-artifact",
 		"run-1",
-		".xworkmate/artifacts/tasks/thread-openclaw-artifact/run-1",
+		"tasks/thread-openclaw-artifact/run-1",
 		"reports/final.md",
 		time.Now(),
 	)
@@ -1005,13 +1005,13 @@ func TestHTTPHandlerOpenClawArtifactDownloadRejectsExpiredSignature(t *testing.T
 	expires := fmt.Sprintf("%d", time.Now().Add(-time.Minute).Unix())
 	values.Set("sessionKey", "thread-openclaw-artifact")
 	values.Set("runId", "run-1")
-	values.Set("artifactScope", ".xworkmate/artifacts/tasks/thread-openclaw-artifact/run-1")
+	values.Set("artifactScope", "tasks/thread-openclaw-artifact/run-1")
 	values.Set("relativePath", "reports/final.md")
 	values.Set("expires", expires)
 	values.Set("sig", signOpenClawArtifactDownload(
 		"thread-openclaw-artifact",
 		"run-1",
-		".xworkmate/artifacts/tasks/thread-openclaw-artifact/run-1",
+		"tasks/thread-openclaw-artifact/run-1",
 		"reports/final.md",
 		expires,
 	))
@@ -1082,8 +1082,8 @@ func TestOpenClawChatSendParamsAddsArtifactDeliveryInstructions(t *testing.T) {
 				"threadId":   "thread-artifact-instructions",
 				"taskPrompt": prompt,
 			}, "turn-artifact-instructions", &openClawPreparedArtifactScope{
-				ArtifactScope:     ".xworkmate/artifacts/tasks/thread-artifact-instructions/turn-artifact-instructions",
-				ArtifactDirectory: "/remote/openclaw/workspace/.xworkmate/artifacts/tasks/thread-artifact-instructions/turn-artifact-instructions",
+				ArtifactScope:     "tasks/thread-artifact-instructions/turn-artifact-instructions",
+				ArtifactDirectory: "/remote/openclaw/workspace/tasks/thread-artifact-instructions/turn-artifact-instructions",
 				ScopeKind:         "task",
 			})
 			if rpcErr != nil {
@@ -1096,7 +1096,7 @@ func TestOpenClawChatSendParamsAddsArtifactDeliveryInstructions(t *testing.T) {
 			if !strings.Contains(message, "Create the requested files as real files") {
 				t.Fatalf("expected artifact delivery instructions, got %q", message)
 			}
-			if !strings.Contains(message, "/remote/openclaw/workspace/.xworkmate/artifacts/tasks/thread-artifact-instructions/turn-artifact-instructions") {
+			if !strings.Contains(message, "/remote/openclaw/workspace/tasks/thread-artifact-instructions/turn-artifact-instructions") {
 				t.Fatalf("expected scoped artifact directory instruction, got %q", message)
 			}
 			if !strings.Contains(message, "Do not claim that files are ready") {
@@ -1480,7 +1480,7 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 				params := shared.AsMap(frame["params"])
 				runID := strings.TrimSpace(shared.StringArg(params, "runId", "fake-run"))
 				sessionKey := strings.TrimSpace(shared.StringArg(params, "sessionKey", "main"))
-				artifactScope := ".xworkmate/artifacts/tasks/" + sessionKey + "/" + runID
+				artifactScope := "tasks/" + sessionKey + "/" + runID
 				_ = conn.WriteJSON(map[string]any{
 					"type": "res",
 					"id":   id,

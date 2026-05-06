@@ -334,7 +334,8 @@ func safeOpenClawArtifactDownloadArtifactScope(rawScope string) string {
 	if scope == "" {
 		return ""
 	}
-	if !strings.HasPrefix(scope, ".xworkmate/artifacts/tasks/") {
+	parts := strings.Split(scope, "/")
+	if len(parts) != 3 || parts[0] != "tasks" || parts[1] == "" || parts[2] == "" {
 		return ""
 	}
 	return scope
