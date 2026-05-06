@@ -787,6 +787,9 @@ func (o *SessionOrchestrator) normalizeResult(sess *session, result map[string]a
 	if result == nil {
 		result = map[string]any{}
 	}
+	if isOpenClawMode(routing.GatewayProviderID) {
+		o.completeOpenClawScopedArtifactExport(result, params, routing.GatewayProviderID, turnID)
+	}
 
 	successValue, hasSuccess := result["success"]
 	success := !hasSuccess || parseBool(successValue)
@@ -869,6 +872,39 @@ func (o *SessionOrchestrator) normalizeResult(sess *session, result map[string]a
 	}
 
 	return result
+}
+
+func (o *SessionOrchestrator) completeOpenClawScopedArtifactExport(
+	result map[string]any,
+	params map[string]any,
+	gatewayProvider string,
+	turnID string,
+) {
+	if result == nil || o.server == nil || o.server.gateway == nil {
+		return
+	}
+	remoteWorkingDirectory := strings.TrimSpace(shared.StringArg(result, "remoteWorkingDirectory", ""))
+	if len(extractArtifactPayloads(result, remoteWorkingDirectory)) > 0 {
+		return
+	}
+	preparedArtifact := openClawPreparedArtifactScopeFromPayload(result)
+	if preparedArtifact == nil {
+		return
+	}
+	sessionKey := openClawSessionKey(params, turnID)
+	runID := strings.TrimSpace(shared.StringArg(result, "runId", turnID))
+	chatParams := map[string]any{"sessionKey": sessionKey}
+	mergeOpenClawArtifactPayload(result, o.openClawArtifactExportForDelivery(
+		gatewayProvider,
+		chatParams,
+		runID,
+		0,
+		preparedArtifact,
+		true,
+		nil,
+	))
+	o.server.decorateOpenClawArtifactDownloadURLs(result, sessionKey, runID)
+	stripOpenClawArtifactInlineContent(result)
 }
 
 func openClawArtifactResponse(result map[string]any, routing RoutingResult, params map[string]any) bool {
