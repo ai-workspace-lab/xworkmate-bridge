@@ -498,6 +498,17 @@ func TestExecuteSessionTaskGatewayAutoConnectsLocalOpenClaw(t *testing.T) {
 	if gateway.AgentWaitCount() != 1 {
 		t.Fatalf("expected one OpenClaw agent.wait request, got %d", gateway.AgentWaitCount())
 	}
+	waitParams := gateway.LastAgentWaitParams()
+	timeoutMs, ok := waitParams["timeoutMs"].(float64)
+	if !ok {
+		t.Fatalf("expected numeric OpenClaw agent.wait timeoutMs, got %#v", waitParams)
+	}
+	if got := int64(timeoutMs); got != openClawAgentWaitTimeout.Milliseconds() {
+		t.Fatalf("expected OpenClaw agent.wait timeoutMs %d, got %#v", openClawAgentWaitTimeout.Milliseconds(), waitParams)
+	}
+	if got := int64(timeoutMs); got <= 120000 {
+		t.Fatalf("expected OpenClaw agent.wait timeout to exceed the previous 120s cap, got %#v", waitParams)
+	}
 	if gateway.ArtifactExportCount() != 1 {
 		t.Fatalf("expected one OpenClaw artifact export request, got %d", gateway.ArtifactExportCount())
 	}
@@ -1552,6 +1563,7 @@ type acpFakeOpenClawGateway struct {
 	artifactReadFailures     atomic.Int32
 	lastConnectClient        atomic.Value
 	lastArtifactExportParams atomic.Value
+	lastAgentWaitParams      atomic.Value
 	mu                       sync.Mutex
 	methods                  []string
 	runMessages              map[string]string
@@ -1700,6 +1712,7 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 			case "agent.wait":
 				fake.agentWaitCount.Add(1)
 				params := shared.AsMap(frame["params"])
+				fake.lastAgentWaitParams.Store(params)
 				runID := strings.TrimSpace(shared.StringArg(params, "runId", "fake-run"))
 				switch fake.runMessage(runID) {
 				case "wait-error":
@@ -1981,6 +1994,11 @@ func (f *acpFakeOpenClawGateway) ChatSendCount() int {
 
 func (f *acpFakeOpenClawGateway) AgentWaitCount() int {
 	return int(f.agentWaitCount.Load())
+}
+
+func (f *acpFakeOpenClawGateway) LastAgentWaitParams() map[string]any {
+	params, _ := f.lastAgentWaitParams.Load().(map[string]any)
+	return params
 }
 
 func (f *acpFakeOpenClawGateway) ArtifactExportCount() int {

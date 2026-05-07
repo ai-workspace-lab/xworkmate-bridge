@@ -20,6 +20,8 @@ type SessionOrchestrator struct {
 	server *Server
 }
 
+const openClawAgentWaitTimeout = 9 * time.Minute
+
 func NewSessionOrchestrator(server *Server) *SessionOrchestrator {
 	return &SessionOrchestrator{server: server}
 }
@@ -219,9 +221,9 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 		"agent.wait",
 		map[string]any{
 			"runId":     runID,
-			"timeoutMs": 120000,
+			"timeoutMs": openClawAgentWaitTimeout.Milliseconds(),
 		},
-		2*time.Minute,
+		openClawAgentWaitTimeout,
 		notifyWithCollection,
 	)
 	if !waitResult.OK {
