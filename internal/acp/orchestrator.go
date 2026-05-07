@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -249,18 +250,25 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 	if preparedArtifact == nil {
 		preparedArtifact = openClawPreparedArtifactScopeFromPayload(result)
 	}
-	mergeOpenClawArtifactPayload(result, o.openClawArtifactExportForDelivery(
+	artifactDeliveryClaimed := !artifactDeliveryRequired &&
+		openClawArtifactDeliveryRequired(map[string]any{"message": output})
+	artifactPayload := o.openClawArtifactExportForDelivery(
 		gatewayProvider,
 		chatParams,
 		artifactRunID,
 		artifactSinceUnixMs,
 		preparedArtifact,
-		artifactDeliveryRequired || preparedArtifact != nil,
+		artifactDeliveryRequired || artifactDeliveryClaimed || preparedArtifact != nil,
+		artifactDeliveryClaimed,
 		notifyWithCollection,
-	))
+	)
+	if artifactDeliveryClaimed {
+		artifactPayload = filterOpenClawArtifactPayloadByOutput(output, artifactPayload)
+	}
+	mergeOpenClawArtifactPayload(result, artifactPayload)
 	o.server.decorateOpenClawArtifactDownloadURLs(result, shared.StringArg(chatParams, "sessionKey", ""), artifactRunID)
 	stripOpenClawArtifactInlineContent(result)
-	guardOpenClawArtifactResult(result, artifactDeliveryRequired)
+	guardOpenClawArtifactResult(result, artifactDeliveryRequired || artifactDeliveryClaimed)
 	return result, nil
 }
 
@@ -271,6 +279,7 @@ func (o *SessionOrchestrator) openClawArtifactExportForDelivery(
 	sinceUnixMs int64,
 	preparedArtifact *openClawPreparedArtifactScope,
 	artifactDeliveryRequired bool,
+	latestTaskScopeIfEmpty bool,
 	notify func(map[string]any),
 ) map[string]any {
 	if !artifactDeliveryRequired {
@@ -280,6 +289,7 @@ func (o *SessionOrchestrator) openClawArtifactExportForDelivery(
 			runID,
 			sinceUnixMs,
 			preparedArtifact,
+			false,
 			false,
 			notify,
 		)
@@ -294,6 +304,7 @@ func (o *SessionOrchestrator) openClawArtifactExportForDelivery(
 			sinceUnixMs,
 			preparedArtifact,
 			true,
+			latestTaskScopeIfEmpty,
 			notify,
 		)
 		remoteWorkingDirectory := strings.TrimSpace(shared.StringArg(payload, "remoteWorkingDirectory", ""))
@@ -518,6 +529,7 @@ func (o *SessionOrchestrator) openClawArtifactExport(
 	sinceUnixMs int64,
 	preparedArtifact *openClawPreparedArtifactScope,
 	latestIfEmpty bool,
+	latestTaskScopeIfEmpty bool,
 	notify func(map[string]any),
 ) map[string]any {
 	sessionKey := strings.TrimSpace(shared.StringArg(chatParams, "sessionKey", ""))
@@ -537,6 +549,9 @@ func (o *SessionOrchestrator) openClawArtifactExport(
 	}
 	if latestIfEmpty {
 		exportParams["latestIfEmpty"] = true
+	}
+	if latestTaskScopeIfEmpty {
+		exportParams["latestTaskScopeIfEmpty"] = true
 	}
 	exportResult := o.server.gateway.RequestByMode(
 		gatewayProvider,
@@ -575,6 +590,58 @@ func guardOpenClawArtifactResult(result map[string]any, artifactDeliveryRequired
 		result["artifactWarnings"],
 		[]any{"OpenClaw artifact export returned no files for a file-delivery request."},
 	)
+}
+
+func filterOpenClawArtifactPayloadByOutput(output string, payload map[string]any) map[string]any {
+	if payload == nil {
+		return nil
+	}
+	output = strings.ToLower(output)
+	if strings.TrimSpace(output) == "" {
+		return payload
+	}
+	filtered := map[string]any{}
+	for key, value := range payload {
+		filtered[key] = value
+	}
+	matchedAny := false
+	for _, key := range []string{"artifacts", "files", "attachments"} {
+		list := shared.ListArg(payload, key)
+		if len(list) == 0 {
+			continue
+		}
+		filteredList := make([]any, 0, len(list))
+		for _, item := range list {
+			artifact := shared.AsMap(item)
+			relativePath := strings.TrimSpace(shared.StringArg(artifact, "relativePath", ""))
+			if relativePath == "" {
+				relativePath = strings.TrimSpace(shared.StringArg(artifact, "path", ""))
+			}
+			if relativePath == "" {
+				relativePath = strings.TrimSpace(shared.StringArg(artifact, "name", ""))
+			}
+			if openClawOutputMentionsArtifactPath(output, relativePath) {
+				filteredList = append(filteredList, item)
+				matchedAny = true
+			}
+		}
+		filtered[key] = filteredList
+	}
+	if !matchedAny {
+		return payload
+	}
+	return filtered
+}
+
+func openClawOutputMentionsArtifactPath(output string, relativePath string) bool {
+	relativePath = strings.TrimSpace(strings.ReplaceAll(relativePath, "\\", "/"))
+	if relativePath == "" {
+		return false
+	}
+	normalizedPath := strings.ToLower(relativePath)
+	base := strings.ToLower(path.Base(normalizedPath))
+	return strings.Contains(output, normalizedPath) ||
+		(base != "." && base != "" && strings.Contains(output, base))
 }
 
 func mergeOpenClawArtifactPayload(result map[string]any, source map[string]any) {
@@ -901,6 +968,7 @@ func (o *SessionOrchestrator) completeOpenClawScopedArtifactExport(
 		0,
 		preparedArtifact,
 		true,
+		false,
 		nil,
 	))
 	o.server.decorateOpenClawArtifactDownloadURLs(result, sessionKey, runID)

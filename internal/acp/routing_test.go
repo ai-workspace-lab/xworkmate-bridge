@@ -800,6 +800,97 @@ func TestExecuteSessionTaskGatewayExportsLatestWorkspaceArtifactsWhenScopedDirec
 	}
 }
 
+func TestExecuteSessionMessageGatewayExportsClaimedOpenClawArtifacts(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	gateway.artifactMode = "workspace-latest"
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	response, rpcErr := server.executeSessionTask(task{
+		req: shared.RPCRequest{
+			Method: "session.message",
+			Params: map[string]any{
+				"sessionId":        "session-openclaw-claimed-artifact",
+				"threadId":         "thread-openclaw-claimed-artifact",
+				"taskPrompt":       "hi hallucinate-files",
+				"workingDirectory": t.TempDir(),
+				"routing": map[string]any{
+					"routingMode":                "explicit",
+					"explicitExecutionTarget":    "gateway",
+					"preferredGatewayProviderId": "openclaw",
+				},
+			},
+		},
+	})
+	if rpcErr != nil {
+		t.Fatalf("expected claimed artifact response, got rpc error: %#v", rpcErr)
+	}
+	if got := response["success"]; got != true {
+		t.Fatalf("expected successful claimed artifact response, got %#v", response)
+	}
+	artifacts, ok := response["artifacts"].([]map[string]any)
+	if !ok {
+		raw, ok := response["artifacts"].([]any)
+		if !ok {
+			t.Fatalf("expected artifacts payload, got %#v", response["artifacts"])
+		}
+		artifacts = make([]map[string]any, 0, len(raw))
+		for _, item := range raw {
+			artifacts = append(artifacts, shared.AsMap(item))
+		}
+	}
+	if len(artifacts) != 1 {
+		t.Fatalf("expected one claimed artifact, got %#v", artifacts)
+	}
+	if got := artifacts[0]["relativePath"]; got != "existing/report.pdf" {
+		t.Fatalf("expected claimed latest artifact relative path, got %#v", artifacts[0])
+	}
+	if got := strings.TrimSpace(shared.StringArg(artifacts[0], "downloadUrl", "")); got == "" {
+		t.Fatalf("expected bridge downloadUrl on claimed artifact, got %#v", artifacts[0])
+	}
+	exportParams := gateway.LastArtifactExportParams()
+	if got := shared.BoolArg(shared.StringArg(exportParams, "latestIfEmpty", ""), false); !got {
+		t.Fatalf("expected latestIfEmpty export param, got %#v", exportParams)
+	}
+	if got := shared.BoolArg(shared.StringArg(exportParams, "latestTaskScopeIfEmpty", ""), false); !got {
+		t.Fatalf("expected latestTaskScopeIfEmpty export param, got %#v", exportParams)
+	}
+	if _, ok := exportParams["artifactScope"]; ok {
+		t.Fatalf("expected no new prepared artifact scope for claimed follow-up, got %#v", exportParams)
+	}
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "chat.send", "agent.wait", "xworkmate.artifacts.export"}) {
+		t.Fatalf("expected connect, chat.send, agent.wait, then artifact export, got %#v", got)
+	}
+}
+
+func TestFilterOpenClawArtifactPayloadByOutputKeepsMentionedFiles(t *testing.T) {
+	payload := map[string]any{
+		"remoteWorkingDirectory": "/remote/openclaw/workspace",
+		"artifacts": []any{
+			map[string]any{"relativePath": "k8s-networking.pdf"},
+			map[string]any{"relativePath": "k8s-networking.docx"},
+			map[string]any{"relativePath": "generate_all.py"},
+		},
+	}
+	filtered := filterOpenClawArtifactPayloadByOutput(
+		"文件已经生成好了：k8s-networking.pdf, k8s-networking.docx",
+		payload,
+	)
+	artifacts := shared.ListArg(filtered, "artifacts")
+	if len(artifacts) != 2 {
+		t.Fatalf("expected only mentioned artifacts, got %#v", artifacts)
+	}
+	if got := shared.StringArg(shared.AsMap(artifacts[0]), "relativePath", ""); got != "k8s-networking.pdf" {
+		t.Fatalf("expected pdf artifact first, got %#v", artifacts)
+	}
+	if got := shared.StringArg(shared.AsMap(artifacts[1]), "relativePath", ""); got != "k8s-networking.docx" {
+		t.Fatalf("expected docx artifact second, got %#v", artifacts)
+	}
+}
+
 func TestNormalizeResultStripsOpenClawInlineArtifactsAfterRecordNormalization(t *testing.T) {
 	server := NewServer()
 	orchestrator := NewSessionOrchestrator(server)
@@ -1729,19 +1820,26 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 				}
 				if fake.artifactMode == "workspace-latest" &&
 					shared.BoolArg(shared.StringArg(params, "latestIfEmpty", ""), false) &&
-					artifactScope != "" &&
 					len(payload["artifacts"].([]any)) == 0 {
+					if artifactScope == "" &&
+						!shared.BoolArg(shared.StringArg(params, "latestTaskScopeIfEmpty", ""), false) {
+						break
+					}
+					if artifactScope == "" {
+						artifactScope = "tasks/" + strings.TrimSpace(shared.StringArg(params, "sessionKey", "main")) + "/previous-run"
+					}
 					payload["scopeKind"] = "workspace-latest"
 					payload["artifacts"] = []any{
 						map[string]any{
-							"relativePath": "existing/report.pdf",
-							"label":        "report.pdf",
-							"contentType":  "application/pdf",
-							"sizeBytes":    3,
-							"sha256":       "latest-sha256",
-							"scopeKind":    "workspace-latest",
-							"encoding":     "base64",
-							"content":      "cGRm",
+							"relativePath":  "existing/report.pdf",
+							"label":         "report.pdf",
+							"contentType":   "application/pdf",
+							"sizeBytes":     3,
+							"sha256":        "latest-sha256",
+							"artifactScope": artifactScope,
+							"scopeKind":     "workspace-latest",
+							"encoding":      "base64",
+							"content":       "cGRm",
 						},
 					}
 				}
