@@ -19,6 +19,7 @@ type RPCRequest struct {
 type RPCError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+	Data    any    `json:"data,omitempty"`
 }
 
 type ToolCallParams struct {
@@ -59,10 +60,13 @@ func ResultEnvelope(id any, result map[string]any) map[string]any {
 	}
 }
 
-func ErrorEnvelope(id any, code int, message string) map[string]any {
+func ErrorEnvelope(id any, code int, message string, data ...any) map[string]any {
 	errPayload := map[string]any{
 		"code":    code,
 		"message": message,
+	}
+	if len(data) > 0 && data[0] != nil {
+		errPayload["data"] = data[0]
 	}
 	return map[string]any{
 		"jsonrpc": "2.0",

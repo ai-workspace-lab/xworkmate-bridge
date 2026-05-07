@@ -603,6 +603,85 @@ func TestExecuteSessionTaskGatewaySurfacesOpenClawChatSendError(t *testing.T) {
 	}
 }
 
+func TestExecuteSessionTaskGatewayRetriesOpenClawChatSendSocketClose(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	gateway.closeNextChatSend.Store(true)
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	response, rpcErr := server.executeSessionTask(task{
+		req: shared.RPCRequest{
+			Method: "session.start",
+			Params: map[string]any{
+				"sessionId":        "session-openclaw-retry",
+				"threadId":         "thread-openclaw-retry",
+				"taskPrompt":       "retry after socket close",
+				"workingDirectory": t.TempDir(),
+				"routing": map[string]any{
+					"routingMode":                "explicit",
+					"explicitExecutionTarget":    "gateway",
+					"preferredGatewayProviderId": "openclaw",
+				},
+			},
+		},
+	})
+	if rpcErr != nil {
+		t.Fatalf("expected retry success, got rpc error: %#v", rpcErr)
+	}
+	if got := response["output"]; got != "gateway pong" {
+		t.Fatalf("expected gateway pong output after retry, got %#v", response)
+	}
+	if gateway.ConnectCount() != 2 {
+		t.Fatalf("expected reconnect after socket close, got %d connects", gateway.ConnectCount())
+	}
+	if gateway.ChatSendCount() != 2 {
+		t.Fatalf("expected chat.send to be retried once, got %d", gateway.ChatSendCount())
+	}
+}
+
+func TestExecuteSessionTaskGatewayReturnsStructuredOpenClawSocketCloseAfterRetry(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	gateway.alwaysCloseChatSend.Store(true)
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	response, rpcErr := server.executeSessionTask(task{
+		req: shared.RPCRequest{
+			Method: "session.start",
+			Params: map[string]any{
+				"sessionId":        "session-openclaw-retry-fail",
+				"threadId":         "thread-openclaw-retry-fail",
+				"taskPrompt":       "retry fails",
+				"workingDirectory": t.TempDir(),
+				"routing": map[string]any{
+					"routingMode":                "explicit",
+					"explicitExecutionTarget":    "gateway",
+					"preferredGatewayProviderId": "openclaw",
+				},
+			},
+		},
+	})
+	if rpcErr == nil {
+		t.Fatalf("expected OpenClaw socket close error, got response: %#v", response)
+	}
+	if rpcErr.Code != -32002 || !strings.Contains(rpcErr.Message, "OPENCLAW_GATEWAY_SOCKET_CLOSED") {
+		t.Fatalf("expected structured socket close failure, got %#v", rpcErr)
+	}
+	data := shared.AsMap(rpcErr.Data)
+	if got := shared.StringArg(data, "code", ""); got != "OPENCLAW_GATEWAY_SOCKET_CLOSED" {
+		t.Fatalf("expected socket close detail code, got %#v", rpcErr.Data)
+	}
+	if gateway.ChatSendCount() != 2 {
+		t.Fatalf("expected one retry only, got %d chat.send attempts", gateway.ChatSendCount())
+	}
+}
+
 func TestExecuteSessionTaskGatewaySurfacesOpenClawAgentWaitError(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
@@ -1561,6 +1640,8 @@ type acpFakeOpenClawGateway struct {
 	artifactCount            atomic.Int32
 	artifactReadCount        atomic.Int32
 	artifactReadFailures     atomic.Int32
+	closeNextChatSend        atomic.Bool
+	alwaysCloseChatSend      atomic.Bool
 	lastConnectClient        atomic.Value
 	lastArtifactExportParams atomic.Value
 	lastAgentWaitParams      atomic.Value
@@ -1664,6 +1745,10 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 				})
 			case "chat.send":
 				fake.chatSendCount.Add(1)
+				if fake.alwaysCloseChatSend.Load() || fake.closeNextChatSend.Swap(false) {
+					_ = conn.Close()
+					return
+				}
 				params := shared.AsMap(frame["params"])
 				if strings.TrimSpace(shared.StringArg(params, "message", "")) == "fail" {
 					_ = conn.WriteJSON(map[string]any{

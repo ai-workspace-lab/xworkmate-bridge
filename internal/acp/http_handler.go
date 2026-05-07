@@ -101,7 +101,7 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if rpcErr != nil {
-			notify(shared.ErrorEnvelope(request.ID, rpcErr.Code, rpcErr.Message))
+			notify(shared.ErrorEnvelope(request.ID, rpcErr.Code, rpcErr.Message, rpcErr.Data))
 			continue
 		}
 		notify(shared.ResultEnvelope(request.ID, response))
@@ -179,7 +179,7 @@ func (s *Server) handleRPCWithTransform(
 		transformed, rpcErr := transform(request)
 		if rpcErr != nil {
 			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(shared.ErrorEnvelope(request.ID, rpcErr.Code, rpcErr.Message))
+			_ = json.NewEncoder(w).Encode(shared.ErrorEnvelope(request.ID, rpcErr.Code, rpcErr.Message, rpcErr.Data))
 			return
 		}
 		request = transformed
@@ -210,7 +210,7 @@ func (s *Server) handleRPCWithTransform(
 		return
 	}
 	if rpcErr != nil {
-		envelope := shared.ErrorEnvelope(request.ID, rpcErr.Code, rpcErr.Message)
+		envelope := shared.ErrorEnvelope(request.ID, rpcErr.Code, rpcErr.Message, rpcErr.Data)
 		if stream {
 			streamWriter.write(envelope)
 			streamWriter.done()

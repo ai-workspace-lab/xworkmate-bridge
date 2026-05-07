@@ -48,7 +48,7 @@ func RunStdio(input io.Reader, output io.Writer) {
 		}
 		if rpcErr != nil {
 			writeMessage(
-				shared.ErrorEnvelope(request.ID, rpcErr.Code, rpcErr.Message),
+				shared.ErrorEnvelope(request.ID, rpcErr.Code, rpcErr.Message, rpcErr.Data),
 			)
 			continue
 		}

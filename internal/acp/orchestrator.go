@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"xworkmate-bridge/internal/gatewayruntime"
 	"xworkmate-bridge/internal/memory"
 	"xworkmate-bridge/internal/router"
 	"xworkmate-bridge/internal/shared"
@@ -204,7 +205,7 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 		return nil, rpcErr
 	}
 	artifactSinceUnixMs := time.Now().Add(-1 * time.Second).UnixMilli()
-	sendResult := o.server.gateway.RequestByMode(
+	sendResult := o.openClawGatewayRequestWithRetry(
 		gatewayProvider,
 		"chat.send",
 		chatParams,
@@ -216,7 +217,7 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 	}
 	sendPayload := shared.AsMap(sendResult.Payload)
 	runID := strings.TrimSpace(shared.StringArg(sendPayload, "runId", turnID))
-	waitResult := o.server.gateway.RequestByMode(
+	waitResult := o.openClawGatewayRequestWithRetry(
 		gatewayProvider,
 		"agent.wait",
 		map[string]any{
@@ -499,7 +500,7 @@ func (o *SessionOrchestrator) openClawArtifactPrepare(
 	if sessionKey == "" || runID == "" {
 		return nil, &shared.RPCError{Code: -32602, Message: "OPENCLAW_ARTIFACT_SCOPE_REQUIRED"}
 	}
-	prepareResult := o.server.gateway.RequestByMode(
+	prepareResult := o.openClawGatewayRequestWithRetry(
 		gatewayProvider,
 		"xworkmate.artifacts.prepare",
 		map[string]any{
@@ -555,7 +556,7 @@ func (o *SessionOrchestrator) openClawArtifactExport(
 	if latestTaskScopeIfEmpty {
 		exportParams["latestTaskScopeIfEmpty"] = true
 	}
-	exportResult := o.server.gateway.RequestByMode(
+	exportResult := o.openClawGatewayRequestWithRetry(
 		gatewayProvider,
 		"xworkmate.artifacts.export",
 		exportParams,
@@ -704,11 +705,60 @@ func appendArtifactList(existing any, incoming any) []any {
 }
 
 func gatewayRPCError(errorPayload map[string]any, fallback string) *shared.RPCError {
+	if isOpenClawRetryableGatewayError(errorPayload) {
+		return &shared.RPCError{
+			Code:    -32002,
+			Message: "OPENCLAW_GATEWAY_SOCKET_CLOSED: OpenClaw gateway connection closed during task execution",
+			Data: map[string]any{
+				"code":          "OPENCLAW_GATEWAY_SOCKET_CLOSED",
+				"originalCode":  strings.TrimSpace(shared.StringArg(errorPayload, "code", "")),
+				"originalError": strings.TrimSpace(shared.StringArg(errorPayload, "message", "")),
+			},
+		}
+	}
 	message := strings.TrimSpace(shared.StringArg(errorPayload, "message", fallback))
 	if message == "" {
 		message = fallback
 	}
 	return &shared.RPCError{Code: -32002, Message: message}
+}
+
+func (o *SessionOrchestrator) openClawGatewayRequestWithRetry(
+	gatewayProvider string,
+	method string,
+	params map[string]any,
+	timeout time.Duration,
+	notify func(map[string]any),
+) gatewayruntime.RequestResult {
+	result := o.server.gateway.RequestByMode(
+		gatewayProvider,
+		method,
+		params,
+		timeout,
+		notify,
+	)
+	if result.OK || !isOpenClawRetryableGatewayError(result.Error) {
+		return result
+	}
+	if rpcErr := ensureProductionGatewayConnected(o.server, gatewayProvider, notify); rpcErr != nil {
+		return result
+	}
+	return o.server.gateway.RequestByMode(
+		gatewayProvider,
+		method,
+		params,
+		timeout,
+		notify,
+	)
+}
+
+func isOpenClawRetryableGatewayError(errorPayload map[string]any) bool {
+	code := strings.TrimSpace(strings.ToUpper(shared.StringArg(errorPayload, "code", "")))
+	if code == "SOCKET_CLOSED" || code == "SOCKET_FAILURE" || code == "OFFLINE" {
+		return true
+	}
+	message := strings.TrimSpace(strings.ToLower(shared.StringArg(errorPayload, "message", "")))
+	return strings.Contains(message, "socket closed")
 }
 
 func firstNonEmptyString(values map[string]any, keys ...string) string {
