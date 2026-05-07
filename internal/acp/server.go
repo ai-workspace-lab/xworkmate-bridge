@@ -22,19 +22,23 @@ func Serve(args []string) error {
 	_ = flags.Parse(args)
 
 	server := NewServer()
-	httpServer := &http.Server{
-		Addr:         strings.TrimSpace(*listen),
-		Handler:      server.Handler(),
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: openClawAgentWaitTimeout + time.Minute,
-		IdleTimeout:  2 * time.Minute,
-	}
+	httpServer := newHTTPServer(strings.TrimSpace(*listen), server.Handler())
 
 	if err := httpServer.ListenAndServe(); err != nil &&
 		!errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("ACP server failed: %w", err)
 	}
 	return nil
+}
+
+func newHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:         strings.TrimSpace(addr),
+		Handler:      handler,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: openClawAgentWaitTimeout + time.Minute,
+		IdleTimeout:  2 * time.Minute,
+	}
 }
 
 func NewServer() *Server {
