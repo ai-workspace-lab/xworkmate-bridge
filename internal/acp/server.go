@@ -26,7 +26,7 @@ func Serve(args []string) error {
 		Addr:         strings.TrimSpace(*listen),
 		Handler:      server.Handler(),
 		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 5 * time.Minute,
+		WriteTimeout: openClawAgentWaitTimeout + time.Minute,
 		IdleTimeout:  2 * time.Minute,
 	}
 
