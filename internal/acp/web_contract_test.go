@@ -140,6 +140,51 @@ func TestHTTPHandlerGatewayOpenClawRejectsNonSessionMethods(t *testing.T) {
 	}
 }
 
+func TestHTTPHandlerRPCSSEWritesFinalEnvelopeAndDone(t *testing.T) {
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
+	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
+	server := NewServer()
+	handler := server.Handler()
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"http://127.0.0.1/acp/rpc",
+		strings.NewReader(`{"jsonrpc":"2.0","id":"cap-1","method":"acp.capabilities","params":{}}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "text/event-stream")
+	request.Header.Set("Authorization", "Bearer bridge-test-token")
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected JSON-RPC 200, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if contentType := recorder.Header().Get("Content-Type"); !strings.Contains(contentType, "text/event-stream") {
+		t.Fatalf("expected event-stream content type, got %q", contentType)
+	}
+	events := strings.Split(strings.TrimSpace(recorder.Body.String()), "\n\n")
+	if len(events) != 2 {
+		t.Fatalf("expected final envelope and done events, got %q", recorder.Body.String())
+	}
+	if !strings.HasPrefix(events[0], "data: ") {
+		t.Fatalf("expected first event data line, got %q", events[0])
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(events[0], "data: ")), &envelope); err != nil {
+		t.Fatalf("decode final envelope: %v", err)
+	}
+	if envelope["id"] != "cap-1" {
+		t.Fatalf("expected final envelope id cap-1, got %#v", envelope["id"])
+	}
+	if _, ok := envelope["result"].(map[string]any); !ok {
+		t.Fatalf("expected result envelope, got %#v", envelope)
+	}
+	if events[1] != "data: [DONE]" {
+		t.Fatalf("expected done event, got %q", events[1])
+	}
+}
+
 func TestHTTPHandlerGatewayOpenClawAllowsOnlyTaskSubmitMethods(t *testing.T) {
 	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
 	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
