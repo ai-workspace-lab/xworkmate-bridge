@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"log"
 	"net/url"
 	"os"
 	"path"
@@ -208,6 +209,7 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 		return nil, rpcErr
 	}
 	artifactSinceUnixMs := time.Now().Add(-1 * time.Second).UnixMilli()
+	sendStarted := time.Now()
 	sendResult := o.openClawGatewayRequestWithRetry(
 		gatewayProvider,
 		"chat.send",
@@ -215,11 +217,20 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 		2*time.Minute,
 		notifyWithCollection,
 	)
+	logOpenClawGatewayTiming(
+		gatewayProvider,
+		"chat.send",
+		sessionKey,
+		turnID,
+		time.Since(sendStarted),
+		sendResult.OK,
+	)
 	if !sendResult.OK {
 		return nil, gatewayRPCError(sendResult.Error, "openclaw chat.send failed")
 	}
 	sendPayload := shared.AsMap(sendResult.Payload)
 	runID := strings.TrimSpace(shared.StringArg(sendPayload, "runId", turnID))
+	waitStarted := time.Now()
 	waitResult := o.openClawGatewayRequestWithRetry(
 		gatewayProvider,
 		"agent.wait",
@@ -229,6 +240,14 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 		},
 		openClawAgentWaitTimeout,
 		notifyWithCollection,
+	)
+	logOpenClawGatewayTiming(
+		gatewayProvider,
+		"agent.wait",
+		sessionKey,
+		runID,
+		time.Since(waitStarted),
+		waitResult.OK,
 	)
 	if !waitResult.OK {
 		return nil, gatewayRPCError(waitResult.Error, "openclaw agent.wait failed")
@@ -276,6 +295,25 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 	stripOpenClawArtifactInlineContent(result)
 	guardOpenClawArtifactResult(result, artifactDeliveryRequired || artifactDeliveryClaimed)
 	return result, nil
+}
+
+func logOpenClawGatewayTiming(
+	gatewayProvider string,
+	method string,
+	sessionKey string,
+	runID string,
+	duration time.Duration,
+	ok bool,
+) {
+	log.Printf(
+		"level=info component=openclaw_gateway event=request_timing provider=%q method=%q sessionId=%q runId=%q durationMs=%d ok=%t",
+		gatewayProvider,
+		method,
+		sessionKey,
+		runID,
+		duration.Milliseconds(),
+		ok,
+	)
 }
 
 func (o *SessionOrchestrator) openClawArtifactExportForDelivery(

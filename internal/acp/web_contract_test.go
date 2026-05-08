@@ -234,12 +234,13 @@ func TestHTTPHandlerGatewayOpenClawSSEKeepaliveBeforeFinalEnvelopeAndDone(t *tes
 	}
 
 	events := strings.Split(strings.TrimSpace(string(body)), "\n\n")
-	if len(events) < 3 {
-		t.Fatalf("expected keepalive, final envelope, and done events, got %q", string(body))
+	if len(events) < 4 {
+		t.Fatalf("expected accepted, keepalive, final envelope, and done events, got %q", string(body))
 	}
 	if events[len(events)-1] != "data: [DONE]" {
 		t.Fatalf("expected done event, got %q", events[len(events)-1])
 	}
+	var sawAcceptedBeforeKeepalive bool
 	var sawKeepaliveBeforeFinal bool
 	var sawFinal bool
 	for _, event := range events[:len(events)-1] {
@@ -250,6 +251,9 @@ func TestHTTPHandlerGatewayOpenClawSSEKeepaliveBeforeFinalEnvelopeAndDone(t *tes
 		if err := json.Unmarshal([]byte(strings.TrimPrefix(event, "data: ")), &envelope); err != nil {
 			t.Fatalf("decode event %q: %v", event, err)
 		}
+		if envelope["method"] == "xworkmate.bridge.accepted" && !sawKeepaliveBeforeFinal && !sawFinal {
+			sawAcceptedBeforeKeepalive = true
+		}
 		if envelope["method"] == "xworkmate.bridge.keepalive" && !sawFinal {
 			sawKeepaliveBeforeFinal = true
 		}
@@ -259,6 +263,9 @@ func TestHTTPHandlerGatewayOpenClawSSEKeepaliveBeforeFinalEnvelopeAndDone(t *tes
 				t.Fatalf("expected result envelope, got %#v", envelope)
 			}
 		}
+	}
+	if !sawAcceptedBeforeKeepalive {
+		t.Fatalf("expected accepted event before keepalive/final envelope, got %q", string(body))
 	}
 	if !sawKeepaliveBeforeFinal {
 		t.Fatalf("expected keepalive event before final envelope, got %q", string(body))
@@ -409,7 +416,7 @@ func TestHTTPHandlerGatewayOpenClawForcesGatewayRouting(t *testing.T) {
 
 func TestSafeSSEStreamDropsLateNotificationsAfterClose(t *testing.T) {
 	writer := &panicSSEWriter{header: http.Header{}}
-	stream := newSafeSSEStream(context.Background(), writer)
+	stream := newSafeSSEStream(context.Background(), writer, safeSSEStreamMeta{})
 
 	stream.close()
 	if stream.write(map[string]any{"method": "xworkmate.gateway.push"}) {
@@ -419,7 +426,7 @@ func TestSafeSSEStreamDropsLateNotificationsAfterClose(t *testing.T) {
 		t.Fatalf("expected no write after close, got %d", writer.writes)
 	}
 
-	openStream := newSafeSSEStream(context.Background(), writer)
+	openStream := newSafeSSEStream(context.Background(), writer, safeSSEStreamMeta{})
 	writer.panicOnWrite = true
 	if openStream.write(map[string]any{"method": "xworkmate.gateway.push"}) {
 		t.Fatal("expected panic writer to be marked closed")

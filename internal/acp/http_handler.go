@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -196,7 +197,13 @@ func (s *Server) handleRPCWithTransform(
 		w.Header().Set("Connection", "keep-alive")
 	}
 
-	streamWriter := newSafeSSEStream(r.Context(), w)
+	streamWriter := newSafeSSEStream(r.Context(), w, safeSSEStreamMeta{
+		Path:      r.URL.Path,
+		Method:    request.Method,
+		SessionID: shared.StringArg(request.Params, "sessionId", ""),
+		ThreadID:  shared.StringArg(request.Params, "threadId", ""),
+		RequestID: fmt.Sprint(request.ID),
+	})
 	stopKeepalive := func() {}
 	writeNotification := func(message map[string]any) {
 		if !stream {
@@ -205,6 +212,19 @@ func (s *Server) handleRPCWithTransform(
 		streamWriter.write(message)
 	}
 	if stream {
+		if r.URL.Path == "/gateway/openclaw" {
+			streamWriter.write(map[string]any{
+				"jsonrpc": "2.0",
+				"method":  "xworkmate.bridge.accepted",
+				"params": map[string]any{
+					"sessionId":  shared.StringArg(request.Params, "sessionId", ""),
+					"threadId":   shared.StringArg(request.Params, "threadId", ""),
+					"method":     request.Method,
+					"path":       r.URL.Path,
+					"acceptedAt": time.Now().UTC().Format(time.RFC3339Nano),
+				},
+			})
+		}
 		stopKeepalive = streamWriter.startKeepalive(httpSSEKeepaliveInterval)
 	}
 	defer stopKeepalive()
@@ -246,23 +266,32 @@ type safeSSEStream struct {
 	ctx     context.Context
 	w       http.ResponseWriter
 	flusher http.Flusher
+	meta    safeSSEStreamMeta
 	closed  atomic.Bool
 	mu      sync.Mutex
 }
 
-func newSafeSSEStream(ctx context.Context, w http.ResponseWriter) *safeSSEStream {
+type safeSSEStreamMeta struct {
+	Path      string
+	Method    string
+	RequestID string
+	SessionID string
+	ThreadID  string
+}
+
+func newSafeSSEStream(ctx context.Context, w http.ResponseWriter, meta safeSSEStreamMeta) *safeSSEStream {
 	flusher, _ := w.(http.Flusher)
-	return &safeSSEStream{ctx: ctx, w: w, flusher: flusher}
+	return &safeSSEStream{ctx: ctx, w: w, flusher: flusher, meta: meta}
 }
 
 func (s *safeSSEStream) write(payload map[string]any) bool {
-	return s.writeRaw(func() error {
+	return s.writeRaw(sseEventType(payload), func() error {
 		return shared.WriteSSE(s.w, payload)
 	})
 }
 
 func (s *safeSSEStream) done() bool {
-	return s.writeRaw(func() error {
+	return s.writeRaw("done", func() error {
 		_, err := s.w.Write([]byte("data: [DONE]\n\n"))
 		return err
 	})
@@ -305,13 +334,14 @@ func (s *safeSSEStream) close() {
 	s.closed.Store(true)
 }
 
-func (s *safeSSEStream) writeRaw(write func() error) (ok bool) {
+func (s *safeSSEStream) writeRaw(eventType string, write func() error) (ok bool) {
 	if s == nil || s.closed.Load() {
 		return false
 	}
 	select {
 	case <-s.ctx.Done():
 		s.closed.Store(true)
+		s.logWriteFailure(eventType, "context_done", s.ctx.Err())
 		return false
 	default:
 	}
@@ -321,19 +351,58 @@ func (s *safeSSEStream) writeRaw(write func() error) (ok bool) {
 		return false
 	}
 	defer func() {
-		if recover() != nil {
+		if recovered := recover(); recovered != nil {
 			s.closed.Store(true)
+			s.logWriteFailure(eventType, "panic", fmt.Errorf("%v", recovered))
 			ok = false
 		}
 	}()
 	if err := write(); err != nil {
 		s.closed.Store(true)
+		s.logWriteFailure(eventType, "write_failed", err)
 		return false
 	}
 	if s.flusher != nil {
 		s.flusher.Flush()
 	}
 	return true
+}
+
+func (s *safeSSEStream) logWriteFailure(eventType string, reason string, err error) {
+	if s == nil {
+		return
+	}
+	errText := ""
+	if err != nil {
+		errText = err.Error()
+	}
+	log.Printf(
+		"level=warn component=acp_sse event=stream_write path=%q rpcMethod=%q requestId=%q sessionId=%q threadId=%q sseEvent=%q reason=%q error=%q",
+		s.meta.Path,
+		s.meta.Method,
+		s.meta.RequestID,
+		s.meta.SessionID,
+		s.meta.ThreadID,
+		eventType,
+		reason,
+		errText,
+	)
+}
+
+func sseEventType(payload map[string]any) string {
+	if payload == nil {
+		return "unknown"
+	}
+	if method, _ := payload["method"].(string); strings.TrimSpace(method) != "" {
+		return strings.TrimSpace(method)
+	}
+	if payload["result"] != nil {
+		return "result"
+	}
+	if payload["error"] != nil {
+		return "error"
+	}
+	return "unknown"
 }
 
 func forceOpenClawGatewayRequest(request shared.RPCRequest) (shared.RPCRequest, *shared.RPCError) {
