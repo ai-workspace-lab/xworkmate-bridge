@@ -100,6 +100,7 @@ jobs:
       SERVICE_IMAGE_NAME: xworkmate-bridge
     outputs:
       artifact_name: ${{ steps.artifact_meta.outputs.artifact_name }}
+      binary_artifact_name: ${{ steps.binary_artifact_meta.outputs.binary_artifact_name }}
       service_image_ref: ${{ steps.service_ref.outputs.image_ref }}
     steps:
       - name: Checkout
@@ -136,6 +137,9 @@ jobs:
             BUILD_DATE=${{ github.event.head_commit.timestamp || github.event.repository.pushed_at }}
             BUILD_VERSION=v1.0-beta2
 
+      - name: Build native linux service binary
+        run: bash ./scripts/github-actions/build-artifact.sh dist/native-binary
+
       - name: Write image ref artifact
         run: |
           set -euo pipefail
@@ -146,11 +150,21 @@ jobs:
         id: artifact_meta
         run: bash ./scripts/github-actions/resolve-artifact-name.sh
 
+      - name: Record native binary artifact metadata
+        id: binary_artifact_meta
+        run: printf 'binary_artifact_name=xworkmate-bridge-linux-amd64-%s\n' "${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
       - name: Upload image ref artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ steps.artifact_meta.outputs.artifact_name }}
           path: dist/service-image-ref.txt
+
+      - name: Upload native linux service binary
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.binary_artifact_meta.outputs.binary_artifact_name }}
+          path: dist/native-binary/xworkmate-bridge
 
   deploy:
     name: Deploy
@@ -181,6 +195,12 @@ jobs:
         with:
           name: ${{ needs.build.outputs.artifact_name }}
           path: xworkmate-bridge/dist/image-artifact
+
+      - name: Download native linux service binary
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4
+        with:
+          name: ${{ needs.build.outputs.binary_artifact_name }}
+          path: xworkmate-bridge/dist/native-binary
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -216,6 +236,11 @@ jobs:
           SINGLE_NODE_VPS_SSH_PRIVATE_KEY: ${{ secrets.SINGLE_NODE_VPS_SSH_PRIVATE_KEY }}
           SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
         run: bash ./scripts/github-actions/prepare-ssh.sh "${{ steps.deploy_meta.outputs.target_host }}" "${SSH_KNOWN_HOSTS}"
+
+      - name: Install native bridge binary on target
+        if: ${{ steps.deploy_meta.outputs.run_apply == 'true' }}
+        working-directory: xworkmate-bridge
+        run: bash ./scripts/github-actions/deploy-native-binary.sh "${{ steps.deploy_meta.outputs.target_host }}" "dist/native-binary/xworkmate-bridge" "$(git rev-parse --short HEAD)"
 
       - name: Run Ansible deploy playbook
         working-directory: playbooks
