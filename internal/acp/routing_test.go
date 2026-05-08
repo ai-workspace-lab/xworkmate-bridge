@@ -2316,6 +2316,55 @@ func TestExecuteSessionTaskRequiresRouting(t *testing.T) {
 	}
 }
 
+func TestExecuteSessionMessageMissingProviderStateReturnsContinuationUnavailable(t *testing.T) {
+	server := NewServer()
+	providerServer := newExternalSingleAgentProvider(t, "codex", "done")
+	defer providerServer.Close()
+	setTestBridgeProvider(server, syncedProvider{
+		ProviderID: "codex",
+		Label:      "Codex",
+		Endpoint:   providerServer.URL,
+		Enabled:    true,
+	})
+
+	response, rpcErr := server.executeSessionTask(task{
+		req: shared.RPCRequest{
+			ID:     "request-continue",
+			Method: "session.message",
+			Params: map[string]any{
+				"sessionId":        "session-without-provider-state",
+				"threadId":         "thread-without-provider-state",
+				"taskPrompt":       "continue",
+				"workingDirectory": t.TempDir(),
+				"routing": map[string]any{
+					"routingMode":             "explicit",
+					"explicitExecutionTarget": "singleAgent",
+					"explicitProviderId":      "codex",
+				},
+			},
+		},
+	})
+	if rpcErr == nil {
+		t.Fatalf("expected continuation unavailable error, got response %#v", response)
+	}
+	if rpcErr.Code != -32002 || !strings.Contains(rpcErr.Message, "SESSION_CONTINUATION_UNAVAILABLE") {
+		t.Fatalf("expected structured continuation error, got %#v", rpcErr)
+	}
+	data := shared.AsMap(rpcErr.Data)
+	if got := shared.StringArg(data, "code", ""); got != "SESSION_CONTINUATION_UNAVAILABLE" {
+		t.Fatalf("expected continuation detail code, got %#v", rpcErr.Data)
+	}
+	if got := shared.StringArg(data, "sessionId", ""); got != "session-without-provider-state" {
+		t.Fatalf("expected session id in error data, got %#v", rpcErr.Data)
+	}
+	if got := shared.StringArg(data, "threadId", ""); got != "thread-without-provider-state" {
+		t.Fatalf("expected thread id in error data, got %#v", rpcErr.Data)
+	}
+	if got := shared.StringArg(data, "providerId", ""); got != "codex" {
+		t.Fatalf("expected provider id in error data, got %#v", rpcErr.Data)
+	}
+}
+
 func TestExecuteSessionTaskComplexRequestNoLongerPromotesToMultiAgent(t *testing.T) {
 	workspaceDir := filepath.Join(t.TempDir(), "workspace")
 	if err := os.MkdirAll(workspaceDir, 0o755); err != nil {

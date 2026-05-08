@@ -35,6 +35,42 @@ type opencodeCompat struct{ *externalACPCompat }
 type geminiCompat struct{ *externalACPCompat }
 type hermesCompat struct{ *externalACPCompat }
 
+type sessionContinuationUnavailableError struct {
+	providerID string
+	sessionID  string
+	threadID   string
+	reason     string
+}
+
+func (e sessionContinuationUnavailableError) Error() string {
+	if e.reason != "" {
+		return "SESSION_CONTINUATION_UNAVAILABLE: " + e.reason
+	}
+	return "SESSION_CONTINUATION_UNAVAILABLE: provider session state is unavailable"
+}
+
+func newSessionContinuationUnavailableError(providerID, sessionID, threadID, reason string) error {
+	return sessionContinuationUnavailableError{
+		providerID: strings.TrimSpace(providerID),
+		sessionID:  strings.TrimSpace(sessionID),
+		threadID:   strings.TrimSpace(threadID),
+		reason:     strings.TrimSpace(reason),
+	}
+}
+
+func asSessionContinuationUnavailableError(err error) (sessionContinuationUnavailableError, bool) {
+	if err == nil {
+		return sessionContinuationUnavailableError{}, false
+	}
+	if typed, ok := err.(sessionContinuationUnavailableError); ok {
+		return typed, true
+	}
+	if typed, ok := err.(*sessionContinuationUnavailableError); ok && typed != nil {
+		return *typed, true
+	}
+	return sessionContinuationUnavailableError{}, false
+}
+
 func newProviderCompat(provider syncedProvider) ProviderCompat {
 	base := &externalACPCompat{
 		providerID: provider.ProviderID,
@@ -122,20 +158,20 @@ func (c *codexCompat) SendMessage(ctx context.Context, sessionID string, threadI
 	}
 	codexThreadID := c.lookupThread(sessionID, threadID)
 	if codexThreadID == "" {
-		codexThreadID = strings.TrimSpace(threadID)
+		return nil, newSessionContinuationUnavailableError(
+			c.providerID,
+			sessionID,
+			threadID,
+			"provider thread mapping is missing",
+		)
 	}
-	if codexThreadID != "" {
-		thread, err := c.codexCall(ctx, "thread/resume", map[string]any{"threadId": codexThreadID}, nil)
-		if err != nil {
-			return nil, err
-		}
-		if resolved := codexThreadIDFromResult(thread); resolved != "" {
-			codexThreadID = resolved
-			c.rememberThread(sessionID, threadID, codexThreadID)
-		}
+	thread, err := c.codexCall(ctx, "thread/resume", map[string]any{"threadId": codexThreadID}, nil)
+	if err != nil {
+		return nil, err
 	}
-	if codexThreadID == "" {
-		return c.StartSession(ctx, sessionID, threadID, params, sink)
+	if resolved := codexThreadIDFromResult(thread); resolved != "" {
+		codexThreadID = resolved
+		c.rememberThread(sessionID, threadID, codexThreadID)
 	}
 	return c.startTurn(ctx, codexThreadID, params, sink)
 }
@@ -158,10 +194,12 @@ func (c *codexCompat) startSessionWS(ctx context.Context, sessionID string, thre
 func (c *codexCompat) sendMessageWS(ctx context.Context, sessionID string, threadID string, params map[string]any, sink SessionNotificationSink) (map[string]any, error) {
 	codexThreadID := c.lookupThread(sessionID, threadID)
 	if codexThreadID == "" {
-		codexThreadID = strings.TrimSpace(threadID)
-	}
-	if codexThreadID == "" {
-		return c.startSessionWS(ctx, sessionID, threadID, params, sink)
+		return nil, newSessionContinuationUnavailableError(
+			c.providerID,
+			sessionID,
+			threadID,
+			"provider thread mapping is missing",
+		)
 	}
 	return c.withInitializedCodexWS(ctx, func(conn *websocket.Conn) (map[string]any, error) {
 		thread, err := c.writeAndReadWSRPC(ctx, conn, "thread/resume", map[string]any{"threadId": codexThreadID}, nil)

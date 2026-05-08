@@ -267,6 +267,22 @@ bridge 保证：
 - provider-specific 差异被 compat layer 吸收
 - bridge core 不暴露 stdio/runtime 细节
 - 中间通知统一通过 `session.update`
+- `session.message` 是续写合同；provider compat 缺少原会话状态时返回结构化 JSON-RPC error，不静默降级为新的 `session.start`
+
+续写失败错误：
+
+```json
+{
+  "code": -32002,
+  "message": "SESSION_CONTINUATION_UNAVAILABLE: provider session state is unavailable",
+  "data": {
+    "code": "SESSION_CONTINUATION_UNAVAILABLE",
+    "sessionId": "<sessionId>",
+    "threadId": "<threadId>",
+    "providerId": "<providerId>"
+  }
+}
+```
 
 OpenClaw gateway 任务的 HTTP task submit 路径是 `/gateway/openclaw`，并且只用于 `session.start` 与同一 OpenClaw task 的 follow-up `session.message`。Bridge 会强制 routing 到 `gateway/openclaw`，并拒绝 `multiAgent=true` 或 agent/provider 冲突参数。
 

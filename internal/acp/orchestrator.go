@@ -113,6 +113,9 @@ func (o *SessionOrchestrator) Process(ctx context.Context, method string, params
 		sess.task.State = TaskStateFailed
 		sess.task.UpdatedAt = time.Now()
 		sess.mu.Unlock()
+		if continuationErr, ok := asSessionContinuationUnavailableError(err); ok {
+			return nil, sessionContinuationUnavailableRPCError(continuationErr)
+		}
 		return nil, &shared.RPCError{Code: -32002, Message: "EXECUTION_FAILED: " + err.Error()}
 	}
 
@@ -721,6 +724,20 @@ func gatewayRPCError(errorPayload map[string]any, fallback string) *shared.RPCEr
 		message = fallback
 	}
 	return &shared.RPCError{Code: -32002, Message: message}
+}
+
+func sessionContinuationUnavailableRPCError(err sessionContinuationUnavailableError) *shared.RPCError {
+	return &shared.RPCError{
+		Code:    -32002,
+		Message: "SESSION_CONTINUATION_UNAVAILABLE: provider session state is unavailable",
+		Data: map[string]any{
+			"code":       "SESSION_CONTINUATION_UNAVAILABLE",
+			"sessionId":  err.sessionID,
+			"threadId":   err.threadID,
+			"providerId": err.providerID,
+			"reason":     err.reason,
+		},
+	}
 }
 
 func (o *SessionOrchestrator) openClawGatewayRequestWithRetry(

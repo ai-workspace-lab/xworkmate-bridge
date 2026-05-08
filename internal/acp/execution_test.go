@@ -179,6 +179,60 @@ func TestCodexCompatTranslatesSessionLifecycleToThreadAndTurnRPC(t *testing.T) {
 	}
 }
 
+func TestCodexCompatSendMessageWithoutProviderThreadStateDoesNotStartSession(t *testing.T) {
+	t.Parallel()
+
+	var methods []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			_ = r.Body.Close()
+		}()
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		methods = append(methods, stringValue(request["method"]))
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      request["id"],
+			"result":  map[string]any{"id": "unexpected-thread"},
+		})
+	}))
+	defer upstream.Close()
+
+	compat := newProviderCompat(syncedProvider{
+		ProviderID: "codex",
+		Label:      "Codex",
+		Endpoint:   upstream.URL,
+		Enabled:    true,
+	})
+	_, err := compat.SendMessage(
+		context.Background(),
+		"session-missing",
+		"thread-missing",
+		map[string]any{
+			"taskPrompt":       "continue",
+			"workingDirectory": t.TempDir(),
+		},
+		nil,
+	)
+	if err == nil {
+		t.Fatal("expected continuation unavailable error")
+	}
+	continuationErr, ok := asSessionContinuationUnavailableError(err)
+	if !ok {
+		t.Fatalf("expected continuation unavailable error, got %T %v", err, err)
+	}
+	if continuationErr.sessionID != "session-missing" ||
+		continuationErr.threadID != "thread-missing" ||
+		continuationErr.providerID != "codex" {
+		t.Fatalf("unexpected continuation error context: %#v", continuationErr)
+	}
+	if len(methods) != 0 {
+		t.Fatalf("session.message without provider state must not call upstream, got %#v", methods)
+	}
+}
+
 func TestCodexCompatConvertsEmptyTurnResultToDisplayableFailure(t *testing.T) {
 	t.Parallel()
 
