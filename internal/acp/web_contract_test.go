@@ -3,12 +3,14 @@ package acp
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"xworkmate-bridge/internal/shared"
 )
@@ -182,6 +184,87 @@ func TestHTTPHandlerRPCSSEWritesFinalEnvelopeAndDone(t *testing.T) {
 	}
 	if events[1] != "data: [DONE]" {
 		t.Fatalf("expected done event, got %q", events[1])
+	}
+}
+
+func TestHTTPHandlerGatewayOpenClawSSEKeepaliveBeforeFinalEnvelopeAndDone(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+	gateway.agentWaitDelayMs.Store(50)
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
+	t.Setenv("BRIDGE_CONFIG_PATH", filepath.Join(t.TempDir(), "missing-config.yaml"))
+	previousInterval := httpSSEKeepaliveInterval
+	httpSSEKeepaliveInterval = 10 * time.Millisecond
+	t.Cleanup(func() {
+		httpSSEKeepaliveInterval = previousInterval
+	})
+
+	server := NewServer()
+	httpServer := httptest.NewServer(server.Handler())
+	defer httpServer.Close()
+
+	request, err := http.NewRequest(
+		http.MethodPost,
+		httpServer.URL+"/gateway/openclaw",
+		strings.NewReader(`{"jsonrpc":"2.0","id":"task-keepalive","method":"session.start","params":{"sessionId":"s1","threadId":"t1","taskPrompt":"Reply pong","workingDirectory":"`+t.TempDir()+`"}}`),
+	)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "text/event-stream")
+	request.Header.Set("Authorization", "Bearer bridge-test-token")
+
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("send request: %v", err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.StatusCode, string(body))
+	}
+	if contentType := response.Header.Get("Content-Type"); !strings.Contains(contentType, "text/event-stream") {
+		t.Fatalf("expected event-stream content type, got %q", contentType)
+	}
+
+	events := strings.Split(strings.TrimSpace(string(body)), "\n\n")
+	if len(events) < 3 {
+		t.Fatalf("expected keepalive, final envelope, and done events, got %q", string(body))
+	}
+	if events[len(events)-1] != "data: [DONE]" {
+		t.Fatalf("expected done event, got %q", events[len(events)-1])
+	}
+	var sawKeepaliveBeforeFinal bool
+	var sawFinal bool
+	for _, event := range events[:len(events)-1] {
+		if !strings.HasPrefix(event, "data: ") {
+			t.Fatalf("expected data event, got %q", event)
+		}
+		var envelope map[string]any
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(event, "data: ")), &envelope); err != nil {
+			t.Fatalf("decode event %q: %v", event, err)
+		}
+		if envelope["method"] == "xworkmate.bridge.keepalive" && !sawFinal {
+			sawKeepaliveBeforeFinal = true
+		}
+		if envelope["id"] == "task-keepalive" {
+			sawFinal = true
+			if _, ok := envelope["result"].(map[string]any); !ok {
+				t.Fatalf("expected result envelope, got %#v", envelope)
+			}
+		}
+	}
+	if !sawKeepaliveBeforeFinal {
+		t.Fatalf("expected keepalive event before final envelope, got %q", string(body))
+	}
+	if !sawFinal {
+		t.Fatalf("expected final task envelope, got %q", string(body))
 	}
 }
 

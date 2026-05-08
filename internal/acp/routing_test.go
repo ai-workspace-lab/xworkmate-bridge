@@ -1642,6 +1642,7 @@ type acpFakeOpenClawGateway struct {
 	artifactReadFailures     atomic.Int32
 	closeNextChatSend        atomic.Bool
 	alwaysCloseChatSend      atomic.Bool
+	agentWaitDelayMs         atomic.Int64
 	lastConnectClient        atomic.Value
 	lastArtifactExportParams atomic.Value
 	lastAgentWaitParams      atomic.Value
@@ -1796,6 +1797,9 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 				})
 			case "agent.wait":
 				fake.agentWaitCount.Add(1)
+				if delayMs := fake.agentWaitDelayMs.Load(); delayMs > 0 {
+					time.Sleep(time.Duration(delayMs) * time.Millisecond)
+				}
 				params := shared.AsMap(frame["params"])
 				fake.lastAgentWaitParams.Store(params)
 				runID := strings.TrimSpace(shared.StringArg(params, "runId", "fake-run"))

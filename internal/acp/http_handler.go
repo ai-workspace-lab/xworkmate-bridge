@@ -11,9 +11,12 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"xworkmate-bridge/internal/shared"
 )
+
+var httpSSEKeepaliveInterval = 20 * time.Second
 
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -194,15 +197,21 @@ func (s *Server) handleRPCWithTransform(
 	}
 
 	streamWriter := newSafeSSEStream(r.Context(), w)
+	stopKeepalive := func() {}
 	writeNotification := func(message map[string]any) {
 		if !stream {
 			return
 		}
 		streamWriter.write(message)
 	}
+	if stream {
+		stopKeepalive = streamWriter.startKeepalive(httpSSEKeepaliveInterval)
+	}
+	defer stopKeepalive()
 	defer streamWriter.close()
 
 	response, rpcErr := s.handleRequest(request, writeNotification)
+	stopKeepalive()
 	if request.ID == nil {
 		if stream {
 			streamWriter.done()
@@ -257,6 +266,39 @@ func (s *safeSSEStream) done() bool {
 		_, err := s.w.Write([]byte("data: [DONE]\n\n"))
 		return err
 	})
+}
+
+func (s *safeSSEStream) startKeepalive(interval time.Duration) func() {
+	if s == nil || interval <= 0 {
+		return func() {}
+	}
+	done := make(chan struct{})
+	var stopOnce sync.Once
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if !s.write(map[string]any{
+					"jsonrpc": "2.0",
+					"method":  "xworkmate.bridge.keepalive",
+					"params": map[string]any{
+						"intervalMs": interval.Milliseconds(),
+					},
+				}) {
+					return
+				}
+			case <-done:
+				return
+			}
+		}
+	}()
+	return func() {
+		stopOnce.Do(func() {
+			close(done)
+		})
+	}
 }
 
 func (s *safeSSEStream) close() {
