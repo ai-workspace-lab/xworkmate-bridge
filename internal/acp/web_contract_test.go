@@ -275,6 +275,116 @@ func TestHTTPHandlerGatewayOpenClawSSEKeepaliveBeforeFinalEnvelopeAndDone(t *tes
 	}
 }
 
+func TestHTTPHandlerGatewayOpenClawFiltersRawGatewayEventsAndKeepsFinalResult(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+	gateway.largeGatewayPayloadBytes.Store(openClawGatewayMaxNotificationBytes * 2)
+	gateway.emitAgentDelta.Store(true)
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
+	t.Setenv("BRIDGE_CONFIG_PATH", filepath.Join(t.TempDir(), "missing-config.yaml"))
+	server := NewServer()
+	httpServer := httptest.NewServer(server.Handler())
+	defer httpServer.Close()
+
+	request, err := http.NewRequest(
+		http.MethodPost,
+		httpServer.URL+"/gateway/openclaw",
+		strings.NewReader(`{"jsonrpc":"2.0","id":"task-filter","method":"session.start","params":{"sessionId":"session-filter","threadId":"thread-filter","taskPrompt":"make artifact","workingDirectory":"`+t.TempDir()+`"}}`),
+	)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "text/event-stream")
+	request.Header.Set("Authorization", "Bearer bridge-test-token")
+
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("send request: %v", err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	bodyText := string(body)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.StatusCode, bodyText)
+	}
+	if len(body) >= openClawGatewayMaxNotificationBytes {
+		t.Fatalf("expected compact gateway SSE body, got %d bytes", len(body))
+	}
+	for _, rawMethod := range []string{
+		"xworkmate.gateway.push",
+		"xworkmate.gateway.snapshot",
+		"xworkmate.gateway.log",
+		"largeIgnored",
+	} {
+		if strings.Contains(bodyText, rawMethod) {
+			t.Fatalf("expected raw gateway event %q to be filtered from SSE body: %s", rawMethod, bodyText)
+		}
+	}
+
+	events := strings.Split(strings.TrimSpace(bodyText), "\n\n")
+	if len(events) < 4 {
+		t.Fatalf("expected accepted, session.update, final envelope, and done events, got %q", bodyText)
+	}
+	if events[len(events)-1] != "data: [DONE]" {
+		t.Fatalf("expected done event, got %q", events[len(events)-1])
+	}
+	var sawAccepted bool
+	var sawDelta bool
+	var sawFinal bool
+	for _, event := range events[:len(events)-1] {
+		if !strings.HasPrefix(event, "data: ") {
+			t.Fatalf("expected data event, got %q", event)
+		}
+		var envelope map[string]any
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(event, "data: ")), &envelope); err != nil {
+			t.Fatalf("decode event %q: %v", event, err)
+		}
+		switch envelope["method"] {
+		case "xworkmate.bridge.accepted":
+			sawAccepted = true
+		case "session.update":
+			params := shared.AsMap(envelope["params"])
+			if params["type"] == "delta" && params["delta"] == "streamed delta" {
+				sawDelta = true
+				if got := params["sessionId"]; got != "session-filter" {
+					t.Fatalf("expected session-filter session update, got %#v", params)
+				}
+				if got := params["threadId"]; got != "thread-filter" {
+					t.Fatalf("expected thread-filter session update, got %#v", params)
+				}
+			}
+		}
+		if envelope["id"] == "task-filter" {
+			sawFinal = true
+			result := shared.AsMap(envelope["result"])
+			if got := result["resolvedGatewayProviderId"]; got != "openclaw" {
+				t.Fatalf("expected openclaw final result, got %#v", result)
+			}
+			if !strings.Contains(bodyText, openClawArtifactDownloadPath) {
+				t.Fatalf("expected normalized artifact download URL in final result, got %s", bodyText)
+			}
+		}
+	}
+	if !sawAccepted {
+		t.Fatalf("expected accepted event, got %q", bodyText)
+	}
+	if !sawDelta {
+		t.Fatalf("expected compact session.update delta, got %q", bodyText)
+	}
+	if !sawFinal {
+		t.Fatalf("expected final result envelope, got %q", bodyText)
+	}
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "agent.wait", "xworkmate.artifacts.export"}) {
+		t.Fatalf("expected artifact workflow methods to stay unchanged, got %#v", got)
+	}
+}
+
 func TestHTTPHandlerGatewayOpenClawAllowsOnlyTaskSubmitMethods(t *testing.T) {
 	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
 	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")

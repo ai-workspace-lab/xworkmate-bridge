@@ -182,10 +182,18 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 	notify func(map[string]any),
 ) (map[string]any, *shared.RPCError) {
 	collector := newOpenClawChatCollector()
+	sessionID := strings.TrimSpace(shared.StringArg(params, "sessionId", ""))
+	threadID := strings.TrimSpace(shared.StringArg(params, "threadId", sessionID))
+	if sessionID == "" {
+		sessionID = threadID
+	}
 	notifyWithCollection := func(message map[string]any) {
 		collector.observe(message)
-		if notify != nil {
-			notify(message)
+		if notify == nil {
+			return
+		}
+		if update := openClawGatewaySessionUpdate(message, sessionID, threadID, turnID); update != nil {
+			notify(update)
 		}
 	}
 	artifactDeliveryRequired := openClawArtifactDeliveryRequired(params)
@@ -880,6 +888,40 @@ func (c *openClawChatCollector) artifactPayload() map[string]any {
 		mergeOpenClawArtifactPayload(result, payload)
 	}
 	return result
+}
+
+func openClawGatewaySessionUpdate(notification map[string]any, sessionID string, threadID string, turnID string) map[string]any {
+	params := shared.AsMap(notification["params"])
+	event := shared.AsMap(params["event"])
+	if strings.TrimSpace(shared.StringArg(event, "event", "")) != "chat.run" {
+		return nil
+	}
+	payload := shared.AsMap(event["payload"])
+	text := firstNonEmptyString(payload, "assistantText", "text", "message", "output", "summary")
+	if text == "" {
+		return nil
+	}
+	update := map[string]any{
+		"sessionId": sessionID,
+		"threadId":  threadID,
+		"turnId":    turnID,
+		"type":      "delta",
+		"event":     "delta",
+		"delta":     text,
+		"text":      text,
+		"pending":   true,
+		"error":     false,
+	}
+	if isTerminalGatewayPayload(payload) {
+		update["type"] = "status"
+		update["event"] = "completed"
+		update["message"] = text
+		update["pending"] = false
+		if strings.EqualFold(strings.TrimSpace(shared.StringArg(payload, "state", "")), "error") {
+			update["error"] = true
+		}
+	}
+	return shared.NotificationEnvelope("session.update", update)
 }
 
 func hasArtifactPayload(payload map[string]any) bool {

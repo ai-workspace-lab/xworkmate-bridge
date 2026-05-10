@@ -1643,6 +1643,8 @@ type acpFakeOpenClawGateway struct {
 	closeNextChatSend        atomic.Bool
 	alwaysCloseChatSend      atomic.Bool
 	agentWaitDelayMs         atomic.Int64
+	largeGatewayPayloadBytes atomic.Int64
+	emitAgentDelta           atomic.Bool
 	lastConnectClient        atomic.Value
 	lastArtifactExportParams atomic.Value
 	lastAgentWaitParams      atomic.Value
@@ -1831,10 +1833,35 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 				if strings.Contains(fake.runMessage(runID), "hallucinate-files") {
 					message = "文件已就绪，点击直接下载👇 三个格式一键收取："
 				}
+				if payloadBytes := fake.largeGatewayPayloadBytes.Load(); payloadBytes > 0 {
+					_ = conn.WriteJSON(map[string]any{
+						"type":  "event",
+						"event": "health",
+						"seq":   1,
+						"payload": map[string]any{
+							"status": "ok",
+							"blob":   strings.Repeat("x", int(payloadBytes)),
+						},
+					})
+				}
+				if fake.emitAgentDelta.Load() {
+					_ = conn.WriteJSON(map[string]any{
+						"type":  "event",
+						"event": "agent",
+						"seq":   2,
+						"payload": map[string]any{
+							"runId":        runID,
+							"sessionKey":   "main",
+							"stream":       "assistant",
+							"data":         map[string]any{"text": "streamed delta"},
+							"largeIgnored": strings.Repeat("y", 1024),
+						},
+					})
+				}
 				_ = conn.WriteJSON(map[string]any{
 					"type":  "event",
 					"event": "chat",
-					"seq":   1,
+					"seq":   3,
 					"payload": map[string]any{
 						"runId": runID,
 						"state": "final",

@@ -19,6 +19,8 @@ import (
 
 var httpSSEKeepaliveInterval = 20 * time.Second
 
+const openClawGatewayMaxNotificationBytes = 64 * 1024
+
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -209,6 +211,21 @@ func (s *Server) handleRPCWithTransform(
 		if !stream {
 			return
 		}
+		if r.URL.Path == "/gateway/openclaw" {
+			if reason := openClawGatewayNotificationDropReason(message); reason != "" {
+				log.Printf(
+					"level=warn component=acp_sse event=notification_dropped path=%q rpcMethod=%q requestId=%q sessionId=%q threadId=%q reason=%q notificationMethod=%q",
+					r.URL.Path,
+					request.Method,
+					fmt.Sprint(request.ID),
+					shared.StringArg(request.Params, "sessionId", ""),
+					shared.StringArg(request.Params, "threadId", ""),
+					reason,
+					shared.StringArg(message, "method", ""),
+				)
+				return
+			}
+		}
 		streamWriter.write(message)
 	}
 	if stream {
@@ -260,6 +277,28 @@ func (s *Server) handleRPCWithTransform(
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(shared.ResultEnvelope(request.ID, response))
+}
+
+func openClawGatewayNotificationDropReason(message map[string]any) string {
+	method := strings.TrimSpace(shared.StringArg(message, "method", ""))
+	if strings.HasPrefix(method, "xworkmate.gateway.") {
+		return "raw_gateway_event"
+	}
+	if !openClawGatewayNotificationWithinLimit(message) {
+		return "oversized"
+	}
+	return ""
+}
+
+func openClawGatewayNotificationWithinLimit(message map[string]any) bool {
+	if message == nil {
+		return true
+	}
+	body, err := json.Marshal(message)
+	if err != nil {
+		return false
+	}
+	return len(body) <= openClawGatewayMaxNotificationBytes
 }
 
 type safeSSEStream struct {
