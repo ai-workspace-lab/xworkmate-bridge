@@ -1455,6 +1455,19 @@ func TestOpenClawNoDisplayableOutputDoesNotClaimArtifacts(t *testing.T) {
 	}
 }
 
+func TestOpenClawArtifactDeliverySuppressionKeepsTextOnlyPrompt(t *testing.T) {
+	if openClawArtifactDeliveryRequired(map[string]any{
+		"taskPrompt": "Reply exactly pong. Do not create files.",
+	}) {
+		t.Fatalf("negative file directive must not trigger artifact delivery")
+	}
+	if openClawArtifactDeliveryRequired(map[string]any{
+		"taskPrompt": "只回答 pong，不要生成文件。",
+	}) {
+		t.Fatalf("Chinese negative file directive must not trigger artifact delivery")
+	}
+}
+
 func TestExecuteSessionTaskGatewayRejectsMissingOpenClawFilesForDeliveryRequest(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()

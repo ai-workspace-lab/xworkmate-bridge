@@ -450,6 +450,9 @@ func openClawArtifactDeliveryRequired(params map[string]any) bool {
 	if strings.TrimSpace(text) == "" {
 		return false
 	}
+	if openClawArtifactDeliverySuppressed(text) {
+		return false
+	}
 	fileSignals := []string{
 		"ppt", "pptx", "powerpoint", "slide", "slides",
 		"pdf", "docx", "word", "xlsx", "excel",
@@ -475,6 +478,27 @@ func openClawArtifactDeliveryRequired(params map[string]any) bool {
 		return false
 	}
 	for _, signal := range actionSignals {
+		if strings.Contains(text, signal) {
+			return true
+		}
+	}
+	return false
+}
+
+func openClawArtifactDeliverySuppressed(text string) bool {
+	suppressedSignals := []string{
+		"do not create file", "do not create files",
+		"don't create file", "don't create files",
+		"do not generate file", "do not generate files",
+		"don't generate file", "don't generate files",
+		"do not write file", "do not write files",
+		"don't write file", "don't write files",
+		"no file", "no files", "no artifact", "no artifacts",
+		"without file", "without files", "without artifact", "without artifacts",
+		"不要创建文件", "不要生成文件", "不要写入文件", "不创建文件", "不生成文件",
+		"无需创建文件", "无需生成文件", "不需要文件", "不要产物", "无需产物",
+	}
+	for _, signal := range suppressedSignals {
 		if strings.Contains(text, signal) {
 			return true
 		}
