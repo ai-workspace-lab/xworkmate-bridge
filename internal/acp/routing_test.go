@@ -1449,6 +1449,12 @@ func TestExecuteSessionTaskGatewaySkipsArtifactExportForTextOnlyPrompt(t *testin
 	}
 }
 
+func TestOpenClawNoDisplayableOutputDoesNotClaimArtifacts(t *testing.T) {
+	if openClawArtifactDeliveryClaimedByOutput(openClawNoDisplayableText) {
+		t.Fatalf("fallback no-output text must not trigger artifact delivery guard")
+	}
+}
+
 func TestExecuteSessionTaskGatewayRejectsMissingOpenClawFilesForDeliveryRequest(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()

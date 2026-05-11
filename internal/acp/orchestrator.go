@@ -22,7 +22,10 @@ type SessionOrchestrator struct {
 	server *Server
 }
 
-const openClawAgentWaitTimeout = 9 * time.Minute
+const (
+	openClawAgentWaitTimeout  = 9 * time.Minute
+	openClawNoDisplayableText = "OpenClaw completed without displayable output."
+)
 
 func NewSessionOrchestrator(server *Server) *SessionOrchestrator {
 	return &SessionOrchestrator{server: server}
@@ -304,7 +307,7 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 		output = firstNonEmptyString(waitPayload, "output", "message", "summary", "assistantText", "text")
 	}
 	if output == "" {
-		output = "OpenClaw completed without displayable output."
+		output = openClawNoDisplayableText
 	}
 	result := map[string]any{
 		"success":                   true,
@@ -321,8 +324,7 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 	if preparedArtifact == nil {
 		preparedArtifact = openClawPreparedArtifactScopeFromPayload(result)
 	}
-	artifactDeliveryClaimed := !artifactDeliveryRequired &&
-		openClawArtifactDeliveryRequired(map[string]any{"message": output})
+	artifactDeliveryClaimed := !artifactDeliveryRequired && openClawArtifactDeliveryClaimedByOutput(output)
 	artifactPayload := o.openClawArtifactExportForDelivery(
 		gatewayProvider,
 		chatParams,
@@ -478,6 +480,13 @@ func openClawArtifactDeliveryRequired(params map[string]any) bool {
 		}
 	}
 	return false
+}
+
+func openClawArtifactDeliveryClaimedByOutput(output string) bool {
+	if strings.TrimSpace(output) == openClawNoDisplayableText {
+		return false
+	}
+	return openClawArtifactDeliveryRequired(map[string]any{"message": output})
 }
 
 func openClawArtifactDeliveryText(raw any) []string {
