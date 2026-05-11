@@ -934,18 +934,61 @@ func TestExecuteSessionMessageGatewayRejectsClaimedArtifactsWithoutScopedFiles(t
 	if got := response["status"]; got != "artifact_missing" {
 		t.Fatalf("expected artifact_missing status, got %#v", response)
 	}
+	if gateway.ArtifactExportCount() != 0 {
+		t.Fatalf("expected no artifact export for unprepared claimed output, got %d", gateway.ArtifactExportCount())
+	}
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "chat.send", "agent.wait"}) {
+		t.Fatalf("expected connect, chat.send, then agent.wait, got %#v", got)
+	}
+}
+
+func TestExecuteSessionMessageGatewayPreparesArtifactsFromMessagesPrompt(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	response, rpcErr := server.executeSessionTask(task{
+		req: shared.RPCRequest{
+			Method: "session.message",
+			Params: map[string]any{
+				"sessionId":        "session-openclaw-message-artifact",
+				"threadId":         "thread-openclaw-message-artifact",
+				"workingDirectory": t.TempDir(),
+				"messages": []any{
+					map[string]any{
+						"role":    "assistant",
+						"content": "上一轮只是分析。",
+					},
+					map[string]any{
+						"role": "user",
+						"content": []any{
+							map[string]any{"type": "text", "text": "继续，把这些内容 make artifact 输出为 Markdown 文件。"},
+						},
+					},
+				},
+				"routing": map[string]any{
+					"routingMode":                "explicit",
+					"explicitExecutionTarget":    "gateway",
+					"preferredGatewayProviderId": "openclaw",
+				},
+			},
+		},
+	})
+	if rpcErr != nil {
+		t.Fatalf("expected message artifact response, got rpc error: %#v", rpcErr)
+	}
+	if got := response["success"]; got != true {
+		t.Fatalf("expected artifact response success, got %#v", response)
+	}
 	exportParams := gateway.LastArtifactExportParams()
-	if _, ok := exportParams["latestIfEmpty"]; ok {
-		t.Fatalf("expected no latestIfEmpty fallback export param, got %#v", exportParams)
+	if got := strings.TrimSpace(shared.StringArg(exportParams, "artifactScope", "")); !strings.HasPrefix(got, "tasks/thread-openclaw-message-artifact/") {
+		t.Fatalf("expected scoped artifact export params for message prompt, got %#v", exportParams)
 	}
-	if _, ok := exportParams["latestTaskScopeIfEmpty"]; ok {
-		t.Fatalf("expected no latestTaskScopeIfEmpty fallback export param, got %#v", exportParams)
-	}
-	if _, ok := exportParams["artifactScope"]; ok {
-		t.Fatalf("expected no new prepared artifact scope for claimed follow-up, got %#v", exportParams)
-	}
-	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "chat.send", "agent.wait", "xworkmate.artifacts.export"}) {
-		t.Fatalf("expected connect, chat.send, agent.wait, then artifact export, got %#v", got)
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "agent.wait", "xworkmate.artifacts.export"}) {
+		t.Fatalf("expected connect, artifact prepare, chat.send, agent.wait, then artifact export, got %#v", got)
 	}
 }
 
@@ -1398,6 +1441,23 @@ func TestOpenClawArtifactDeliveryRequiredScansNestedParams(t *testing.T) {
 	}
 	if !openClawArtifactDeliveryRequired(params) {
 		t.Fatal("expected nested artifact delivery prompt to be detected")
+	}
+}
+
+func TestOpenClawArtifactDeliveryRequiredScansMessageContentParts(t *testing.T) {
+	params := map[string]any{
+		"messages": []any{
+			map[string]any{"role": "assistant", "content": "上一轮只是分析。"},
+			map[string]any{
+				"role": "user",
+				"content": []any{
+					map[string]any{"type": "text", "text": "请输出 Markdown 文件并保存到 workspace。"},
+				},
+			},
+		},
+	}
+	if !openClawArtifactDeliveryRequired(params) {
+		t.Fatal("expected artifact delivery prompt in message content parts to be detected")
 	}
 }
 

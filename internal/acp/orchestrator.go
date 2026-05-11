@@ -243,6 +243,7 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 	artifactDeliveryRequired := openClawArtifactDeliveryRequired(params)
 	sessionKey := openClawSessionKey(params, turnID)
 	artifactRunID := turnID
+	logOpenClawArtifactIntent(gatewayProvider, sessionKey, artifactRunID, "intent", artifactDeliveryRequired, false, false, false)
 	var preparedArtifact *openClawPreparedArtifactScope
 	if artifactDeliveryRequired {
 		var rpcErr *shared.RPCError
@@ -256,6 +257,7 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 			return nil, rpcErr
 		}
 	}
+	logOpenClawArtifactIntent(gatewayProvider, sessionKey, artifactRunID, "prepare", artifactDeliveryRequired, preparedArtifact != nil, false, false)
 	chatParams, rpcErr := openClawChatSendParams(params, turnID, preparedArtifact)
 	if rpcErr != nil {
 		return nil, rpcErr
@@ -335,13 +337,16 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 		artifactRunID,
 		artifactSinceUnixMs,
 		preparedArtifact,
-		artifactDeliveryRequired || artifactDeliveryClaimed || preparedArtifact != nil,
+		artifactDeliveryRequired || preparedArtifact != nil,
 		notifyWithCollection,
 	)
-	if artifactDeliveryClaimed {
+	if artifactDeliveryClaimed && preparedArtifact != nil {
 		artifactPayload = filterOpenClawArtifactPayloadByOutput(output, artifactPayload)
 	}
 	mergeOpenClawArtifactPayload(result, artifactPayload)
+	exportedCount := openClawArtifactPayloadCount(result)
+	artifactExpected := artifactDeliveryRequired || artifactDeliveryClaimed || preparedArtifact != nil
+	logOpenClawArtifactIntent(gatewayProvider, sessionKey, artifactRunID, "export", artifactDeliveryRequired, preparedArtifact != nil, exportedCount > 0, artifactExpected && exportedCount == 0)
 	o.server.decorateOpenClawArtifactDownloadURLs(result, shared.StringArg(chatParams, "sessionKey", ""), artifactRunID)
 	stripOpenClawArtifactInlineContent(result)
 	guardOpenClawArtifactResult(result, artifactDeliveryRequired || artifactDeliveryClaimed)
@@ -366,6 +371,37 @@ func logOpenClawGatewayTiming(
 		duration.Milliseconds(),
 		ok,
 	)
+}
+
+func logOpenClawArtifactIntent(
+	gatewayProvider string,
+	sessionKey string,
+	runID string,
+	stage string,
+	required bool,
+	prepared bool,
+	exported bool,
+	empty bool,
+) {
+	log.Printf(
+		"level=info component=openclaw_gateway event=artifact_intent provider=%q sessionId=%q runId=%q stage=%q required=%t prepared=%t exported=%t empty=%t",
+		gatewayProvider,
+		sessionKey,
+		runID,
+		stage,
+		required,
+		prepared,
+		exported,
+		empty,
+	)
+}
+
+func openClawArtifactPayloadCount(payload map[string]any) int {
+	if payload == nil {
+		return 0
+	}
+	remoteWorkingDirectory := strings.TrimSpace(shared.StringArg(payload, "remoteWorkingDirectory", ""))
+	return len(extractArtifactPayloads(payload, remoteWorkingDirectory))
 }
 
 func (o *SessionOrchestrator) openClawArtifactExportForDelivery(
@@ -428,7 +464,7 @@ func openClawChatSendParams(
 	turnID string,
 	preparedArtifact *openClawPreparedArtifactScope,
 ) (map[string]any, *shared.RPCError) {
-	message := firstNonEmptyString(params, "taskPrompt", "prompt", "message")
+	message := openClawCurrentTurnMessage(params)
 	if message == "" {
 		return nil, &shared.RPCError{Code: -32602, Message: "OPENCLAW_TASK_PROMPT_REQUIRED"}
 	}
@@ -526,28 +562,119 @@ func openClawArtifactDeliveryText(raw any) []string {
 		}
 	case map[string]any:
 		texts := make([]string, 0, len(value))
-		for key, item := range value {
-			switch strings.TrimSpace(key) {
-			case "taskPrompt", "prompt", "message":
+		for _, key := range []string{"taskPrompt", "prompt", "message", "text", "content", "input"} {
+			texts = append(texts, openClawTextFragments(value[key])...)
+		}
+		texts = append(texts, openClawLatestUserMessageText(value["messages"])...)
+		for _, key := range []string{"request", "params", "payload", "body"} {
+			if item, ok := value[key]; ok {
 				texts = append(texts, openClawArtifactDeliveryText(item)...)
-			default:
-				if _, ok := item.(map[string]any); ok {
-					texts = append(texts, openClawArtifactDeliveryText(item)...)
-				}
-				if _, ok := item.([]any); ok {
-					texts = append(texts, openClawArtifactDeliveryText(item)...)
-				}
 			}
 		}
-		return texts
+		return compactOpenClawTexts(texts)
 	case []any:
 		texts := make([]string, 0, len(value))
 		for _, item := range value {
 			texts = append(texts, openClawArtifactDeliveryText(item)...)
 		}
-		return texts
+		return compactOpenClawTexts(texts)
 	}
 	return nil
+}
+
+func openClawCurrentTurnMessage(params map[string]any) string {
+	if params == nil {
+		return ""
+	}
+	for _, key := range []string{"taskPrompt", "prompt", "message"} {
+		if text := strings.TrimSpace(strings.Join(openClawTextFragments(params[key]), "\n")); text != "" {
+			return text
+		}
+	}
+	if text := strings.TrimSpace(strings.Join(openClawLatestUserMessageText(params["messages"]), "\n")); text != "" {
+		return text
+	}
+	for _, key := range []string{"input", "content"} {
+		if text := strings.TrimSpace(strings.Join(openClawTextFragments(params[key]), "\n")); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func openClawLatestUserMessageText(raw any) []string {
+	messages, ok := raw.([]any)
+	if !ok || len(messages) == 0 {
+		return nil
+	}
+	var fallback []string
+	for index := len(messages) - 1; index >= 0; index-- {
+		message := shared.AsMap(messages[index])
+		if len(message) == 0 {
+			continue
+		}
+		text := compactOpenClawTexts(openClawMessageText(message))
+		if len(text) == 0 {
+			continue
+		}
+		if fallback == nil {
+			fallback = text
+		}
+		role := strings.ToLower(strings.TrimSpace(shared.StringArg(message, "role", "")))
+		switch role {
+		case "user", "human", "client":
+			return text
+		}
+	}
+	return fallback
+}
+
+func openClawMessageText(message map[string]any) []string {
+	if len(message) == 0 {
+		return nil
+	}
+	texts := make([]string, 0, 4)
+	for _, key := range []string{"content", "parts", "text", "message"} {
+		texts = append(texts, openClawTextFragments(message[key])...)
+	}
+	return texts
+}
+
+func openClawTextFragments(raw any) []string {
+	switch value := raw.(type) {
+	case nil:
+		return nil
+	case string:
+		if text := strings.TrimSpace(value); text != "" {
+			return []string{text}
+		}
+	case []any:
+		texts := make([]string, 0, len(value))
+		for _, item := range value {
+			texts = append(texts, openClawTextFragments(item)...)
+		}
+		return compactOpenClawTexts(texts)
+	case map[string]any:
+		texts := make([]string, 0, len(value))
+		for _, key := range []string{"text", "content", "message", "value"} {
+			texts = append(texts, openClawTextFragments(value[key])...)
+		}
+		return compactOpenClawTexts(texts)
+	}
+	return nil
+}
+
+func compactOpenClawTexts(texts []string) []string {
+	if len(texts) == 0 {
+		return nil
+	}
+	result := make([]string, 0, len(texts))
+	for _, text := range texts {
+		if trimmed := strings.TrimSpace(text); trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }
 
 func withOpenClawArtifactDeliveryInstructions(
