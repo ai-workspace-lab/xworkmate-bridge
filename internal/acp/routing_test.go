@@ -809,9 +809,8 @@ func TestExecuteSessionTaskGatewayExportsOpenClawArtifacts(t *testing.T) {
 	}
 }
 
-func TestExecuteSessionTaskGatewayExportsLatestWorkspaceArtifactsWhenScopedDirectoryEmpty(t *testing.T) {
+func TestExecuteSessionTaskGatewayDoesNotExportStaleWorkspaceArtifactsWhenScopedDirectoryEmpty(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
-	gateway.artifactMode = "workspace-latest"
 	defer gateway.Close()
 
 	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
@@ -835,49 +834,20 @@ func TestExecuteSessionTaskGatewayExportsLatestWorkspaceArtifactsWhenScopedDirec
 		},
 	})
 	if rpcErr != nil {
-		t.Fatalf("expected latest workspace artifact response, got rpc error: %#v", rpcErr)
+		t.Fatalf("expected artifact guard response, got rpc error: %#v", rpcErr)
 	}
-	if got := response["success"]; got != true {
-		t.Fatalf("expected successful artifact response, got %#v", response)
+	if got := response["success"]; got != false {
+		t.Fatalf("expected artifact_missing failure, got %#v", response)
 	}
-	if got := response["status"]; got == "artifact_missing" {
-		t.Fatalf("expected latest workspace artifact fallback, got %#v", response)
-	}
-	artifacts, ok := response["artifacts"].([]map[string]any)
-	if !ok {
-		raw, ok := response["artifacts"].([]any)
-		if !ok {
-			t.Fatalf("expected artifacts payload, got %#v", response["artifacts"])
-		}
-		artifacts = make([]map[string]any, 0, len(raw))
-		for _, item := range raw {
-			artifacts = append(artifacts, shared.AsMap(item))
-		}
-	}
-	if len(artifacts) != 1 {
-		t.Fatalf("expected one latest workspace artifact, got %#v", artifacts)
-	}
-	if got := artifacts[0]["relativePath"]; got != "existing/report.pdf" {
-		t.Fatalf("expected latest workspace artifact relative path, got %#v", artifacts[0])
-	}
-	if got := artifacts[0]["scopeKind"]; got != "workspace-latest" {
-		t.Fatalf("expected workspace-latest artifact scope kind, got %#v", artifacts[0])
-	}
-	if got := strings.TrimSpace(shared.StringArg(artifacts[0], "downloadUrl", "")); got == "" {
-		t.Fatalf("expected bridge downloadUrl on latest workspace artifact, got %#v", artifacts[0])
-	}
-	if _, ok := artifacts[0]["encoding"]; ok {
-		t.Fatalf("expected latest workspace artifact response to omit inline encoding, got %#v", artifacts[0])
-	}
-	if _, ok := artifacts[0]["content"]; ok {
-		t.Fatalf("expected latest workspace artifact response to omit inline content, got %#v", artifacts[0])
+	if got := response["status"]; got != "artifact_missing" {
+		t.Fatalf("expected artifact_missing status, got %#v", response)
 	}
 	exportParams := gateway.LastArtifactExportParams()
 	if got := strings.TrimSpace(shared.StringArg(exportParams, "artifactScope", "")); !strings.HasPrefix(got, "tasks/thread-openclaw-latest-artifact/") {
 		t.Fatalf("expected scoped artifact export params, got %#v", exportParams)
 	}
-	if got := shared.BoolArg(shared.StringArg(exportParams, "latestIfEmpty", ""), false); !got {
-		t.Fatalf("expected latestIfEmpty export param, got %#v", exportParams)
+	if _, ok := exportParams["latestIfEmpty"]; ok {
+		t.Fatalf("expected no latestIfEmpty fallback export param, got %#v", exportParams)
 	}
 	if got := strings.TrimSpace(shared.StringArg(exportParams, "maxInlineBytes", "")); got != "0" {
 		t.Fatalf("expected latest workspace export to disable inline content, got %#v", exportParams)
@@ -890,9 +860,8 @@ func TestExecuteSessionTaskGatewayExportsLatestWorkspaceArtifactsWhenScopedDirec
 	}
 }
 
-func TestExecuteSessionMessageGatewayExportsClaimedOpenClawArtifacts(t *testing.T) {
+func TestExecuteSessionMessageGatewayRejectsClaimedArtifactsWithoutScopedFiles(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
-	gateway.artifactMode = "workspace-latest"
 	defer gateway.Close()
 
 	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
@@ -916,37 +885,20 @@ func TestExecuteSessionMessageGatewayExportsClaimedOpenClawArtifacts(t *testing.
 		},
 	})
 	if rpcErr != nil {
-		t.Fatalf("expected claimed artifact response, got rpc error: %#v", rpcErr)
+		t.Fatalf("expected claimed artifact guard response, got rpc error: %#v", rpcErr)
 	}
-	if got := response["success"]; got != true {
-		t.Fatalf("expected successful claimed artifact response, got %#v", response)
+	if got := response["success"]; got != false {
+		t.Fatalf("expected claimed artifact_missing failure, got %#v", response)
 	}
-	artifacts, ok := response["artifacts"].([]map[string]any)
-	if !ok {
-		raw, ok := response["artifacts"].([]any)
-		if !ok {
-			t.Fatalf("expected artifacts payload, got %#v", response["artifacts"])
-		}
-		artifacts = make([]map[string]any, 0, len(raw))
-		for _, item := range raw {
-			artifacts = append(artifacts, shared.AsMap(item))
-		}
-	}
-	if len(artifacts) != 1 {
-		t.Fatalf("expected one claimed artifact, got %#v", artifacts)
-	}
-	if got := artifacts[0]["relativePath"]; got != "existing/report.pdf" {
-		t.Fatalf("expected claimed latest artifact relative path, got %#v", artifacts[0])
-	}
-	if got := strings.TrimSpace(shared.StringArg(artifacts[0], "downloadUrl", "")); got == "" {
-		t.Fatalf("expected bridge downloadUrl on claimed artifact, got %#v", artifacts[0])
+	if got := response["status"]; got != "artifact_missing" {
+		t.Fatalf("expected artifact_missing status, got %#v", response)
 	}
 	exportParams := gateway.LastArtifactExportParams()
-	if got := shared.BoolArg(shared.StringArg(exportParams, "latestIfEmpty", ""), false); !got {
-		t.Fatalf("expected latestIfEmpty export param, got %#v", exportParams)
+	if _, ok := exportParams["latestIfEmpty"]; ok {
+		t.Fatalf("expected no latestIfEmpty fallback export param, got %#v", exportParams)
 	}
-	if got := shared.BoolArg(shared.StringArg(exportParams, "latestTaskScopeIfEmpty", ""), false); !got {
-		t.Fatalf("expected latestTaskScopeIfEmpty export param, got %#v", exportParams)
+	if _, ok := exportParams["latestTaskScopeIfEmpty"]; ok {
+		t.Fatalf("expected no latestTaskScopeIfEmpty fallback export param, got %#v", exportParams)
 	}
 	if _, ok := exportParams["artifactScope"]; ok {
 		t.Fatalf("expected no new prepared artifact scope for claimed follow-up, got %#v", exportParams)
@@ -1944,31 +1896,6 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 							"scopeKind":     "task",
 							"encoding":      "base64",
 							"content":       "ZmluYWwgcmVwb3J0",
-						},
-					}
-				}
-				if fake.artifactMode == "workspace-latest" &&
-					shared.BoolArg(shared.StringArg(params, "latestIfEmpty", ""), false) &&
-					len(payload["artifacts"].([]any)) == 0 {
-					if artifactScope == "" &&
-						!shared.BoolArg(shared.StringArg(params, "latestTaskScopeIfEmpty", ""), false) {
-						break
-					}
-					if artifactScope == "" {
-						artifactScope = "tasks/" + strings.TrimSpace(shared.StringArg(params, "sessionKey", "main")) + "/previous-run"
-					}
-					payload["scopeKind"] = "workspace-latest"
-					payload["artifacts"] = []any{
-						map[string]any{
-							"relativePath":  "existing/report.pdf",
-							"label":         "report.pdf",
-							"contentType":   "application/pdf",
-							"sizeBytes":     3,
-							"sha256":        "latest-sha256",
-							"artifactScope": artifactScope,
-							"scopeKind":     "workspace-latest",
-							"encoding":      "base64",
-							"content":       "cGRm",
 						},
 					}
 				}

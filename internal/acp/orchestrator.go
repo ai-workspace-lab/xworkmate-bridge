@@ -144,6 +144,44 @@ func (o *SessionOrchestrator) runGateway(
 	}
 	params = withResolvedGatewayProvider(params, gatewayProvider)
 	if isOpenClawMode(gatewayProvider) && isSessionTaskMethod(method) {
+		sessionID := strings.TrimSpace(shared.StringArg(params, "sessionId", ""))
+		threadID := strings.TrimSpace(shared.StringArg(params, "threadId", sessionID))
+		release, rpcErr := o.server.openClawGate.acquire(
+			ctx,
+			func(position int, queued int) {
+				o.server.emitSessionUpdate(notify, turnID, map[string]any{
+					"sessionId": sessionID,
+					"threadId":  threadID,
+					"type":      "status",
+					"event":     "queued",
+					"message":   "OpenClaw gateway task queued",
+					"pending":   true,
+					"error":     false,
+					"queue": map[string]any{
+						"position": position,
+						"queued":   queued,
+					},
+				})
+			},
+			func(active int) {
+				o.server.emitSessionUpdate(notify, turnID, map[string]any{
+					"sessionId": sessionID,
+					"threadId":  threadID,
+					"type":      "status",
+					"event":     "running",
+					"message":   "OpenClaw gateway task admitted",
+					"pending":   true,
+					"error":     false,
+					"queue": map[string]any{
+						"active": active,
+					},
+				})
+			},
+		)
+		if rpcErr != nil {
+			return nil, rpcErr
+		}
+		defer release()
 		return o.runOpenClawGatewayChat(ctx, params, gatewayProvider, turnID, notify)
 	}
 	result := o.server.gateway.RequestByMode(
@@ -292,7 +330,6 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 		artifactSinceUnixMs,
 		preparedArtifact,
 		artifactDeliveryRequired || artifactDeliveryClaimed || preparedArtifact != nil,
-		artifactDeliveryClaimed,
 		notifyWithCollection,
 	)
 	if artifactDeliveryClaimed {
@@ -331,43 +368,16 @@ func (o *SessionOrchestrator) openClawArtifactExportForDelivery(
 	sinceUnixMs int64,
 	preparedArtifact *openClawPreparedArtifactScope,
 	artifactDeliveryRequired bool,
-	latestTaskScopeIfEmpty bool,
 	notify func(map[string]any),
 ) map[string]any {
-	if !artifactDeliveryRequired {
-		return o.openClawArtifactExport(
-			gatewayProvider,
-			chatParams,
-			runID,
-			sinceUnixMs,
-			preparedArtifact,
-			false,
-			false,
-			notify,
-		)
-	}
-	const attempts = 20
-	var payload map[string]any
-	for attempt := 0; attempt < attempts; attempt++ {
-		payload = o.openClawArtifactExport(
-			gatewayProvider,
-			chatParams,
-			runID,
-			sinceUnixMs,
-			preparedArtifact,
-			true,
-			latestTaskScopeIfEmpty,
-			notify,
-		)
-		remoteWorkingDirectory := strings.TrimSpace(shared.StringArg(payload, "remoteWorkingDirectory", ""))
-		if len(extractArtifactPayloads(payload, remoteWorkingDirectory)) > 0 {
-			return payload
-		}
-		if attempt < attempts-1 {
-			time.Sleep(1 * time.Second)
-		}
-	}
-	return payload
+	return o.openClawArtifactExport(
+		gatewayProvider,
+		chatParams,
+		runID,
+		sinceUnixMs,
+		preparedArtifact,
+		notify,
+	)
 }
 
 func isSessionTaskMethod(method string) bool {
@@ -580,8 +590,6 @@ func (o *SessionOrchestrator) openClawArtifactExport(
 	runID string,
 	sinceUnixMs int64,
 	preparedArtifact *openClawPreparedArtifactScope,
-	latestIfEmpty bool,
-	latestTaskScopeIfEmpty bool,
 	notify func(map[string]any),
 ) map[string]any {
 	sessionKey := strings.TrimSpace(shared.StringArg(chatParams, "sessionKey", ""))
@@ -598,12 +606,6 @@ func (o *SessionOrchestrator) openClawArtifactExport(
 	}
 	if preparedArtifact != nil && strings.TrimSpace(preparedArtifact.ArtifactScope) != "" {
 		exportParams["artifactScope"] = strings.TrimSpace(preparedArtifact.ArtifactScope)
-	}
-	if latestIfEmpty {
-		exportParams["latestIfEmpty"] = true
-	}
-	if latestTaskScopeIfEmpty {
-		exportParams["latestTaskScopeIfEmpty"] = true
 	}
 	exportResult := o.openClawGatewayRequestWithRetry(
 		gatewayProvider,
@@ -1027,7 +1029,9 @@ func (o *SessionOrchestrator) normalizeResult(sess *session, result map[string]a
 	sess.mu.Unlock()
 
 	result["turnId"] = turnID
-	result["status"] = "completed"
+	if strings.TrimSpace(shared.StringArg(result, "status", "")) == "" {
+		result["status"] = "completed"
+	}
 	if !hasSuccess {
 		result["success"] = true
 	}
@@ -1099,6 +1103,9 @@ func (o *SessionOrchestrator) completeOpenClawScopedArtifactExport(
 	if result == nil || o.server == nil || o.server.gateway == nil {
 		return
 	}
+	if !parseBool(result["success"]) {
+		return
+	}
 	remoteWorkingDirectory := strings.TrimSpace(shared.StringArg(result, "remoteWorkingDirectory", ""))
 	if len(extractArtifactPayloads(result, remoteWorkingDirectory)) > 0 {
 		return
@@ -1117,7 +1124,6 @@ func (o *SessionOrchestrator) completeOpenClawScopedArtifactExport(
 		0,
 		preparedArtifact,
 		true,
-		false,
 		nil,
 	))
 	o.server.decorateOpenClawArtifactDownloadURLs(result, sessionKey, runID)

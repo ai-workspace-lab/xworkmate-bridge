@@ -46,6 +46,7 @@ func NewServer() *Server {
 		sessions:       make(map[string]*session),
 		allowedOrigins: shared.ParseAllowedOrigins(shared.EnvOrDefault("ACP_ALLOWED_ORIGINS", "https://xworkmate.svc.plus,http://localhost:*,http://127.0.0.1:*")),
 		authService:    service.NewStaticTokenAuthService(shared.EnvOrDefault("BRIDGE_AUTH_TOKEN", "")),
+		openClawGate:   newOpenClawGatewayAdmissionGateFromEnv(),
 	}
 	s.Bootstrap()
 	return s

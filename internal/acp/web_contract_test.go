@@ -3,12 +3,15 @@ package acp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -272,6 +275,170 @@ func TestHTTPHandlerGatewayOpenClawSSEKeepaliveBeforeFinalEnvelopeAndDone(t *tes
 	}
 	if !sawFinal {
 		t.Fatalf("expected final task envelope, got %q", string(body))
+	}
+}
+
+func TestHTTPHandlerGatewayOpenClawAdmissionQueuesExcessConcurrentSSE(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+	gateway.agentWaitDelayMs.Store(300)
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
+	t.Setenv("BRIDGE_CONFIG_PATH", filepath.Join(t.TempDir(), "missing-config.yaml"))
+	t.Setenv("XWORKMATE_BRIDGE_OPENCLAW_GATEWAY_MAX_ACTIVE", "2")
+	t.Setenv("XWORKMATE_BRIDGE_OPENCLAW_GATEWAY_MAX_QUEUED", "2")
+	t.Setenv("XWORKMATE_BRIDGE_OPENCLAW_GATEWAY_QUEUE_TIMEOUT", "5s")
+	server := NewServer()
+	httpServer := httptest.NewServer(server.Handler())
+	defer httpServer.Close()
+
+	type result struct {
+		body string
+		err  error
+	}
+	results := make(chan result, 3)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for index := 0; index < 3; index++ {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			<-start
+			request, err := http.NewRequest(
+				http.MethodPost,
+				httpServer.URL+"/gateway/openclaw",
+				strings.NewReader(`{"jsonrpc":"2.0","id":"task-`+strconv.Itoa(index)+`","method":"session.start","params":{"sessionId":"s`+strconv.Itoa(index)+`","threadId":"t`+strconv.Itoa(index)+`","taskPrompt":"Reply pong","workingDirectory":"`+t.TempDir()+`"}}`),
+			)
+			if err != nil {
+				results <- result{err: err}
+				return
+			}
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Accept", "text/event-stream")
+			request.Header.Set("Authorization", "Bearer bridge-test-token")
+			response, err := http.DefaultClient.Do(request)
+			if err != nil {
+				results <- result{err: err}
+				return
+			}
+			defer response.Body.Close()
+			body, err := io.ReadAll(response.Body)
+			if err != nil {
+				results <- result{err: err}
+				return
+			}
+			if response.StatusCode != http.StatusOK {
+				results <- result{err: fmt.Errorf("expected 200, got %d: %s", response.StatusCode, string(body))}
+				return
+			}
+			results <- result{body: string(body)}
+		}(index)
+	}
+	close(start)
+	waitForOpenClawGatewayCount(t, func() int { return gateway.ChatSendCount() }, 2)
+	time.Sleep(75 * time.Millisecond)
+	if got := gateway.ChatSendCount(); got != 2 {
+		t.Fatalf("expected admission gate to hold third chat.send while two are active, got %d", got)
+	}
+	wg.Wait()
+	close(results)
+
+	var sawQueued bool
+	var finalCount int
+	for item := range results {
+		if item.err != nil {
+			t.Fatalf("concurrent request failed: %v", item.err)
+		}
+		if strings.Contains(item.body, `"event":"queued"`) {
+			sawQueued = true
+		}
+		if strings.Contains(item.body, `"result"`) && strings.Contains(item.body, `data: [DONE]`) {
+			finalCount += 1
+		}
+	}
+	if !sawQueued {
+		t.Fatalf("expected one queued session.update event")
+	}
+	if finalCount != 3 {
+		t.Fatalf("expected all three requests to return final result, got %d", finalCount)
+	}
+	if got := gateway.ChatSendCount(); got != 3 {
+		t.Fatalf("expected queued request to run after a slot releases, got %d chat.send calls", got)
+	}
+}
+
+func TestHTTPHandlerGatewayOpenClawAdmissionRejectsWhenQueueFull(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+	gateway.agentWaitDelayMs.Store(300)
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
+	t.Setenv("BRIDGE_CONFIG_PATH", filepath.Join(t.TempDir(), "missing-config.yaml"))
+	t.Setenv("XWORKMATE_BRIDGE_OPENCLAW_GATEWAY_MAX_ACTIVE", "1")
+	t.Setenv("XWORKMATE_BRIDGE_OPENCLAW_GATEWAY_MAX_QUEUED", "0")
+	t.Setenv("XWORKMATE_BRIDGE_OPENCLAW_GATEWAY_QUEUE_TIMEOUT", "5s")
+	server := NewServer()
+	httpServer := httptest.NewServer(server.Handler())
+	defer httpServer.Close()
+
+	firstRequest, err := http.NewRequest(
+		http.MethodPost,
+		httpServer.URL+"/gateway/openclaw",
+		strings.NewReader(`{"jsonrpc":"2.0","id":"task-active","method":"session.start","params":{"sessionId":"active","threadId":"active","taskPrompt":"Reply pong","workingDirectory":"`+t.TempDir()+`"}}`),
+	)
+	if err != nil {
+		t.Fatalf("build first request: %v", err)
+	}
+	firstRequest.Header.Set("Content-Type", "application/json")
+	firstRequest.Header.Set("Accept", "text/event-stream")
+	firstRequest.Header.Set("Authorization", "Bearer bridge-test-token")
+	firstDone := make(chan error, 1)
+	go func() {
+		response, err := http.DefaultClient.Do(firstRequest)
+		if err != nil {
+			firstDone <- err
+			return
+		}
+		defer response.Body.Close()
+		_, err = io.ReadAll(response.Body)
+		firstDone <- err
+	}()
+	waitForOpenClawGatewayCount(t, func() int { return gateway.ChatSendCount() }, 1)
+
+	secondRequest, err := http.NewRequest(
+		http.MethodPost,
+		httpServer.URL+"/gateway/openclaw",
+		strings.NewReader(`{"jsonrpc":"2.0","id":"task-rejected","method":"session.start","params":{"sessionId":"rejected","threadId":"rejected","taskPrompt":"Reply pong","workingDirectory":"`+t.TempDir()+`"}}`),
+	)
+	if err != nil {
+		t.Fatalf("build second request: %v", err)
+	}
+	secondRequest.Header.Set("Content-Type", "application/json")
+	secondRequest.Header.Set("Accept", "text/event-stream")
+	secondRequest.Header.Set("Authorization", "Bearer bridge-test-token")
+	response, err := http.DefaultClient.Do(secondRequest)
+	if err != nil {
+		t.Fatalf("send second request: %v", err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read second response: %v", err)
+	}
+	bodyText := string(body)
+	if !strings.Contains(bodyText, openClawGatewayBusyErrorCode) {
+		t.Fatalf("expected busy error, got %s", bodyText)
+	}
+	if strings.Contains(bodyText, `"result"`) {
+		t.Fatalf("busy response must not return a result envelope: %s", bodyText)
+	}
+	if got := gateway.ChatSendCount(); got != 1 {
+		t.Fatalf("rejected request must not reach chat.send, got %d", got)
+	}
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first request failed: %v", err)
 	}
 }
 
@@ -896,6 +1063,18 @@ func TestHandleRPCSessionStartSucceedsWithExplicitProvider(t *testing.T) {
 	if !strings.Contains(recorder.Body.String(), `"provider":"opencode"`) {
 		t.Fatalf("expected opencode provider, got %q", recorder.Body.String())
 	}
+}
+
+func waitForOpenClawGatewayCount(t *testing.T, current func() int, want int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if current() >= want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for gateway count %d, got %d", want, current())
 }
 
 func mustObjectList(t *testing.T, value any) []map[string]any {

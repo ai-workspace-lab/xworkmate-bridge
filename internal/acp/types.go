@@ -84,6 +84,7 @@ type Server struct {
 
 	providerOrder []string
 	gateway       *gatewayruntime.Manager
+	openClawGate  *openClawGatewayAdmissionGate
 
 	// Legacy / Common
 	authService    interface{} // Minimal auth dependency
