@@ -370,6 +370,9 @@ func (o *SessionOrchestrator) openClawArtifactExportForDelivery(
 	artifactDeliveryRequired bool,
 	notify func(map[string]any),
 ) map[string]any {
+	if !artifactDeliveryRequired {
+		return nil
+	}
 	return o.openClawArtifactExport(
 		gatewayProvider,
 		chatParams,

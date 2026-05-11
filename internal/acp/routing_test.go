@@ -509,11 +509,11 @@ func TestExecuteSessionTaskGatewayAutoConnectsLocalOpenClaw(t *testing.T) {
 	if got := int64(timeoutMs); got <= 120000 {
 		t.Fatalf("expected OpenClaw agent.wait timeout to exceed the previous 120s cap, got %#v", waitParams)
 	}
-	if gateway.ArtifactExportCount() != 1 {
-		t.Fatalf("expected one OpenClaw artifact export request, got %d", gateway.ArtifactExportCount())
+	if gateway.ArtifactExportCount() != 0 {
+		t.Fatalf("expected no OpenClaw artifact export for text-only prompt, got %d", gateway.ArtifactExportCount())
 	}
-	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "chat.send", "agent.wait", "xworkmate.artifacts.export"}) {
-		t.Fatalf("expected connect, chat.send, agent.wait, then artifact export, got %#v", got)
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "chat.send", "agent.wait"}) {
+		t.Fatalf("expected connect, chat.send, then agent.wait, got %#v", got)
 	}
 	client := gateway.LastConnectClient()
 	if got := client["id"]; got != "openclaw-macos" {
@@ -560,11 +560,11 @@ func TestExecuteSessionMessageGatewayUsesOpenClawChatSend(t *testing.T) {
 	if gateway.AgentWaitCount() != 1 {
 		t.Fatalf("expected one OpenClaw agent.wait request, got %d", gateway.AgentWaitCount())
 	}
-	if gateway.ArtifactExportCount() != 1 {
-		t.Fatalf("expected one OpenClaw artifact export request, got %d", gateway.ArtifactExportCount())
+	if gateway.ArtifactExportCount() != 0 {
+		t.Fatalf("expected no OpenClaw artifact export for text-only prompt, got %d", gateway.ArtifactExportCount())
 	}
-	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "chat.send", "agent.wait", "xworkmate.artifacts.export"}) {
-		t.Fatalf("expected connect, chat.send, agent.wait, then artifact export, got %#v", got)
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "chat.send", "agent.wait"}) {
+		t.Fatalf("expected connect, chat.send, then agent.wait, got %#v", got)
 	}
 }
 
@@ -1410,7 +1410,7 @@ func TestExecuteSessionTaskGatewayCollectsOpenClawEventArtifacts(t *testing.T) {
 	}
 }
 
-func TestExecuteSessionTaskGatewayKeepsTextWhenArtifactExportUnavailable(t *testing.T) {
+func TestExecuteSessionTaskGatewaySkipsArtifactExportForTextOnlyPrompt(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	gateway.artifactMode = "unknown"
 	defer gateway.Close()
@@ -1441,12 +1441,11 @@ func TestExecuteSessionTaskGatewayKeepsTextWhenArtifactExportUnavailable(t *test
 	if got := response["output"]; got != "gateway pong" {
 		t.Fatalf("expected gateway pong output, got %#v", response)
 	}
-	if gateway.ArtifactExportCount() != 1 {
-		t.Fatalf("expected one OpenClaw artifact export request, got %d", gateway.ArtifactExportCount())
+	if gateway.ArtifactExportCount() != 0 {
+		t.Fatalf("expected no OpenClaw artifact export request, got %d", gateway.ArtifactExportCount())
 	}
-	warnings := response["artifactWarnings"].([]any)
-	if len(warnings) != 1 || !strings.Contains(fmt.Sprint(warnings[0]), "unknown method") {
-		t.Fatalf("expected artifact warning for unknown method, got %#v", response["artifactWarnings"])
+	if warnings := shared.ListArg(response, "artifactWarnings"); len(warnings) != 0 {
+		t.Fatalf("expected no artifact warnings for text-only prompt, got %#v", warnings)
 	}
 }
 
