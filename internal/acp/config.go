@@ -24,6 +24,13 @@ type BridgeConfig struct {
 		GeminiURL   string `yaml:"gemini_url"`
 		HermesURL   string `yaml:"hermes_url"`
 	} `yaml:"upstream"`
+	OpenClawGateway OpenClawGatewayConfig `yaml:"openclaw_gateway"`
+}
+
+type OpenClawGatewayConfig struct {
+	MaxActive    *int   `yaml:"max_active"`
+	MaxQueued    *int   `yaml:"max_queued"`
+	QueueTimeout string `yaml:"queue_timeout"`
 }
 
 func loadBridgeConfig() *BridgeConfig {
@@ -65,7 +72,13 @@ func bridgeSharedAuthToken() string {
 }
 
 func newProductionProviderCatalog() (*BridgeConfig, map[string]syncedProvider, []string) {
-	config := loadBridgeConfig()
+	return newProductionProviderCatalogFromConfig(loadBridgeConfig())
+}
+
+func newProductionProviderCatalogFromConfig(config *BridgeConfig) (*BridgeConfig, map[string]syncedProvider, []string) {
+	if config == nil {
+		config = &BridgeConfig{}
+	}
 	authorizationHeader := bridgeUpstreamAuthorizationHeader()
 
 	providers := []struct {

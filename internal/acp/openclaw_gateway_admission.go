@@ -32,17 +32,24 @@ type openClawGatewayAdmissionGate struct {
 	queued int
 }
 
-func newOpenClawGatewayAdmissionGateFromEnv() *openClawGatewayAdmissionGate {
-	maxActive := envInt("XWORKMATE_BRIDGE_OPENCLAW_GATEWAY_MAX_ACTIVE", defaultOpenClawGatewayMaxActive)
+func newOpenClawGatewayAdmissionGate(config *BridgeConfig) *openClawGatewayAdmissionGate {
+	admissionConfig := OpenClawGatewayConfig{}
+	if config != nil {
+		admissionConfig = config.OpenClawGateway
+	}
+	maxActive := admissionInt(admissionConfig.MaxActive, "XWORKMATE_BRIDGE_OPENCLAW_GATEWAY_MAX_ACTIVE", defaultOpenClawGatewayMaxActive)
 	if maxActive < 1 {
+		log.Printf("level=warn component=openclaw_gateway event=invalid_admission_config key=%q value=%d", "max_active", maxActive)
 		maxActive = defaultOpenClawGatewayMaxActive
 	}
-	maxQueued := envInt("XWORKMATE_BRIDGE_OPENCLAW_GATEWAY_MAX_QUEUED", defaultOpenClawGatewayMaxQueued)
+	maxQueued := admissionInt(admissionConfig.MaxQueued, "XWORKMATE_BRIDGE_OPENCLAW_GATEWAY_MAX_QUEUED", defaultOpenClawGatewayMaxQueued)
 	if maxQueued < 0 {
+		log.Printf("level=warn component=openclaw_gateway event=invalid_admission_config key=%q value=%d", "max_queued", maxQueued)
 		maxQueued = defaultOpenClawGatewayMaxQueued
 	}
-	timeout := envDuration("XWORKMATE_BRIDGE_OPENCLAW_GATEWAY_QUEUE_TIMEOUT", defaultOpenClawGatewayQueueWait)
+	timeout := admissionDuration(admissionConfig.QueueTimeout, "queue_timeout", "XWORKMATE_BRIDGE_OPENCLAW_GATEWAY_QUEUE_TIMEOUT", defaultOpenClawGatewayQueueWait)
 	if timeout <= 0 {
+		log.Printf("level=warn component=openclaw_gateway event=invalid_admission_config key=%q value=%q", "queue_timeout", timeout.String())
 		timeout = defaultOpenClawGatewayQueueWait
 	}
 	return &openClawGatewayAdmissionGate{
@@ -51,6 +58,26 @@ func newOpenClawGatewayAdmissionGateFromEnv() *openClawGatewayAdmissionGate {
 		maxQueued: maxQueued,
 		timeout:   timeout,
 	}
+}
+
+func admissionInt(configValue *int, envKey string, fallback int) int {
+	if configValue != nil {
+		return *configValue
+	}
+	return envInt(envKey, fallback)
+}
+
+func admissionDuration(configValue string, configKey string, envKey string, fallback time.Duration) time.Duration {
+	raw := strings.TrimSpace(configValue)
+	if raw == "" {
+		return envDuration(envKey, fallback)
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil {
+		log.Printf("level=warn component=openclaw_gateway event=invalid_duration_config key=%q value=%q", configKey, raw)
+		return fallback
+	}
+	return value
 }
 
 func (g *openClawGatewayAdmissionGate) acquire(

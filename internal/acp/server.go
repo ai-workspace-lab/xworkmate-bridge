@@ -42,11 +42,13 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 }
 
 func NewServer() *Server {
+	config := loadBridgeConfig()
 	s := &Server{
 		sessions:       make(map[string]*session),
+		config:         config,
 		allowedOrigins: shared.ParseAllowedOrigins(shared.EnvOrDefault("ACP_ALLOWED_ORIGINS", "https://xworkmate.svc.plus,http://localhost:*,http://127.0.0.1:*")),
 		authService:    service.NewStaticTokenAuthService(shared.EnvOrDefault("BRIDGE_AUTH_TOKEN", "")),
-		openClawGate:   newOpenClawGatewayAdmissionGateFromEnv(),
+		openClawGate:   newOpenClawGatewayAdmissionGate(config),
 	}
 	s.Bootstrap()
 	return s

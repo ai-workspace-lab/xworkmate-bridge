@@ -13,7 +13,7 @@ func (s *Server) Bootstrap() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	config, providerCatalog, providerOrder := newProductionProviderCatalog()
+	config, providerCatalog, providerOrder := newProductionProviderCatalogFromConfig(s.config)
 	s.config = config
 	s.providerOrder = providerOrder
 
@@ -40,16 +40,16 @@ func (s *Server) Bootstrap() {
 		ProviderCatalog: make([]any, 0),
 		GatewayProviders: []any{
 			map[string]any{
-				"providerId": "openclaw",
-				"label":      "OpenClaw",
-				"targets":    []string{"gateway"},
+				"providerId":      "openclaw",
+				"label":           "OpenClaw",
+				"targets":         []string{"gateway"},
 				"providerDisplay": map[string]any{"logoEmoji": "🦞"},
 			},
 		},
 		AvailableExecutionTargets: []any{"agent", "gateway"},
 		ProviderProbeSummary:      make([]any, 0),
 	}
-	
+
 	for _, id := range providerOrder {
 		p, ok := providerCatalog[id]
 		if !ok || !p.Enabled {
