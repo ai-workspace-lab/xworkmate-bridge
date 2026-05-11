@@ -306,6 +306,7 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 	if output == "" {
 		output = firstNonEmptyString(waitPayload, "output", "message", "summary", "assistantText", "text")
 	}
+	noDisplayableOutput := strings.TrimSpace(output) == ""
 	if output == "" {
 		output = openClawNoDisplayableText
 	}
@@ -341,6 +342,7 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 	o.server.decorateOpenClawArtifactDownloadURLs(result, shared.StringArg(chatParams, "sessionKey", ""), artifactRunID)
 	stripOpenClawArtifactInlineContent(result)
 	guardOpenClawArtifactResult(result, artifactDeliveryRequired || artifactDeliveryClaimed)
+	guardOpenClawNoDisplayableResult(result, noDisplayableOutput)
 	return result, nil
 }
 
@@ -680,6 +682,22 @@ func guardOpenClawArtifactResult(result map[string]any, artifactDeliveryRequired
 		result["artifactWarnings"],
 		[]any{"OpenClaw artifact export returned no files for a file-delivery request."},
 	)
+}
+
+func guardOpenClawNoDisplayableResult(result map[string]any, noDisplayableOutput bool) {
+	if !noDisplayableOutput || result == nil || !parseBool(result["success"]) {
+		return
+	}
+	remoteWorkingDirectory := strings.TrimSpace(shared.StringArg(result, "remoteWorkingDirectory", ""))
+	if len(extractArtifactPayloads(result, remoteWorkingDirectory)) > 0 {
+		return
+	}
+	result["success"] = false
+	result["status"] = "failed"
+	result["error"] = "openclaw returned no displayable output"
+	result["message"] = openClawNoDisplayableText
+	result["output"] = openClawNoDisplayableText
+	result["summary"] = openClawNoDisplayableText
 }
 
 func filterOpenClawArtifactPayloadByOutput(output string, payload map[string]any) map[string]any {

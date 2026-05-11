@@ -524,6 +524,47 @@ func TestExecuteSessionTaskGatewayAutoConnectsLocalOpenClaw(t *testing.T) {
 	}
 }
 
+func TestExecuteSessionTaskGatewayNoDisplayableOutputFails(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	response, rpcErr := server.executeSessionTask(task{
+		req: shared.RPCRequest{
+			Method: "session.start",
+			Params: map[string]any{
+				"sessionId":        "session-openclaw-no-output",
+				"threadId":         "thread-openclaw-no-output",
+				"taskPrompt":       "silent-turn",
+				"workingDirectory": t.TempDir(),
+				"routing": map[string]any{
+					"routingMode":                "explicit",
+					"explicitExecutionTarget":    "gateway",
+					"preferredGatewayProviderId": "openclaw",
+				},
+			},
+		},
+	})
+	if rpcErr != nil {
+		t.Fatalf("expected structured no-output response, got rpc error: %#v", rpcErr)
+	}
+	if success, _ := response["success"].(bool); success {
+		t.Fatalf("expected no-output gateway response to fail, got %#v", response)
+	}
+	if got := response["status"]; got != "failed" {
+		t.Fatalf("expected failed status for no-output gateway response, got %#v", response)
+	}
+	if got := response["output"]; got != openClawNoDisplayableText {
+		t.Fatalf("expected no-displayable output message, got %#v", response)
+	}
+	if gateway.ArtifactExportCount() != 0 {
+		t.Fatalf("expected no artifact export for no-output text prompt, got %d", gateway.ArtifactExportCount())
+	}
+}
+
 func TestExecuteSessionMessageGatewayUsesOpenClawChatSend(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
@@ -1803,6 +1844,7 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 				if strings.Contains(fake.runMessage(runID), "hallucinate-files") {
 					message = "文件已就绪，点击直接下载👇 三个格式一键收取："
 				}
+				emitChatEvent := !strings.Contains(fake.runMessage(runID), "silent-turn")
 				if payloadBytes := fake.largeGatewayPayloadBytes.Load(); payloadBytes > 0 {
 					_ = conn.WriteJSON(map[string]any{
 						"type":  "event",
@@ -1828,19 +1870,21 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 						},
 					})
 				}
-				_ = conn.WriteJSON(map[string]any{
-					"type":  "event",
-					"event": "chat",
-					"seq":   3,
-					"payload": map[string]any{
-						"runId": runID,
-						"state": "final",
-						"message": map[string]any{
-							"role":    "assistant",
-							"content": message,
+				if emitChatEvent {
+					_ = conn.WriteJSON(map[string]any{
+						"type":  "event",
+						"event": "chat",
+						"seq":   3,
+						"payload": map[string]any{
+							"runId": runID,
+							"state": "final",
+							"message": map[string]any{
+								"role":    "assistant",
+								"content": message,
+							},
 						},
-					},
-				})
+					})
+				}
 				if strings.Contains(fake.runMessage(runID), "event artifact") {
 					_ = conn.WriteJSON(map[string]any{
 						"type":  "event",
