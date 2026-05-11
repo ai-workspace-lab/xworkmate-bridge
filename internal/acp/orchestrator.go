@@ -142,9 +142,6 @@ func (o *SessionOrchestrator) runGateway(
 	if gatewayProvider == "" {
 		return nil, &shared.RPCError{Code: -32602, Message: "GATEWAY_PROVIDER_REQUIRED"}
 	}
-	if rpcErr := ensureProductionGatewayConnected(o.server, gatewayProvider, notify); rpcErr != nil {
-		return nil, rpcErr
-	}
 	params = withResolvedGatewayProvider(params, gatewayProvider)
 	if isOpenClawMode(gatewayProvider) && isSessionTaskMethod(method) {
 		sessionID := strings.TrimSpace(shared.StringArg(params, "sessionId", ""))
@@ -185,7 +182,13 @@ func (o *SessionOrchestrator) runGateway(
 			return nil, rpcErr
 		}
 		defer release()
+		if rpcErr := ensureProductionGatewayConnected(o.server, gatewayProvider, notify); rpcErr != nil {
+			return nil, rpcErr
+		}
 		return o.runOpenClawGatewayChat(ctx, params, gatewayProvider, turnID, notify)
+	}
+	if rpcErr := ensureProductionGatewayConnected(o.server, gatewayProvider, notify); rpcErr != nil {
+		return nil, rpcErr
 	}
 	result := o.server.gateway.RequestByMode(
 		gatewayProvider,

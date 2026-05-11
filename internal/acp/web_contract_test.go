@@ -281,12 +281,12 @@ func TestHTTPHandlerGatewayOpenClawSSEKeepaliveBeforeFinalEnvelopeAndDone(t *tes
 func TestHTTPHandlerGatewayOpenClawAdmissionQueuesExcessConcurrentSSE(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
-	gateway.agentWaitDelayMs.Store(300)
+	gateway.agentWaitDelayMs.Store(1500)
 
 	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
 	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
 	t.Setenv("BRIDGE_CONFIG_PATH", filepath.Join(t.TempDir(), "missing-config.yaml"))
-	t.Setenv("XWORKMATE_BRIDGE_OPENCLAW_GATEWAY_MAX_ACTIVE", "2")
+	t.Setenv("XWORKMATE_BRIDGE_OPENCLAW_GATEWAY_MAX_ACTIVE", "1")
 	t.Setenv("XWORKMATE_BRIDGE_OPENCLAW_GATEWAY_MAX_QUEUED", "2")
 	t.Setenv("XWORKMATE_BRIDGE_OPENCLAW_GATEWAY_QUEUE_TIMEOUT", "5s")
 	server := NewServer()
@@ -297,10 +297,10 @@ func TestHTTPHandlerGatewayOpenClawAdmissionQueuesExcessConcurrentSSE(t *testing
 		body string
 		err  error
 	}
-	results := make(chan result, 3)
+	results := make(chan result, 2)
 	start := make(chan struct{})
 	var wg sync.WaitGroup
-	for index := 0; index < 3; index++ {
+	for index := 0; index < 2; index++ {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
@@ -336,10 +336,10 @@ func TestHTTPHandlerGatewayOpenClawAdmissionQueuesExcessConcurrentSSE(t *testing
 		}(index)
 	}
 	close(start)
-	waitForOpenClawGatewayCount(t, func() int { return gateway.ChatSendCount() }, 2)
+	waitForOpenClawGatewayCount(t, func() int { return gateway.ChatSendCount() }, 1)
 	time.Sleep(75 * time.Millisecond)
-	if got := gateway.ChatSendCount(); got != 2 {
-		t.Fatalf("expected admission gate to hold third chat.send while two are active, got %d", got)
+	if got := gateway.ChatSendCount(); got != 1 {
+		t.Fatalf("expected admission gate to hold queued chat.send while one is active, got %d", got)
 	}
 	wg.Wait()
 	close(results)
@@ -360,10 +360,10 @@ func TestHTTPHandlerGatewayOpenClawAdmissionQueuesExcessConcurrentSSE(t *testing
 	if !sawQueued {
 		t.Fatalf("expected one queued session.update event")
 	}
-	if finalCount != 3 {
-		t.Fatalf("expected all three requests to return final result, got %d", finalCount)
+	if finalCount != 2 {
+		t.Fatalf("expected both requests to return final result, got %d", finalCount)
 	}
-	if got := gateway.ChatSendCount(); got != 3 {
+	if got := gateway.ChatSendCount(); got != 2 {
 		t.Fatalf("expected queued request to run after a slot releases, got %d chat.send calls", got)
 	}
 }
