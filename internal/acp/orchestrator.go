@@ -805,6 +805,8 @@ func guardOpenClawArtifactResult(result map[string]any, artifactDeliveryRequired
 	message := "未检测到 OpenClaw 本轮导出的实际文件。已阻止口头下载声明进入 artifacts 面板；请重新执行并要求 OpenClaw 在 workspace 中真实生成文件。"
 	result["success"] = false
 	result["status"] = "artifact_missing"
+	result["code"] = "OPENCLAW_ARTIFACT_MISSING"
+	result["error"] = "OpenClaw artifact export returned no files for this run."
 	result["output"] = message
 	result["message"] = message
 	result["summary"] = message
@@ -824,6 +826,7 @@ func guardOpenClawNoDisplayableResult(result map[string]any, noDisplayableOutput
 	}
 	result["success"] = false
 	result["status"] = "failed"
+	result["code"] = "OPENCLAW_NO_DISPLAYABLE_OUTPUT"
 	result["error"] = "openclaw returned no displayable output"
 	result["message"] = openClawNoDisplayableText
 	result["output"] = openClawNoDisplayableText

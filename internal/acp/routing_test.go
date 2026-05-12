@@ -557,6 +557,9 @@ func TestExecuteSessionTaskGatewayNoDisplayableOutputFails(t *testing.T) {
 	if got := response["status"]; got != "failed" {
 		t.Fatalf("expected failed status for no-output gateway response, got %#v", response)
 	}
+	if got := response["code"]; got != "OPENCLAW_NO_DISPLAYABLE_OUTPUT" {
+		t.Fatalf("expected structured no-displayable code, got %#v", response)
+	}
 	if got := response["output"]; got != openClawNoDisplayableText {
 		t.Fatalf("expected no-displayable output message, got %#v", response)
 	}
@@ -883,6 +886,12 @@ func TestExecuteSessionTaskGatewayDoesNotExportStaleWorkspaceArtifactsWhenScoped
 	if got := response["status"]; got != "artifact_missing" {
 		t.Fatalf("expected artifact_missing status, got %#v", response)
 	}
+	if got := response["code"]; got != "OPENCLAW_ARTIFACT_MISSING" {
+		t.Fatalf("expected structured artifact missing code, got %#v", response)
+	}
+	if _, ok := response["artifacts"]; ok {
+		t.Fatalf("expected no stale artifacts when scoped directory is empty, got %#v", response["artifacts"])
+	}
 	exportParams := gateway.LastArtifactExportParams()
 	if got := strings.TrimSpace(shared.StringArg(exportParams, "artifactScope", "")); !strings.HasPrefix(got, "tasks/thread-openclaw-latest-artifact/") {
 		t.Fatalf("expected scoped artifact export params, got %#v", exportParams)
@@ -933,6 +942,9 @@ func TestExecuteSessionMessageGatewayRejectsClaimedArtifactsWithoutScopedFiles(t
 	}
 	if got := response["status"]; got != "artifact_missing" {
 		t.Fatalf("expected artifact_missing status, got %#v", response)
+	}
+	if got := response["code"]; got != "OPENCLAW_ARTIFACT_MISSING" {
+		t.Fatalf("expected structured artifact missing code, got %#v", response)
 	}
 	if gateway.ArtifactExportCount() != 0 {
 		t.Fatalf("expected no artifact export for unprepared claimed output, got %d", gateway.ArtifactExportCount())
@@ -1598,6 +1610,12 @@ func TestExecuteSessionTaskGatewayRejectsMissingOpenClawFilesForDeliveryRequest(
 	}
 	if success, _ := response["success"].(bool); success {
 		t.Fatalf("expected missing artifact delivery to be marked unsuccessful, got %#v", response)
+	}
+	if got := response["status"]; got != "artifact_missing" {
+		t.Fatalf("expected artifact_missing status, got %#v", response)
+	}
+	if got := response["code"]; got != "OPENCLAW_ARTIFACT_MISSING" {
+		t.Fatalf("expected structured artifact missing code, got %#v", response)
 	}
 	output := strings.TrimSpace(shared.StringArg(response, "output", ""))
 	if strings.Contains(output, "点击直接下载") || strings.Contains(output, "文件已就绪") {
