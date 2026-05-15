@@ -509,11 +509,11 @@ func TestExecuteSessionTaskGatewayAutoConnectsLocalOpenClaw(t *testing.T) {
 	if got := int64(timeoutMs); got <= 120000 {
 		t.Fatalf("expected OpenClaw agent.wait timeout to exceed the previous 120s cap, got %#v", waitParams)
 	}
-	if gateway.ArtifactExportCount() != 0 {
-		t.Fatalf("expected no OpenClaw artifact export for text-only prompt, got %d", gateway.ArtifactExportCount())
+	if gateway.ArtifactExportCount() != 1 {
+		t.Fatalf("expected one OpenClaw artifact export sync after run, got %d", gateway.ArtifactExportCount())
 	}
-	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "chat.send", "agent.wait"}) {
-		t.Fatalf("expected connect, chat.send, then agent.wait, got %#v", got)
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "chat.send", "agent.wait", "xworkmate.artifacts.export"}) {
+		t.Fatalf("expected connect, chat.send, agent.wait, then artifact export, got %#v", got)
 	}
 	client := gateway.LastConnectClient()
 	if got := client["id"]; got != "openclaw-macos" {
@@ -563,8 +563,8 @@ func TestExecuteSessionTaskGatewayNoDisplayableOutputFails(t *testing.T) {
 	if got := response["output"]; got != openClawNoDisplayableText {
 		t.Fatalf("expected no-displayable output message, got %#v", response)
 	}
-	if gateway.ArtifactExportCount() != 0 {
-		t.Fatalf("expected no artifact export for no-output text prompt, got %d", gateway.ArtifactExportCount())
+	if gateway.ArtifactExportCount() != 1 {
+		t.Fatalf("expected one artifact export sync even when no displayable text is returned, got %d", gateway.ArtifactExportCount())
 	}
 }
 
@@ -604,11 +604,11 @@ func TestExecuteSessionMessageGatewayUsesOpenClawChatSend(t *testing.T) {
 	if gateway.AgentWaitCount() != 1 {
 		t.Fatalf("expected one OpenClaw agent.wait request, got %d", gateway.AgentWaitCount())
 	}
-	if gateway.ArtifactExportCount() != 0 {
-		t.Fatalf("expected no OpenClaw artifact export for text-only prompt, got %d", gateway.ArtifactExportCount())
+	if gateway.ArtifactExportCount() != 1 {
+		t.Fatalf("expected one OpenClaw artifact export sync after message run, got %d", gateway.ArtifactExportCount())
 	}
-	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "chat.send", "agent.wait"}) {
-		t.Fatalf("expected connect, chat.send, then agent.wait, got %#v", got)
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "chat.send", "agent.wait", "xworkmate.artifacts.export"}) {
+		t.Fatalf("expected connect, chat.send, agent.wait, then artifact export, got %#v", got)
 	}
 }
 
@@ -834,9 +834,8 @@ func TestExecuteSessionTaskGatewayExportsOpenClawArtifacts(t *testing.T) {
 	if got := parsedDownloadURL.Query().Get("relativePath"); got != "reports/final.md" {
 		t.Fatalf("expected artifact relativePath in downloadUrl, got %q", got)
 	}
-	artifactScope := parsedDownloadURL.Query().Get("artifactScope")
-	if !strings.HasPrefix(artifactScope, "tasks/") {
-		t.Fatalf("expected artifact scope in downloadUrl, got %q", artifactScope)
+	if artifactScope := parsedDownloadURL.Query().Get("artifactScope"); artifactScope != "" {
+		t.Fatalf("expected no bridge-imposed artifact scope in downloadUrl, got %q", artifactScope)
 	}
 	if parsedDownloadURL.Query().Get("sig") == "" {
 		t.Fatalf("expected signed downloadUrl, got %q", downloadURL)
@@ -848,12 +847,12 @@ func TestExecuteSessionTaskGatewayExportsOpenClawArtifacts(t *testing.T) {
 	if got := shared.BoolArg(shared.StringArg(exportParams, "includeContent", ""), true); got {
 		t.Fatalf("expected OpenClaw artifact export to omit content, got %#v", exportParams)
 	}
-	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "agent.wait", "xworkmate.artifacts.export"}) {
-		t.Fatalf("expected connect, artifact prepare, chat.send, agent.wait, then artifact export, got %#v", got)
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "chat.send", "agent.wait", "xworkmate.artifacts.export"}) {
+		t.Fatalf("expected connect, chat.send, agent.wait, then artifact export, got %#v", got)
 	}
 }
 
-func TestExecuteSessionTaskGatewayDoesNotExportStaleWorkspaceArtifactsWhenScopedDirectoryEmpty(t *testing.T) {
+func TestExecuteSessionTaskGatewayDoesNotTreatPromptTextAsArtifactContract(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
 
@@ -878,23 +877,17 @@ func TestExecuteSessionTaskGatewayDoesNotExportStaleWorkspaceArtifactsWhenScoped
 		},
 	})
 	if rpcErr != nil {
-		t.Fatalf("expected artifact guard response, got rpc error: %#v", rpcErr)
+		t.Fatalf("expected gateway response, got rpc error: %#v", rpcErr)
 	}
-	if got := response["success"]; got != false {
-		t.Fatalf("expected artifact_missing failure, got %#v", response)
-	}
-	if got := response["status"]; got != "artifact_missing" {
-		t.Fatalf("expected artifact_missing status, got %#v", response)
-	}
-	if got := response["code"]; got != "OPENCLAW_ARTIFACT_MISSING" {
-		t.Fatalf("expected structured artifact missing code, got %#v", response)
+	if got := response["success"]; got != true {
+		t.Fatalf("expected prompt text not to be converted into bridge artifact failure, got %#v", response)
 	}
 	if _, ok := response["artifacts"]; ok {
-		t.Fatalf("expected no stale artifacts when scoped directory is empty, got %#v", response["artifacts"])
+		t.Fatalf("expected no stale artifacts when gateway exported none, got %#v", response["artifacts"])
 	}
 	exportParams := gateway.LastArtifactExportParams()
-	if got := strings.TrimSpace(shared.StringArg(exportParams, "artifactScope", "")); !strings.HasPrefix(got, "tasks/thread-openclaw-latest-artifact/") {
-		t.Fatalf("expected scoped artifact export params, got %#v", exportParams)
+	if got := strings.TrimSpace(shared.StringArg(exportParams, "artifactScope", "")); got != "" {
+		t.Fatalf("expected bridge not to impose scoped artifact export params, got %#v", exportParams)
 	}
 	if _, ok := exportParams["latestIfEmpty"]; ok {
 		t.Fatalf("expected no latestIfEmpty fallback export param, got %#v", exportParams)
@@ -905,12 +898,12 @@ func TestExecuteSessionTaskGatewayDoesNotExportStaleWorkspaceArtifactsWhenScoped
 	if got := shared.BoolArg(shared.StringArg(exportParams, "includeContent", ""), true); got {
 		t.Fatalf("expected latest workspace export to omit content, got %#v", exportParams)
 	}
-	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "agent.wait", "xworkmate.artifacts.export"}) {
-		t.Fatalf("expected connect, artifact prepare, chat.send, agent.wait, then artifact export, got %#v", got)
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "chat.send", "agent.wait", "xworkmate.artifacts.export"}) {
+		t.Fatalf("expected connect, chat.send, agent.wait, then artifact export, got %#v", got)
 	}
 }
 
-func TestExecuteSessionMessageGatewayRejectsClaimedArtifactsWithoutScopedFiles(t *testing.T) {
+func TestExecuteSessionMessageGatewayDoesNotRewriteClaimedArtifactsWithoutGatewayFiles(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
 
@@ -935,26 +928,23 @@ func TestExecuteSessionMessageGatewayRejectsClaimedArtifactsWithoutScopedFiles(t
 		},
 	})
 	if rpcErr != nil {
-		t.Fatalf("expected claimed artifact guard response, got rpc error: %#v", rpcErr)
+		t.Fatalf("expected gateway response, got rpc error: %#v", rpcErr)
 	}
-	if got := response["success"]; got != false {
-		t.Fatalf("expected claimed artifact_missing failure, got %#v", response)
+	if got := response["success"]; got != true {
+		t.Fatalf("expected bridge to preserve gateway terminal state, got %#v", response)
 	}
-	if got := response["status"]; got != "artifact_missing" {
-		t.Fatalf("expected artifact_missing status, got %#v", response)
+	if output := strings.TrimSpace(shared.StringArg(response, "output", "")); !strings.Contains(output, "文件已就绪") {
+		t.Fatalf("expected bridge not to rewrite gateway text output, got %q", output)
 	}
-	if got := response["code"]; got != "OPENCLAW_ARTIFACT_MISSING" {
-		t.Fatalf("expected structured artifact missing code, got %#v", response)
+	if gateway.ArtifactExportCount() != 1 {
+		t.Fatalf("expected one post-run artifact export sync, got %d", gateway.ArtifactExportCount())
 	}
-	if gateway.ArtifactExportCount() != 0 {
-		t.Fatalf("expected no artifact export for unprepared claimed output, got %d", gateway.ArtifactExportCount())
-	}
-	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "chat.send", "agent.wait"}) {
-		t.Fatalf("expected connect, chat.send, then agent.wait, got %#v", got)
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "chat.send", "agent.wait", "xworkmate.artifacts.export"}) {
+		t.Fatalf("expected connect, chat.send, agent.wait, then artifact export, got %#v", got)
 	}
 }
 
-func TestExecuteSessionMessageGatewayPreparesArtifactsFromMessagesPrompt(t *testing.T) {
+func TestExecuteSessionMessageGatewayExportsArtifactsWithoutPromptHeuristic(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
 
@@ -996,36 +986,11 @@ func TestExecuteSessionMessageGatewayPreparesArtifactsFromMessagesPrompt(t *test
 		t.Fatalf("expected artifact response success, got %#v", response)
 	}
 	exportParams := gateway.LastArtifactExportParams()
-	if got := strings.TrimSpace(shared.StringArg(exportParams, "artifactScope", "")); !strings.HasPrefix(got, "tasks/thread-openclaw-message-artifact/") {
-		t.Fatalf("expected scoped artifact export params for message prompt, got %#v", exportParams)
+	if got := strings.TrimSpace(shared.StringArg(exportParams, "artifactScope", "")); got != "" {
+		t.Fatalf("expected bridge not to impose artifact scope from message prompt, got %#v", exportParams)
 	}
-	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "agent.wait", "xworkmate.artifacts.export"}) {
-		t.Fatalf("expected connect, artifact prepare, chat.send, agent.wait, then artifact export, got %#v", got)
-	}
-}
-
-func TestFilterOpenClawArtifactPayloadByOutputKeepsMentionedFiles(t *testing.T) {
-	payload := map[string]any{
-		"remoteWorkingDirectory": "/remote/openclaw/workspace",
-		"artifacts": []any{
-			map[string]any{"relativePath": "k8s-networking.pdf"},
-			map[string]any{"relativePath": "k8s-networking.docx"},
-			map[string]any{"relativePath": "generate_all.py"},
-		},
-	}
-	filtered := filterOpenClawArtifactPayloadByOutput(
-		"文件已经生成好了：k8s-networking.pdf, k8s-networking.docx",
-		payload,
-	)
-	artifacts := shared.ListArg(filtered, "artifacts")
-	if len(artifacts) != 2 {
-		t.Fatalf("expected only mentioned artifacts, got %#v", artifacts)
-	}
-	if got := shared.StringArg(shared.AsMap(artifacts[0]), "relativePath", ""); got != "k8s-networking.pdf" {
-		t.Fatalf("expected pdf artifact first, got %#v", artifacts)
-	}
-	if got := shared.StringArg(shared.AsMap(artifacts[1]), "relativePath", ""); got != "k8s-networking.docx" {
-		t.Fatalf("expected docx artifact second, got %#v", artifacts)
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "chat.send", "agent.wait", "xworkmate.artifacts.export"}) {
+		t.Fatalf("expected connect, chat.send, agent.wait, then artifact export, got %#v", got)
 	}
 }
 
@@ -1407,7 +1372,7 @@ func TestHTTPHandlerOpenClawArtifactDownloadRejectsInvalidArtifactScope(t *testi
 	}
 }
 
-func TestOpenClawChatSendParamsAddsArtifactDeliveryInstructions(t *testing.T) {
+func TestOpenClawChatSendParamsPreservesRawPrompt(t *testing.T) {
 	for _, prompt := range []string{
 		"输出 PPT PDF docx 文件",
 		"生成一张图片并返回制品",
@@ -1418,58 +1383,15 @@ func TestOpenClawChatSendParamsAddsArtifactDeliveryInstructions(t *testing.T) {
 			chatParams, rpcErr := openClawChatSendParams(map[string]any{
 				"threadId":   "thread-artifact-instructions",
 				"taskPrompt": prompt,
-			}, "turn-artifact-instructions", &openClawPreparedArtifactScope{
-				ArtifactScope:     "tasks/thread-artifact-instructions/turn-artifact-instructions",
-				ArtifactDirectory: "/remote/openclaw/workspace/tasks/thread-artifact-instructions/turn-artifact-instructions",
-				ScopeKind:         "task",
-			})
+			}, "turn-artifact-instructions")
 			if rpcErr != nil {
 				t.Fatalf("expected chat params, got rpc error: %#v", rpcErr)
 			}
 			message := strings.TrimSpace(shared.StringArg(chatParams, "message", ""))
-			if !strings.Contains(message, prompt) {
-				t.Fatalf("expected original prompt to be preserved, got %q", message)
-			}
-			if !strings.Contains(message, "Create the requested files as real files") {
-				t.Fatalf("expected artifact delivery instructions, got %q", message)
-			}
-			if !strings.Contains(message, "/remote/openclaw/workspace/tasks/thread-artifact-instructions/turn-artifact-instructions") {
-				t.Fatalf("expected scoped artifact directory instruction, got %q", message)
-			}
-			if !strings.Contains(message, "Do not claim that files are ready") {
-				t.Fatalf("expected anti-hallucination download instruction, got %q", message)
+			if message != prompt {
+				t.Fatalf("expected bridge to preserve raw prompt without artifact instructions, got %q", message)
 			}
 		})
-	}
-}
-
-func TestOpenClawArtifactDeliveryRequiredScansNestedParams(t *testing.T) {
-	params := map[string]any{
-		"request": map[string]any{
-			"params": map[string]any{
-				"taskPrompt": "请在当前任务制品目录中真实生成一个文件",
-			},
-		},
-	}
-	if !openClawArtifactDeliveryRequired(params) {
-		t.Fatal("expected nested artifact delivery prompt to be detected")
-	}
-}
-
-func TestOpenClawArtifactDeliveryRequiredScansMessageContentParts(t *testing.T) {
-	params := map[string]any{
-		"messages": []any{
-			map[string]any{"role": "assistant", "content": "上一轮只是分析。"},
-			map[string]any{
-				"role": "user",
-				"content": []any{
-					map[string]any{"type": "text", "text": "请输出 Markdown 文件并保存到 workspace。"},
-				},
-			},
-		},
-	}
-	if !openClawArtifactDeliveryRequired(params) {
-		t.Fatal("expected artifact delivery prompt in message content parts to be detected")
 	}
 }
 
@@ -1523,9 +1445,8 @@ func TestExecuteSessionTaskGatewayCollectsOpenClawEventArtifacts(t *testing.T) {
 	}
 }
 
-func TestExecuteSessionTaskGatewaySkipsArtifactExportForTextOnlyPrompt(t *testing.T) {
+func TestExecuteSessionTaskGatewayAlwaysSyncsGatewayArtifactsAfterRun(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
-	gateway.artifactMode = "unknown"
 	defer gateway.Close()
 
 	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
@@ -1554,34 +1475,15 @@ func TestExecuteSessionTaskGatewaySkipsArtifactExportForTextOnlyPrompt(t *testin
 	if got := response["output"]; got != "gateway pong" {
 		t.Fatalf("expected gateway pong output, got %#v", response)
 	}
-	if gateway.ArtifactExportCount() != 0 {
-		t.Fatalf("expected no OpenClaw artifact export request, got %d", gateway.ArtifactExportCount())
+	if gateway.ArtifactExportCount() != 1 {
+		t.Fatalf("expected one OpenClaw artifact export sync, got %d", gateway.ArtifactExportCount())
 	}
 	if warnings := shared.ListArg(response, "artifactWarnings"); len(warnings) != 0 {
-		t.Fatalf("expected no artifact warnings for text-only prompt, got %#v", warnings)
+		t.Fatalf("expected no artifact warnings when gateway export succeeds empty, got %#v", warnings)
 	}
 }
 
-func TestOpenClawNoDisplayableOutputDoesNotClaimArtifacts(t *testing.T) {
-	if openClawArtifactDeliveryClaimedByOutput(openClawNoDisplayableText) {
-		t.Fatalf("fallback no-output text must not trigger artifact delivery guard")
-	}
-}
-
-func TestOpenClawArtifactDeliverySuppressionKeepsTextOnlyPrompt(t *testing.T) {
-	if openClawArtifactDeliveryRequired(map[string]any{
-		"taskPrompt": "Reply exactly pong. Do not create files.",
-	}) {
-		t.Fatalf("negative file directive must not trigger artifact delivery")
-	}
-	if openClawArtifactDeliveryRequired(map[string]any{
-		"taskPrompt": "只回答 pong，不要生成文件。",
-	}) {
-		t.Fatalf("Chinese negative file directive must not trigger artifact delivery")
-	}
-}
-
-func TestExecuteSessionTaskGatewayRejectsMissingOpenClawFilesForDeliveryRequest(t *testing.T) {
+func TestExecuteSessionTaskGatewayDoesNotFailMissingFilesFromPromptHeuristic(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
 
@@ -1608,28 +1510,18 @@ func TestExecuteSessionTaskGatewayRejectsMissingOpenClawFilesForDeliveryRequest(
 	if rpcErr != nil {
 		t.Fatalf("expected bridge response, got rpc error: %#v", rpcErr)
 	}
-	if success, _ := response["success"].(bool); success {
-		t.Fatalf("expected missing artifact delivery to be marked unsuccessful, got %#v", response)
-	}
-	if got := response["status"]; got != "artifact_missing" {
-		t.Fatalf("expected artifact_missing status, got %#v", response)
-	}
-	if got := response["code"]; got != "OPENCLAW_ARTIFACT_MISSING" {
-		t.Fatalf("expected structured artifact missing code, got %#v", response)
+	if success, _ := response["success"].(bool); !success {
+		t.Fatalf("expected bridge to preserve gateway success without prompt heuristic failure, got %#v", response)
 	}
 	output := strings.TrimSpace(shared.StringArg(response, "output", ""))
-	if strings.Contains(output, "点击直接下载") || strings.Contains(output, "文件已就绪") {
-		t.Fatalf("expected hallucinated download text to be replaced, got %q", output)
-	}
-	if !strings.Contains(output, "未检测到 OpenClaw 本轮导出的实际文件") {
-		t.Fatalf("expected explicit missing artifact message, got %q", output)
+	if !strings.Contains(output, "点击直接下载") || !strings.Contains(output, "文件已就绪") {
+		t.Fatalf("expected bridge to preserve gateway output, got %q", output)
 	}
 	if _, ok := response["artifacts"]; ok {
 		t.Fatalf("expected no artifacts when export returned none, got %#v", response["artifacts"])
 	}
-	warnings := response["artifactWarnings"].([]any)
-	if len(warnings) != 1 || !strings.Contains(fmt.Sprint(warnings[0]), "returned no files") {
-		t.Fatalf("expected missing artifact warning, got %#v", response["artifactWarnings"])
+	if warnings := shared.ListArg(response, "artifactWarnings"); len(warnings) != 0 {
+		t.Fatalf("expected no bridge artifact-missing warning, got %#v", warnings)
 	}
 }
 
