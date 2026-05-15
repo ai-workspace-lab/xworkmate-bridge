@@ -6,6 +6,23 @@ import (
 	"xworkmate-bridge/internal/gatewayruntime"
 )
 
+func TestConfigureProductionOpenClawGatewayRuntimeUsesLongHandshakeWindows(
+	t *testing.T,
+) {
+	t.Parallel()
+
+	manager := gatewayruntime.NewManager()
+
+	configureProductionOpenClawGatewayRuntime(manager)
+
+	if got := manager.ConnectTimeout; got != productionOpenClawGatewayConnectTimeout {
+		t.Fatalf("ConnectTimeout = %s, want %s", got, productionOpenClawGatewayConnectTimeout)
+	}
+	if got := manager.ChallengeTimeout; got != productionOpenClawGatewayChallengeTimeout {
+		t.Fatalf("ChallengeTimeout = %s, want %s", got, productionOpenClawGatewayChallengeTimeout)
+	}
+}
+
 func TestResolveGatewayReportedRemoteAddressUsesBuiltInOpenClawEndpoint(t *testing.T) {
 	t.Parallel()
 

@@ -10,6 +10,11 @@ import (
 	"xworkmate-bridge/internal/shared"
 )
 
+const (
+	productionOpenClawGatewayConnectTimeout   = 60 * time.Second
+	productionOpenClawGatewayChallengeTimeout = 30 * time.Second
+)
+
 func (s *Server) handleGatewayMethod(ctx context.Context, method string, params map[string]any, notify func(map[string]any)) (map[string]any, *shared.RPCError) {
 	switch method {
 	case "xworkmate.gateway.connect":
@@ -194,6 +199,7 @@ func ensureProductionGatewayConnected(
 	if server.gateway == nil {
 		server.gateway = gatewayruntime.NewManager()
 	}
+	configureProductionOpenClawGatewayRuntime(server.gateway)
 
 	request := applyProductionGatewayRouting(
 		server,
@@ -224,6 +230,14 @@ func ensureProductionGatewayConnected(
 		message = code + ": " + message
 	}
 	return &shared.RPCError{Code: -32002, Message: "GATEWAY_CONNECT_FAILED: " + message}
+}
+
+func configureProductionOpenClawGatewayRuntime(manager *gatewayruntime.Manager) {
+	if manager == nil {
+		return
+	}
+	manager.ConnectTimeout = productionOpenClawGatewayConnectTimeout
+	manager.ChallengeTimeout = productionOpenClawGatewayChallengeTimeout
 }
 
 // Helper functions are now in helpers.go
