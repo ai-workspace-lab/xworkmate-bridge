@@ -503,6 +503,7 @@ func TestHTTPHandlerGatewayOpenClawFiltersRawGatewayEventsAndKeepsFinalResult(t 
 	}
 	var sawAccepted bool
 	var sawDelta bool
+	var sawCompletedSnapshot bool
 	var sawFinal bool
 	for _, event := range events[:len(events)-1] {
 		if !strings.HasPrefix(event, "data: ") {
@@ -526,6 +527,16 @@ func TestHTTPHandlerGatewayOpenClawFiltersRawGatewayEventsAndKeepsFinalResult(t 
 					t.Fatalf("expected thread-filter session update, got %#v", params)
 				}
 			}
+			result := shared.AsMap(params["result"])
+			if params["type"] == "status" && params["event"] == "completed" && len(result) > 0 {
+				sawCompletedSnapshot = true
+				if got := result["resolvedGatewayProviderId"]; got != "openclaw" {
+					t.Fatalf("expected completed snapshot to carry openclaw final result, got %#v", result)
+				}
+				if !strings.Contains(bodyText, openClawArtifactDownloadPath) {
+					t.Fatalf("expected completed snapshot to include normalized artifact download URL, got %s", bodyText)
+				}
+			}
 		}
 		if envelope["id"] == "task-filter" {
 			sawFinal = true
@@ -543,6 +554,9 @@ func TestHTTPHandlerGatewayOpenClawFiltersRawGatewayEventsAndKeepsFinalResult(t 
 	}
 	if !sawDelta {
 		t.Fatalf("expected compact session.update delta, got %q", bodyText)
+	}
+	if !sawCompletedSnapshot {
+		t.Fatalf("expected completed session.update result snapshot, got %q", bodyText)
 	}
 	if !sawFinal {
 		t.Fatalf("expected final result envelope, got %q", bodyText)

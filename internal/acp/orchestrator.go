@@ -351,7 +351,50 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 	stripOpenClawArtifactInlineContent(result)
 	guardOpenClawArtifactResult(result, artifactDeliveryRequired || artifactDeliveryClaimed)
 	guardOpenClawNoDisplayableResult(result, noDisplayableOutput)
+	if notify != nil {
+		notify(shared.NotificationEnvelope("session.update", openClawGatewayCompletedResultUpdate(sessionID, threadID, turnID, result)))
+	}
 	return result, nil
+}
+
+func openClawGatewayCompletedResultUpdate(sessionID string, threadID string, turnID string, result map[string]any) map[string]any {
+	success := true
+	if value, ok := result["success"].(bool); ok {
+		success = value
+	}
+	update := map[string]any{
+		"sessionId": sessionID,
+		"threadId":  threadID,
+		"turnId":    turnID,
+		"type":      "status",
+		"event":     "completed",
+		"pending":   false,
+		"error":     !success,
+		"result":    result,
+	}
+	if output := firstNonEmptyString(result, "output", "message", "summary", "text"); output != "" {
+		update["message"] = output
+		update["text"] = output
+	}
+	for _, key := range []string{
+		"success",
+		"status",
+		"code",
+		"artifacts",
+		"files",
+		"attachments",
+		"artifactWarnings",
+		"remoteWorkingDirectory",
+		"remoteWorkspaceRefKind",
+		"resolvedGatewayProviderId",
+		"mode",
+		"runId",
+	} {
+		if value, ok := result[key]; ok {
+			update[key] = value
+		}
+	}
+	return update
 }
 
 func logOpenClawGatewayTiming(
