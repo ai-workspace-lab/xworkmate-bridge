@@ -68,13 +68,23 @@ fi
 
 systemctl daemon-reload
 systemctl restart "${SERVICE_NAME}"
-pid="$(systemctl show -p MainPID --value "${SERVICE_NAME}")"
+deadline=$((SECONDS + 20))
+actual_exe=""
+pid=""
+while (( SECONDS < deadline )); do
+  pid="$(systemctl show -p MainPID --value "${SERVICE_NAME}")"
+  if [[ -n "${pid}" && "${pid}" != "0" && -e "/proc/${pid}/exe" ]]; then
+    actual_exe="$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)"
+    if [[ "${actual_exe}" == "${REMOTE_BINARY}" ]]; then
+      exit 0
+    fi
+  fi
+  sleep 1
+done
 if [[ -z "${pid}" || "${pid}" == "0" ]]; then
   echo "${SERVICE_NAME} did not start" >&2
   exit 1
 fi
-if [[ "$(readlink -f "/proc/${pid}/exe")" != "${REMOTE_BINARY}" ]]; then
-  echo "${SERVICE_NAME} is not running ${REMOTE_BINARY}" >&2
-  exit 1
-fi
+echo "${SERVICE_NAME} is not running ${REMOTE_BINARY}; pid=${pid}; actual=${actual_exe:-unknown}" >&2
+exit 1
 REMOTE
