@@ -259,7 +259,6 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 	if prepareErr != nil {
 		return nil, prepareErr
 	}
-	applyOpenClawPreparedArtifactToChatParams(chatParams, preparedArtifact)
 	logOpenClawArtifactSync(gatewayProvider, sessionKey, turnID, "prepare", true, false, false)
 	sendStarted := time.Now()
 	sendResult := o.openClawGatewayRequestWithRetry(
@@ -515,28 +514,6 @@ func (o *SessionOrchestrator) openClawArtifactPrepare(
 		return nil, &shared.RPCError{Code: -32002, Message: "openclaw artifact prepare returned no scoped artifact directory"}
 	}
 	return prepared, nil
-}
-
-func applyOpenClawPreparedArtifactToChatParams(chatParams map[string]any, prepared *openClawPreparedArtifactScope) {
-	if chatParams == nil || prepared == nil {
-		return
-	}
-	chatParams["artifactScope"] = prepared.ArtifactScope
-	chatParams["artifactDirectory"] = prepared.ArtifactDirectory
-	chatParams["relativeArtifactDirectory"] = prepared.RelativeArtifactDirectory
-	chatParams["artifactScopeKind"] = prepared.ScopeKind
-	if prepared.RemoteWorkingDirectory != "" {
-		chatParams["remoteWorkingDirectory"] = prepared.RemoteWorkingDirectory
-	}
-	if prepared.RemoteWorkspaceRefKind != "" {
-		chatParams["remoteWorkspaceRefKind"] = prepared.RemoteWorkspaceRefKind
-	}
-	chatParams["xworkmateArtifacts"] = map[string]any{
-		"artifactScope":             prepared.ArtifactScope,
-		"artifactDirectory":         prepared.ArtifactDirectory,
-		"relativeArtifactDirectory": prepared.RelativeArtifactDirectory,
-		"scopeKind":                 prepared.ScopeKind,
-	}
 }
 
 func applyOpenClawPreparedArtifactToResult(result map[string]any, prepared *openClawPreparedArtifactScope) {

@@ -499,11 +499,18 @@ func TestExecuteSessionTaskGatewayAutoConnectsLocalOpenClaw(t *testing.T) {
 		t.Fatalf("expected one OpenClaw artifact prepare request before chat.send, got %d", gateway.ArtifactPrepareCount())
 	}
 	chatParams := gateway.LastChatSendParams()
-	if got := strings.TrimSpace(shared.StringArg(chatParams, "artifactScope", "")); !strings.HasPrefix(got, "tasks/thread-openclaw/turn-") {
-		t.Fatalf("expected chat.send to carry prepared artifact scope, got %#v", chatParams)
-	}
-	if got := strings.TrimSpace(shared.StringArg(chatParams, "artifactDirectory", "")); !strings.Contains(got, "/remote/openclaw/workspace/tasks/thread-openclaw/turn-") {
-		t.Fatalf("expected chat.send to carry prepared artifact directory, got %#v", chatParams)
+	for _, key := range []string{
+		"artifactDirectory",
+		"artifactScope",
+		"artifactScopeKind",
+		"relativeArtifactDirectory",
+		"remoteWorkingDirectory",
+		"remoteWorkspaceRefKind",
+		"xworkmateArtifacts",
+	} {
+		if _, ok := chatParams[key]; ok {
+			t.Fatalf("expected chat.send params to omit bridge artifact/workspace field %q, got %#v", key, chatParams)
+		}
 	}
 	if gateway.AgentWaitCount() != 1 {
 		t.Fatalf("expected one OpenClaw agent.wait request, got %d", gateway.AgentWaitCount())
