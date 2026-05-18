@@ -59,6 +59,9 @@ func (s *Server) handleRequest(request shared.RPCRequest, notify func(map[string
 	case "xworkmate.jobs.submit", "xworkmate.jobs.get", "xworkmate.jobs.list", "xworkmate.jobs.stats":
 		return s.handleJobMethod(ctx, method, request.Params, notify)
 
+	case "xworkmate.sessions.get":
+		return s.handleSessionGet(request.Params), nil
+
 	case "xworkmate.tools.invoke":
 		return s.invokeOpenClawTool(ctx, request.Params)
 
@@ -68,6 +71,65 @@ func (s *Server) handleRequest(request shared.RPCRequest, notify func(map[string
 			Message: fmt.Sprintf("unknown method: %s", method),
 		}
 	}
+}
+
+func (s *Server) handleSessionGet(params map[string]any) map[string]any {
+	sessionID := strings.TrimSpace(shared.StringArg(params, "sessionId", ""))
+	threadID := strings.TrimSpace(shared.StringArg(params, "threadId", ""))
+	if sessionID == "" && threadID == "" {
+		return map[string]any{"status": "not_found"}
+	}
+	s.mu.RLock()
+	sess := s.sessions[sessionID]
+	if sess == nil && threadID != "" {
+		for _, candidate := range s.sessions {
+			if candidate != nil && candidate.threadID == threadID {
+				sess = candidate
+				break
+			}
+		}
+	}
+	s.mu.RUnlock()
+	if sess == nil {
+		return map[string]any{
+			"status":    "not_found",
+			"sessionId": sessionID,
+			"threadId":  threadID,
+		}
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	payload := map[string]any{
+		"status":    string(sess.task.State),
+		"sessionId": sess.sessionID,
+		"threadId":  sess.threadID,
+		"task": map[string]any{
+			"sessionId": sess.task.SessionID,
+			"threadId":  sess.task.ThreadID,
+			"turnId":    sess.task.TurnID,
+			"provider":  sess.task.Provider,
+			"target":    sess.task.Target,
+			"state":     string(sess.task.State),
+			"kind":      string(sess.task.Kind),
+			"updatedAt": sess.task.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		},
+	}
+	if len(sess.lastResult) > 0 {
+		payload["result"] = cloneMap(sess.lastResult)
+	}
+	if len(sess.artifacts.Artifacts) > 0 ||
+		sess.artifacts.RemoteWorkingDirectory != "" ||
+		sess.artifacts.RemoteWorkspaceRefKind != "" ||
+		sess.artifacts.ResultSummary != "" {
+		payload["artifacts"] = map[string]any{
+			"items":                  cloneMapSlice(sess.artifacts.Artifacts),
+			"remoteWorkingDirectory": sess.artifacts.RemoteWorkingDirectory,
+			"remoteWorkspaceRefKind": sess.artifacts.RemoteWorkspaceRefKind,
+			"resultSummary":          sess.artifacts.ResultSummary,
+			"updatedAt":              sess.artifacts.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		}
+	}
+	return payload
 }
 
 func (s *Server) cancelSession(ctx context.Context, sessionID string) {

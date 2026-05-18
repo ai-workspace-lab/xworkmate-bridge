@@ -57,17 +57,18 @@ type ArtifactRecord struct {
 }
 
 type session struct {
-	sessionID string
-	threadID  string
-	mode      string
-	provider  string // The Provider ID
-	target    string // The Execution Target ID
-	compat    ProviderCompat
-	mu        sync.Mutex
-	history   []string
-	control   ControlPlaneSession
-	task      QueuedTask
-	artifacts ArtifactRecord
+	sessionID  string
+	threadID   string
+	mode       string
+	provider   string // The Provider ID
+	target     string // The Execution Target ID
+	compat     ProviderCompat
+	mu         sync.Mutex
+	history    []string
+	control    ControlPlaneSession
+	task       QueuedTask
+	artifacts  ArtifactRecord
+	lastResult map[string]any
 }
 
 type Server struct {

@@ -1123,6 +1123,10 @@ func (o *SessionOrchestrator) normalizeResult(sess *session, result map[string]a
 		})
 	}
 
+	sess.mu.Lock()
+	sess.lastResult = cloneMap(result)
+	sess.mu.Unlock()
+
 	return result
 }
 

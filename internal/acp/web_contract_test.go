@@ -707,6 +707,63 @@ func TestHTTPHandlerGatewayOpenClawForcesGatewayRouting(t *testing.T) {
 	}
 }
 
+func TestHTTPHandlerSessionGetReturnsCompletedOpenClawResult(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
+	t.Setenv("BRIDGE_CONFIG_PATH", filepath.Join(t.TempDir(), "missing-config.yaml"))
+	server := NewServer()
+	handler := server.Handler()
+
+	startRecorder := httptest.NewRecorder()
+	startRequest := httptest.NewRequest(
+		http.MethodPost,
+		"http://127.0.0.1/gateway/openclaw",
+		strings.NewReader(`{"jsonrpc":"2.0","id":"task-1","method":"session.start","params":{"sessionId":"s1","threadId":"t1","taskPrompt":"Reply pong","workingDirectory":"`+t.TempDir()+`"}}`),
+	)
+	startRequest.Header.Set("Content-Type", "application/json")
+	startRequest.Header.Set("Authorization", "Bearer bridge-test-token")
+	handler.ServeHTTP(startRecorder, startRequest)
+	if startRecorder.Code != http.StatusOK {
+		t.Fatalf("expected start 200, got %d: %s", startRecorder.Code, startRecorder.Body.String())
+	}
+
+	getRecorder := httptest.NewRecorder()
+	getRequest := httptest.NewRequest(
+		http.MethodPost,
+		"http://127.0.0.1/acp/rpc",
+		strings.NewReader(`{"jsonrpc":"2.0","id":"get-1","method":"xworkmate.sessions.get","params":{"sessionId":"s1","threadId":"t1"}}`),
+	)
+	getRequest.Header.Set("Content-Type", "application/json")
+	getRequest.Header.Set("Authorization", "Bearer bridge-test-token")
+	handler.ServeHTTP(getRecorder, getRequest)
+
+	if getRecorder.Code != http.StatusOK {
+		t.Fatalf("expected get 200, got %d: %s", getRecorder.Code, getRecorder.Body.String())
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(getRecorder.Body.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode session get response: %v", err)
+	}
+	result := shared.AsMap(decoded["result"])
+	if got := result["status"]; got != "completed" {
+		t.Fatalf("expected completed status, got %#v from %#v", got, result)
+	}
+	task := shared.AsMap(result["task"])
+	if got := task["turnId"]; got == "" {
+		t.Fatalf("expected retained task turn id, got %#v", task)
+	}
+	snapshot := shared.AsMap(result["result"])
+	if got := snapshot["resolvedGatewayProviderId"]; got != "openclaw" {
+		t.Fatalf("expected OpenClaw snapshot, got %#v", snapshot)
+	}
+	if got := snapshot["output"]; got == "" {
+		t.Fatalf("expected output in session snapshot, got %#v", snapshot)
+	}
+}
+
 func TestSafeSSEStreamDropsLateNotificationsAfterClose(t *testing.T) {
 	writer := &panicSSEWriter{header: http.Header{}}
 	stream := newSafeSSEStream(context.Background(), writer, safeSSEStreamMeta{})
