@@ -32,6 +32,10 @@ func NewSessionOrchestrator(server *Server) *SessionOrchestrator {
 }
 
 func (o *SessionOrchestrator) Process(ctx context.Context, method string, params map[string]any, notify func(map[string]any)) (map[string]any, *shared.RPCError) {
+	if isMultiAgentSessionRequest(params) {
+		return o.ProcessMultiAgent(ctx, method, params, notify)
+	}
+
 	res, err := o.server.routingEngine.Resolve(ctx, params)
 	if err != nil {
 		if err.Error() == "ROUTING_REQUIRED" {

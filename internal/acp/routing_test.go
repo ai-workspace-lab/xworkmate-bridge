@@ -622,6 +622,360 @@ func TestExecuteSessionMessageGatewayUsesOpenClawChatSend(t *testing.T) {
 	}
 }
 
+func TestExecuteSessionTaskMultiAgentModes(t *testing.T) {
+	cases := []struct {
+		name      string
+		mode      string
+		maxTurns  int
+		wantSteps int
+	}{
+		{name: "sequence", mode: "sequence", wantSteps: 2},
+		{name: "parallel", mode: "parallel", wantSteps: 2},
+		{name: "race", mode: "race", wantSteps: 1},
+		{name: "conversation", mode: "conversation", maxTurns: 2, wantSteps: 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := NewServer()
+			opencodeProvider := newExternalSingleAgentProvider(t, "opencode", "opencode-output")
+			defer opencodeProvider.Close()
+			geminiProvider := newExternalSingleAgentProvider(t, "gemini", "gemini-output")
+			defer geminiProvider.Close()
+			setTestBridgeProvider(server, syncedProvider{
+				ProviderID: "opencode",
+				Label:      "OpenCode",
+				Endpoint:   opencodeProvider.URL,
+				Enabled:    true,
+			})
+			setTestBridgeProvider(server, syncedProvider{
+				ProviderID: "gemini",
+				Label:      "Gemini",
+				Endpoint:   geminiProvider.URL,
+				Enabled:    true,
+			})
+
+			routing := map[string]any{
+				"orchestrationMode": tc.mode,
+				"steps": []any{
+					map[string]any{"providerId": "opencode", "prompt": "first"},
+					map[string]any{"providerId": "gemini", "prompt": "second sees {{previousOutput}}"},
+				},
+			}
+			if tc.mode == "conversation" {
+				routing["maxTurns"] = tc.maxTurns
+				routing["participants"] = []any{"opencode", "gemini"}
+			}
+			response, rpcErr := server.executeSessionTask(task{
+				req: shared.RPCRequest{
+					Method: "session.start",
+					Params: map[string]any{
+						"sessionId":        "session-multi-" + tc.name,
+						"threadId":         "thread-multi-" + tc.name,
+						"taskPrompt":       "coordinate two agents",
+						"workingDirectory": t.TempDir(),
+						"multiAgent":       true,
+						"routing":          routing,
+					},
+				},
+			})
+			if rpcErr != nil {
+				t.Fatalf("expected multi-agent response, got rpc error: %#v", rpcErr)
+			}
+			if !parseBool(response["success"]) {
+				t.Fatalf("expected successful multi-agent response, got %#v", response)
+			}
+			if got := response["resolvedExecutionTarget"]; got != "multi-agent" {
+				t.Fatalf("expected multi-agent execution target, got %#v", response)
+			}
+			if got := response["orchestrationMode"]; got != tc.mode {
+				t.Fatalf("expected orchestration mode %q, got %#v", tc.mode, response)
+			}
+			steps := mustStepMaps(t, response["steps"])
+			if len(steps) != tc.wantSteps {
+				t.Fatalf("expected %d step results, got %#v", tc.wantSteps, steps)
+			}
+			if output := strings.TrimSpace(shared.StringArg(response, "output", "")); output == "" {
+				t.Fatalf("expected displayable multi-agent output, got %#v", response)
+			}
+		})
+	}
+}
+
+func TestExecuteSessionTaskMultiAgentProviderUnavailableIsResultFailure(t *testing.T) {
+	server := NewServer()
+	providerServer := newExternalSingleAgentProvider(t, "opencode", "opencode-output")
+	defer providerServer.Close()
+	setTestBridgeProvider(server, syncedProvider{
+		ProviderID: "opencode",
+		Label:      "OpenCode",
+		Endpoint:   providerServer.URL,
+		Enabled:    true,
+	})
+
+	response, rpcErr := server.executeSessionTask(task{
+		req: shared.RPCRequest{
+			Method: "session.start",
+			Params: map[string]any{
+				"sessionId":        "session-multi-missing",
+				"threadId":         "thread-multi-missing",
+				"taskPrompt":       "coordinate agents",
+				"workingDirectory": t.TempDir(),
+				"multiAgent":       true,
+				"routing": map[string]any{
+					"orchestrationMode": "parallel",
+					"steps": []any{
+						map[string]any{"providerId": "opencode", "prompt": "first"},
+						map[string]any{"providerId": "missing", "prompt": "second"},
+					},
+				},
+			},
+		},
+	})
+	if rpcErr != nil {
+		t.Fatalf("expected normalized failure result, got rpc error: %#v", rpcErr)
+	}
+	if parseBool(response["success"]) || response["status"] != "failed" {
+		t.Fatalf("expected failed multi-agent result, got %#v", response)
+	}
+	if !strings.Contains(strings.TrimSpace(shared.StringArg(response, "error", "")), "missing: provider unavailable") {
+		t.Fatalf("expected provider unavailable error, got %#v", response)
+	}
+}
+
+func TestInternalJobsSubmitCompletesAndReportsStats(t *testing.T) {
+	server := NewServer()
+	providerServer := newExternalSingleAgentProvider(t, "opencode", "job-output")
+	defer providerServer.Close()
+	setTestBridgeProvider(server, syncedProvider{
+		ProviderID: "opencode",
+		Label:      "OpenCode",
+		Endpoint:   providerServer.URL,
+		Enabled:    true,
+	})
+
+	submitted, rpcErr := server.handleRequest(shared.RPCRequest{
+		Method: "xworkmate.jobs.submit",
+		Params: map[string]any{
+			"providerId":        "opencode",
+			"sessionId":         "job-session",
+			"threadId":          "job-thread",
+			"taskPrompt":        "run async job",
+			"workingDirectory":  t.TempDir(),
+			"timeoutMs":         30_000,
+			"orchestrationMode": "sequence",
+		},
+	}, nil)
+	if rpcErr != nil {
+		t.Fatalf("expected job submission, got %#v", rpcErr)
+	}
+	jobID := strings.TrimSpace(shared.StringArg(submitted, "jobId", ""))
+	if jobID == "" {
+		t.Fatalf("expected job id, got %#v", submitted)
+	}
+
+	var job map[string]any
+	waitForCondition(t, func() bool {
+		job, _ = server.handleJobMethod(context.Background(), "xworkmate.jobs.get", map[string]any{"jobId": jobID}, nil)
+		return shared.StringArg(job, "status", "") == "completed"
+	})
+	result := shared.AsMap(job["result"])
+	if got := strings.TrimSpace(shared.StringArg(result, "output", "")); got != "job-output" {
+		t.Fatalf("expected job output, got %#v", job)
+	}
+	stats, rpcErr := server.handleJobMethod(context.Background(), "xworkmate.jobs.stats", nil, nil)
+	if rpcErr != nil {
+		t.Fatalf("expected stats, got %#v", rpcErr)
+	}
+	summary := shared.AsMap(stats["summary"])
+	if got := fmt.Sprint(summary["completed"]); got != "1" {
+		t.Fatalf("expected completed job stats, got %#v", stats)
+	}
+}
+
+func TestInternalJobWebhookRetriesUntilSuccess(t *testing.T) {
+	server := NewServer()
+	providerServer := newExternalSingleAgentProvider(t, "opencode", "job-output")
+	defer providerServer.Close()
+	setTestBridgeProvider(server, syncedProvider{
+		ProviderID: "opencode",
+		Label:      "OpenCode",
+		Endpoint:   providerServer.URL,
+		Enabled:    true,
+	})
+	var callbackCount atomic.Int32
+	callbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count := callbackCount.Add(1)
+		if count == 1 {
+			http.Error(w, "retry", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer callbackServer.Close()
+
+	submitted, rpcErr := server.handleRequest(shared.RPCRequest{
+		Method: "xworkmate.jobs.submit",
+		Params: map[string]any{
+			"providerId":       "opencode",
+			"sessionId":        "job-webhook-session",
+			"threadId":         "job-webhook-thread",
+			"taskPrompt":       "run async job",
+			"workingDirectory": t.TempDir(),
+			"callbackUrl":      callbackServer.URL,
+			"timeoutMs":        30_000,
+		},
+	}, nil)
+	if rpcErr != nil {
+		t.Fatalf("expected job submission, got %#v", rpcErr)
+	}
+	jobID := strings.TrimSpace(shared.StringArg(submitted, "jobId", ""))
+	waitForCondition(t, func() bool {
+		job, _ := server.handleJobMethod(context.Background(), "xworkmate.jobs.get", map[string]any{"jobId": jobID}, nil)
+		return parseBool(job["webhookSent"]) && callbackCount.Load() >= 2
+	})
+}
+
+func TestInternalToolsInvokeUsesOpenClawHTTPProxy(t *testing.T) {
+	var received map[string]any
+	toolsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer tool-token" {
+			t.Fatalf("expected bearer token, got %q", got)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatalf("decode tool request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}))
+	defer toolsServer.Close()
+	t.Setenv("OPENCLAW_TOOLS_INVOKE_URL", toolsServer.URL)
+	t.Setenv("OPENCLAW_TOOLS_TOKEN", "tool-token")
+
+	server := NewServer()
+	response, rpcErr := server.handleRequest(shared.RPCRequest{
+		Method: "xworkmate.tools.invoke",
+		Params: map[string]any{
+			"tool":   "message",
+			"action": "send",
+			"args": map[string]any{
+				"target":  "channel:1",
+				"message": "hello",
+			},
+		},
+	}, nil)
+	if rpcErr != nil {
+		t.Fatalf("expected tools response, got %#v", rpcErr)
+	}
+	if !parseBool(response["ok"]) {
+		t.Fatalf("expected ok tools response, got %#v", response)
+	}
+	if got := shared.StringArg(received, "tool", ""); got != "message" {
+		t.Fatalf("expected message tool payload, got %#v", received)
+	}
+}
+
+func TestExternalACPWebSocketAutoApprovesPermissionRequests(t *testing.T) {
+	var sawApproval atomic.Bool
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Fatalf("upgrade: %v", err)
+		}
+		defer func() { _ = conn.Close() }()
+		var request map[string]any
+		if err := conn.ReadJSON(&request); err != nil {
+			t.Fatalf("read request: %v", err)
+		}
+		requestID := request["id"]
+		if err := conn.WriteJSON(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      "perm-1",
+			"method":  "session/request_permission",
+			"params": map[string]any{
+				"reason": "test permission",
+			},
+		}); err != nil {
+			t.Fatalf("write permission request: %v", err)
+		}
+		var approval map[string]any
+		if err := conn.ReadJSON(&approval); err != nil {
+			t.Fatalf("read approval: %v", err)
+		}
+		if approval["id"] == "perm-1" && parseBool(shared.AsMap(approval["result"])["approved"]) {
+			sawApproval.Store(true)
+		}
+		_ = conn.WriteJSON(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      requestID,
+			"result": map[string]any{
+				"success": true,
+				"output":  "approved output",
+			},
+		})
+	}))
+	defer wsServer.Close()
+
+	compat := newProviderCompat(syncedProvider{
+		ProviderID: "hermes",
+		Label:      "Hermes",
+		Endpoint:   "ws" + strings.TrimPrefix(wsServer.URL, "http") + "/acp",
+		Enabled:    true,
+	})
+	result, err := compat.StartSession(context.Background(), "permission-session", "permission-thread", map[string]any{
+		"taskPrompt": "needs permission",
+	}, nil)
+	if err != nil {
+		t.Fatalf("expected permission auto approval, got %v", err)
+	}
+	if !sawApproval.Load() {
+		t.Fatalf("expected permission approval response")
+	}
+	if got := shared.StringArg(result, "output", ""); got != "approved output" {
+		t.Fatalf("expected approved output, got %#v", result)
+	}
+}
+
+func TestStructuredExternalACPEventClassifiesNativeStreams(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  map[string]any
+		want string
+	}{
+		{
+			name: "thinking",
+			raw: map[string]any{
+				"method": "session.update",
+				"params": map[string]any{"update": map[string]any{"thinking": "planning"}},
+			},
+			want: "thinking",
+		},
+		{
+			name: "tool_call",
+			raw: map[string]any{
+				"method": "item/tool_call",
+				"params": map[string]any{"item": map[string]any{"toolCall": map[string]any{"name": "read"}}},
+			},
+			want: "tool_call",
+		},
+		{
+			name: "text",
+			raw: map[string]any{
+				"method": "session.update",
+				"params": map[string]any{"update": map[string]any{"text": "hello"}},
+			},
+			want: "text",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			event := structuredExternalACPEvent(tc.raw)
+			if got := shared.StringArg(event, "type", ""); got != tc.want {
+				t.Fatalf("expected event type %q, got %#v", tc.want, event)
+			}
+		})
+	}
+}
+
 func TestExecuteSessionTaskGatewaySurfacesOpenClawChatSendError(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
@@ -2225,6 +2579,35 @@ func sameMethods(got []string, want []string) bool {
 		}
 	}
 	return true
+}
+
+func mustStepMaps(t *testing.T, value any) []map[string]any {
+	t.Helper()
+	switch typed := value.(type) {
+	case []map[string]any:
+		return typed
+	case []any:
+		steps := make([]map[string]any, 0, len(typed))
+		for _, item := range typed {
+			steps = append(steps, shared.AsMap(item))
+		}
+		return steps
+	default:
+		t.Fatalf("expected step map list, got %#v", value)
+		return nil
+	}
+}
+
+func waitForCondition(t *testing.T, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for condition")
 }
 
 func TestExecuteSessionTaskAutoRoutingUsesBridgeProductionProviderOrder(t *testing.T) {

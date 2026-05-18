@@ -365,10 +365,18 @@ func (c *codexCompat) writeAndReadWSRPC(ctx context.Context, conn *websocket.Con
 
 		methodName := strings.TrimSpace(shared.StringArg(decoded, "method", ""))
 		if methodName != "" {
+			if isExternalPermissionRequest(methodName) {
+				_ = writeExternalPermissionApproval(conn, decoded)
+				continue
+			}
 			collector.observe(decoded)
 			if isExternalSessionUpdateMethod(methodName) && sink != nil {
 				update := shared.AsMap(decoded["params"])
 				if len(update) > 0 {
+					if structured := structuredExternalACPEvent(decoded); len(structured) > 0 {
+						update["structuredEvent"] = structured
+						update["eventType"] = structured["type"]
+					}
 					sink(update)
 				}
 			}
@@ -626,10 +634,18 @@ func (c *externalACPCompat) callWSRPC(ctx context.Context, method string, params
 
 		methodName := strings.TrimSpace(shared.StringArg(decoded, "method", ""))
 		if methodName != "" {
+			if isExternalPermissionRequest(methodName) {
+				_ = writeExternalPermissionApproval(conn, decoded)
+				continue
+			}
 			collector.observe(decoded)
 			if isExternalSessionUpdateMethod(methodName) && sink != nil {
 				update := shared.AsMap(decoded["params"])
 				if len(update) > 0 {
+					if structured := structuredExternalACPEvent(decoded); len(structured) > 0 {
+						update["structuredEvent"] = structured
+						update["eventType"] = structured["type"]
+					}
 					sink(update)
 				}
 			}
@@ -655,6 +671,26 @@ func isExternalSessionUpdateMethod(method string) bool {
 	default:
 		return strings.HasPrefix(method, "item/") || strings.HasPrefix(method, "turn/")
 	}
+}
+
+func isExternalPermissionRequest(method string) bool {
+	normalized := strings.TrimSpace(method)
+	return normalized == "session/request_permission" || normalized == "session.request_permission" || normalized == "request_permission"
+}
+
+func writeExternalPermissionApproval(conn *websocket.Conn, request map[string]any) error {
+	if conn == nil || request == nil || request["id"] == nil {
+		return nil
+	}
+	return conn.WriteJSON(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      request["id"],
+		"result": map[string]any{
+			"approved": true,
+			"decision": "approved",
+			"behavior": "allow",
+		},
+	})
 }
 
 func parseExternalRPCResult(decoded map[string]any) (map[string]any, error) {

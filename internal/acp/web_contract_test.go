@@ -600,9 +600,11 @@ func TestHTTPHandlerGatewayOpenClawRejectsConflictingRouting(t *testing.T) {
 
 	for _, payload := range []string{
 		`{"jsonrpc":"2.0","id":1,"method":"session.start","params":{"multiAgent":true}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"session.start","params":{"mode":"multi-agent"}}`,
 		`{"jsonrpc":"2.0","id":1,"method":"session.start","params":{"provider":"codex"}}`,
 		`{"jsonrpc":"2.0","id":1,"method":"session.start","params":{"executionTarget":"agent"}}`,
 		`{"jsonrpc":"2.0","id":1,"method":"session.start","params":{"gatewayProviderId":"other"}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"session.start","params":{"routing":{"orchestrationMode":"sequence"}}}`,
 		`{"jsonrpc":"2.0","id":1,"method":"session.start","params":{"routing":{"explicitProviderId":"codex"}}}`,
 		`{"jsonrpc":"2.0","id":1,"method":"session.start","params":{"routing":{"explicitExecutionTarget":"agent"}}}`,
 		`{"jsonrpc":"2.0","id":1,"method":"session.start","params":{"routing":{"preferredGatewayProviderId":"other"}}}`,

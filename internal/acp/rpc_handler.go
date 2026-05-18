@@ -56,6 +56,12 @@ func (s *Server) handleRequest(request shared.RPCRequest, notify func(map[string
 		// Gateway 语义由专门的 Gateway 组件通过 Adapter 处理
 		return s.handleGatewayMethod(ctx, method, request.Params, notify)
 
+	case "xworkmate.jobs.submit", "xworkmate.jobs.get", "xworkmate.jobs.list", "xworkmate.jobs.stats":
+		return s.handleJobMethod(ctx, method, request.Params, notify)
+
+	case "xworkmate.tools.invoke":
+		return s.invokeOpenClawTool(ctx, request.Params)
+
 	default:
 		return nil, &shared.RPCError{
 			Code:    -32601,

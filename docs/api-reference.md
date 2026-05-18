@@ -137,10 +137,15 @@ bridge 对 app 的稳定 method family 只有：
 - `xworkmate.gateway.connect`
 - `xworkmate.gateway.request`
 - `xworkmate.gateway.disconnect`
+- `xworkmate.jobs.submit`
+- `xworkmate.jobs.get`
+- `xworkmate.jobs.list`
+- `xworkmate.jobs.stats`
+- `xworkmate.tools.invoke`
 
 路径约束：
 
-- `/acp/rpc` 是 capabilities、routing、agent、multi-agent、cancel、close 的 canonical HTTP RPC 入口。
+- `/acp/rpc` 是 capabilities、routing、agent、multi-agent、jobs、tools proxy、cancel、close 的 canonical HTTP RPC 入口。
 - `/gateway/openclaw` 只允许 OpenClaw `session.start` 和 follow-up `session.message`。
 - `/gateway/openclaw` 拒绝 `acp.capabilities`、`xworkmate.routing.resolve`、`xworkmate.gateway.*`、`session.cancel` 和 `session.close`。
 
@@ -153,7 +158,7 @@ bridge 对 app 的稳定 method family 只有：
 ```json
 {
   "singleAgent": true,
-  "multiAgent": false,
+  "multiAgent": true,
   "availableExecutionTargets": ["agent", "gateway"],
   "providerCatalog": [
     { "providerId": "codex", "label": "Codex", "targets": ["agent"], "category": "native" },
@@ -249,6 +254,15 @@ unavailable 示例：
 - `workingDirectory`
 - `routing`
 
+multi-agent 输入仍使用同一个 `session.start` / `session.message` method，不新增 HTTP path：
+
+- `multiAgent: true` 或 `mode: "multi-agent"`
+- `routing.orchestrationMode`: `sequence`、`parallel`、`race`、`conversation`
+- `routing.steps`: `{ "providerId": "codex", "prompt": "...", "outputAs": "...", "timeoutMs": 300000 }[]`
+- `routing.participants`、`routing.maxTurns`、`routing.stopConditions` 用于 `conversation`
+
+multi-agent 只允许通过 `/acp` 或 `/acp/rpc` 进入。`/gateway/openclaw` 仍是 OpenClaw task submit 专用入口，并继续拒绝 `multiAgent=true`。
+
 统一结果字段：
 
 - `success`
@@ -267,7 +281,9 @@ bridge 保证：
 - provider-specific 差异被 compat layer 吸收
 - bridge core 不暴露 stdio/runtime 细节
 - 中间通知统一通过 `session.update`
+- Native ACP structured event 会透传到 `structuredEvent`，类型包括 `thinking`、`tool_call`、`text`、`status`
 - `session.message` 是续写合同；provider compat 缺少原会话状态时返回结构化 JSON-RPC error，不静默降级为新的 `session.start`
+- provider 发起 `session/request_permission` 时 bridge 自动返回 allow/approved，避免 ACP provider 卡住等待人工确认
 
 续写失败错误：
 
@@ -313,7 +329,54 @@ gateway method family 保留为 control-plane contract：
 - `openclaw` 是 bridge-owned gateway provider，不是 app-facing direct route
 - gateway control-plane method 仍走 `/acp` 或 `/acp/rpc`，不走 `/gateway/openclaw`
 
-## 11. 非 Contract 内容
+## 11. Internal Async Jobs
+
+`xworkmate.jobs.*` 只作为 `/acp` / `/acp/rpc` 内部 JSON-RPC method 暴露，不新增 `/jobs` HTTP path。
+
+- `xworkmate.jobs.submit`：提交后台任务，立即返回 `jobId`
+- `xworkmate.jobs.get`：按 `jobId` 查询状态和结果
+- `xworkmate.jobs.list`：返回 job 列表和 summary
+- `xworkmate.jobs.stats`：返回状态统计
+
+`submit` 输入重点：
+
+- `providerId`
+- `sessionId`
+- `threadId`
+- `taskPrompt`
+- `workingDirectory`
+- `timeoutMs`，默认 10 分钟
+- `callbackUrl` / `webhookUrl`
+- `target`、`channel`、`accountId`，用于通过 OpenClaw message tool 推送 Markdown card
+
+语义：
+
+- job 复用已有 provider compat/session 映射，不引入第二套 process pool
+- 超过 `timeoutMs` 或默认 10 分钟仍未结束时标记 `failed`
+- callback webhook 最多重试 3 次
+- `target` 非空时内部调用 `xworkmate.tools.invoke`，等价于 acp-bridge 的 OpenClaw `/tools/invoke` message send 能力
+
+## 12. Internal Tools Proxy
+
+`xworkmate.tools.invoke` 是 `/tools/invoke` 的 JSON-RPC 内部等价物。
+
+输入：
+
+```json
+{
+  "tool": "message",
+  "action": "send",
+  "args": {
+    "channel": "discord",
+    "target": "channel:123",
+    "message": "..."
+  }
+}
+```
+
+优先使用 `OPENCLAW_TOOLS_INVOKE_URL` / `OPENCLAW_TOOLS_TOKEN` 直连 OpenClaw tools HTTP endpoint；未配置时复用已连接的 OpenClaw gateway runtime 调用 `tools.invoke`。
+
+## 13. 非 Contract 内容
 
 以下内容不是 app contract：
 

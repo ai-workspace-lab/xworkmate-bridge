@@ -26,6 +26,7 @@ func (s *Server) Bootstrap() {
 
 	s.routingEngine = &DefaultRoutingEngine{server: s}
 	s.orchestrator = NewSessionOrchestrator(s)
+	s.jobs = newJobManager(s)
 	s.providers = make(map[string]ProviderCompat)
 	s.sessions = make(map[string]*session)
 

@@ -14,7 +14,7 @@ func setTestBridgeProvider(server *Server, provider syncedProvider) {
 		server.providers = make(map[string]ProviderCompat)
 	}
 	server.providers[provider.ProviderID] = newProviderCompat(provider)
-	
+
 	if server.catalog != nil {
 		server.catalog.ProviderCatalog = append(server.catalog.ProviderCatalog, map[string]any{
 			"providerId": provider.ProviderID,
@@ -37,6 +37,13 @@ func TestCapabilitiesExposeBuiltInProductionProviderCatalog(t *testing.T) {
 	}
 
 	capabilities := response
+	if capabilities["multiAgent"] != true {
+		t.Fatalf("expected multiAgent capability to be enabled, got %#v", capabilities["multiAgent"])
+	}
+	nestedCapabilities := shared.AsMap(capabilities["capabilities"])
+	if nestedCapabilities["multi_agent"] != true {
+		t.Fatalf("expected nested multi_agent capability to be enabled, got %#v", nestedCapabilities["multi_agent"])
+	}
 	targets, ok := capabilities["availableExecutionTargets"].([]any)
 	if !ok {
 		// Try fallback decoding if it was serialized
@@ -45,7 +52,7 @@ func TestCapabilitiesExposeBuiltInProductionProviderCatalog(t *testing.T) {
 			t.Fatalf("expected availableExecutionTargets array, got %T", capabilities["availableExecutionTargets"])
 		}
 	}
-	
+
 	foundAgent := false
 	for _, target := range targets {
 		if target == "agent" {

@@ -321,6 +321,54 @@ func extractExternalACPAssistantTextValue(value any) string {
 	return normalizeExternalACPAssistantText(extractExternalACPTextValue(value))
 }
 
+func structuredExternalACPEvent(notification map[string]any) map[string]any {
+	if notification == nil {
+		return nil
+	}
+	method := strings.TrimSpace(stringValue(notification["method"]))
+	payload := asMap(notification["params"])
+	if len(payload) == 0 {
+		payload = notification
+	}
+	update := asMap(payload["update"])
+	if len(update) == 0 {
+		update = payload
+	}
+	item := asMap(payload["item"])
+	source := update
+	if len(item) > 0 {
+		source = item
+	}
+	eventType := "status"
+	if strings.Contains(method, "thinking") || strings.TrimSpace(stringValue(source["thinking"])) != "" {
+		eventType = "thinking"
+	} else if strings.Contains(method, "tool") || len(asMap(source["toolCall"])) > 0 || len(asMap(source["tool_call"])) > 0 {
+		eventType = "tool_call"
+	} else if text := extractExternalACPAssistantTextValue(source); text != "" {
+		eventType = "text"
+		_ = text
+	}
+	result := map[string]any{
+		"type":   eventType,
+		"method": method,
+	}
+	if text := extractExternalACPAssistantTextValue(source); text != "" {
+		result["text"] = text
+	}
+	if status := strings.TrimSpace(firstNonEmptyString(source, "status", "sessionUpdate", "session_update")); status != "" {
+		result["status"] = status
+	}
+	if tool := asMap(source["toolCall"]); len(tool) > 0 {
+		result["toolCall"] = tool
+	} else if tool := asMap(source["tool_call"]); len(tool) > 0 {
+		result["toolCall"] = tool
+	}
+	if result["text"] == nil && result["status"] == nil && result["toolCall"] == nil && eventType == "status" {
+		return nil
+	}
+	return result
+}
+
 func normalizeExternalACPAssistantText(text string) string {
 	normalized := strings.TrimSpace(text)
 	if normalized == "" {

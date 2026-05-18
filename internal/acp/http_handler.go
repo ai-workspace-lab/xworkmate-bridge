@@ -455,7 +455,7 @@ func forceOpenClawGatewayRequest(request shared.RPCRequest) (shared.RPCRequest, 
 	if params == nil {
 		params = map[string]any{}
 	}
-	if parseBool(params["multiAgent"]) {
+	if parseBool(params["multiAgent"]) || strings.EqualFold(strings.TrimSpace(shared.StringArg(params, "mode", "")), "multi-agent") {
 		return request, &shared.RPCError{Code: -32602, Message: "OPENCLAW_GATEWAY_CONFLICT: multiAgent is not supported on /gateway/openclaw"}
 	}
 	if provider := strings.TrimSpace(shared.StringArg(params, "provider", "")); provider != "" {
@@ -474,6 +474,9 @@ func forceOpenClawGatewayRequest(request shared.RPCRequest) (shared.RPCRequest, 
 	routing := shared.AsMap(params["routing"])
 	if routing == nil {
 		routing = map[string]any{}
+	}
+	if strings.TrimSpace(shared.StringArg(routing, "orchestrationMode", "")) != "" {
+		return request, &shared.RPCError{Code: -32602, Message: "OPENCLAW_GATEWAY_CONFLICT: multiAgent is not supported on /gateway/openclaw"}
 	}
 	if provider := strings.TrimSpace(shared.StringArg(routing, "explicitProviderId", "")); provider != "" {
 		return request, &shared.RPCError{Code: -32602, Message: "OPENCLAW_GATEWAY_CONFLICT: explicitProviderId must not be set on /gateway/openclaw"}
