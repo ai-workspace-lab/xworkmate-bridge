@@ -22,8 +22,9 @@ type SessionOrchestrator struct {
 }
 
 const (
-	openClawAgentWaitTimeout  = 9 * time.Minute
-	openClawNoDisplayableText = "OpenClaw completed without displayable output."
+	openClawAgentWaitTimeout             = 9 * time.Minute
+	openClawNoDisplayableText            = "OpenClaw completed without displayable output."
+	openClawArtifactExportAttemptedField = "_openClawArtifactExportAttempted"
 )
 
 func NewSessionOrchestrator(server *Server) *SessionOrchestrator {
@@ -240,13 +241,22 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 		}
 	}
 	sessionKey := openClawSessionKey(params, turnID)
-	artifactRunID := turnID
-	logOpenClawArtifactSync(gatewayProvider, sessionKey, artifactRunID, "intent", false, false, false)
 	chatParams, rpcErr := openClawChatSendParams(params, turnID)
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
 	artifactSinceUnixMs := time.Now().Add(-1 * time.Second).UnixMilli()
+	preparedArtifact, prepareErr := o.openClawArtifactPrepare(
+		gatewayProvider,
+		sessionKey,
+		turnID,
+		notifyWithCollection,
+	)
+	if prepareErr != nil {
+		return nil, prepareErr
+	}
+	applyOpenClawPreparedArtifactToChatParams(chatParams, preparedArtifact)
+	logOpenClawArtifactSync(gatewayProvider, sessionKey, turnID, "prepare", true, false, false)
 	sendStarted := time.Now()
 	sendResult := o.openClawGatewayRequestWithRetry(
 		gatewayProvider,
@@ -268,6 +278,18 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 	}
 	sendPayload := shared.AsMap(sendResult.Payload)
 	runID := strings.TrimSpace(shared.StringArg(sendPayload, "runId", turnID))
+	if runID != turnID {
+		preparedArtifact, prepareErr = o.openClawArtifactPrepare(
+			gatewayProvider,
+			sessionKey,
+			runID,
+			notifyWithCollection,
+		)
+		if prepareErr != nil {
+			return nil, prepareErr
+		}
+		logOpenClawArtifactSync(gatewayProvider, sessionKey, runID, "prepare", true, false, false)
+	}
 	waitStarted := time.Now()
 	waitResult := o.openClawGatewayRequestWithRetry(
 		gatewayProvider,
@@ -311,19 +333,20 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 	}
 	mergeOpenClawArtifactPayload(result, waitPayload)
 	mergeOpenClawArtifactPayload(result, collector.artifactPayload())
-	preparedArtifact := openClawPreparedArtifactScopeFromPayload(result)
+	applyOpenClawPreparedArtifactToResult(result, preparedArtifact)
 	artifactPayload := o.openClawArtifactExport(
 		gatewayProvider,
 		chatParams,
-		artifactRunID,
+		runID,
 		artifactSinceUnixMs,
 		preparedArtifact,
 		notifyWithCollection,
 	)
 	mergeOpenClawArtifactPayload(result, artifactPayload)
+	result[openClawArtifactExportAttemptedField] = true
 	exportedCount := openClawArtifactPayloadCount(result)
-	logOpenClawArtifactSync(gatewayProvider, sessionKey, artifactRunID, "export", preparedArtifact != nil, exportedCount > 0, exportedCount == 0)
-	o.server.decorateOpenClawArtifactDownloadURLs(result, shared.StringArg(chatParams, "sessionKey", ""), artifactRunID)
+	logOpenClawArtifactSync(gatewayProvider, sessionKey, runID, "export", preparedArtifact != nil, exportedCount > 0, exportedCount == 0)
+	o.server.decorateOpenClawArtifactDownloadURLs(result, shared.StringArg(chatParams, "sessionKey", ""), runID)
 	stripOpenClawArtifactInlineContent(result)
 	guardOpenClawNoDisplayableResult(result, noDisplayableOutput)
 	if notify != nil {
@@ -430,9 +453,12 @@ func isSessionTaskMethod(method string) bool {
 }
 
 type openClawPreparedArtifactScope struct {
-	ArtifactScope     string
-	ArtifactDirectory string
-	ScopeKind         string
+	RemoteWorkingDirectory    string
+	RemoteWorkspaceRefKind    string
+	ArtifactScope             string
+	ArtifactDirectory         string
+	RelativeArtifactDirectory string
+	ScopeKind                 string
 }
 
 func openClawPreparedArtifactScopeFromPayload(payload map[string]any) *openClawPreparedArtifactScope {
@@ -440,9 +466,12 @@ func openClawPreparedArtifactScopeFromPayload(payload map[string]any) *openClawP
 		return nil
 	}
 	prepared := &openClawPreparedArtifactScope{
-		ArtifactScope:     strings.TrimSpace(shared.StringArg(payload, "artifactScope", "")),
-		ArtifactDirectory: strings.TrimSpace(shared.StringArg(payload, "artifactDirectory", "")),
-		ScopeKind:         strings.TrimSpace(shared.StringArg(payload, "scopeKind", "")),
+		RemoteWorkingDirectory:    strings.TrimSpace(shared.StringArg(payload, "remoteWorkingDirectory", "")),
+		RemoteWorkspaceRefKind:    strings.TrimSpace(shared.StringArg(payload, "remoteWorkspaceRefKind", "")),
+		ArtifactScope:             strings.TrimSpace(shared.StringArg(payload, "artifactScope", "")),
+		ArtifactDirectory:         strings.TrimSpace(shared.StringArg(payload, "artifactDirectory", "")),
+		RelativeArtifactDirectory: strings.TrimSpace(shared.StringArg(payload, "relativeArtifactDirectory", "")),
+		ScopeKind:                 strings.TrimSpace(shared.StringArg(payload, "scopeKind", "")),
 	}
 	if prepared.ArtifactScope == "" || prepared.ArtifactDirectory == "" {
 		return nil
@@ -451,6 +480,83 @@ func openClawPreparedArtifactScopeFromPayload(payload map[string]any) *openClawP
 		prepared.ScopeKind = "task"
 	}
 	return prepared
+}
+
+func (o *SessionOrchestrator) openClawArtifactPrepare(
+	gatewayProvider string,
+	sessionKey string,
+	runID string,
+	notify func(map[string]any),
+) (*openClawPreparedArtifactScope, *shared.RPCError) {
+	sessionKey = strings.TrimSpace(sessionKey)
+	runID = strings.TrimSpace(runID)
+	if sessionKey == "" || runID == "" {
+		return nil, &shared.RPCError{Code: -32602, Message: "openclaw artifact prepare requires sessionKey and runId"}
+	}
+	prepareResult := o.openClawGatewayRequestWithRetry(
+		gatewayProvider,
+		"xworkmate.artifacts.prepare",
+		map[string]any{
+			"sessionKey": sessionKey,
+			"runId":      runID,
+		},
+		30*time.Second,
+		notify,
+	)
+	if !prepareResult.OK {
+		return nil, gatewayRPCError(prepareResult.Error, "openclaw artifact prepare failed")
+	}
+	prepared := openClawPreparedArtifactScopeFromPayload(shared.AsMap(prepareResult.Payload))
+	if prepared == nil {
+		return nil, &shared.RPCError{Code: -32002, Message: "openclaw artifact prepare returned no scoped artifact directory"}
+	}
+	return prepared, nil
+}
+
+func applyOpenClawPreparedArtifactToChatParams(chatParams map[string]any, prepared *openClawPreparedArtifactScope) {
+	if chatParams == nil || prepared == nil {
+		return
+	}
+	chatParams["artifactScope"] = prepared.ArtifactScope
+	chatParams["artifactDirectory"] = prepared.ArtifactDirectory
+	chatParams["relativeArtifactDirectory"] = prepared.RelativeArtifactDirectory
+	chatParams["artifactScopeKind"] = prepared.ScopeKind
+	if prepared.RemoteWorkingDirectory != "" {
+		chatParams["remoteWorkingDirectory"] = prepared.RemoteWorkingDirectory
+	}
+	if prepared.RemoteWorkspaceRefKind != "" {
+		chatParams["remoteWorkspaceRefKind"] = prepared.RemoteWorkspaceRefKind
+	}
+	chatParams["xworkmateArtifacts"] = map[string]any{
+		"artifactScope":             prepared.ArtifactScope,
+		"artifactDirectory":         prepared.ArtifactDirectory,
+		"relativeArtifactDirectory": prepared.RelativeArtifactDirectory,
+		"scopeKind":                 prepared.ScopeKind,
+	}
+}
+
+func applyOpenClawPreparedArtifactToResult(result map[string]any, prepared *openClawPreparedArtifactScope) {
+	if result == nil || prepared == nil {
+		return
+	}
+	if strings.TrimSpace(shared.StringArg(result, "remoteWorkingDirectory", "")) == "" && prepared.RemoteWorkingDirectory != "" {
+		result["remoteWorkingDirectory"] = prepared.RemoteWorkingDirectory
+	}
+	if strings.TrimSpace(shared.StringArg(result, "remoteWorkspaceRefKind", "")) == "" && prepared.RemoteWorkspaceRefKind != "" {
+		result["remoteWorkspaceRefKind"] = prepared.RemoteWorkspaceRefKind
+	}
+	if strings.TrimSpace(shared.StringArg(result, "artifactScope", "")) == "" {
+		result["artifactScope"] = prepared.ArtifactScope
+	}
+	if strings.TrimSpace(shared.StringArg(result, "artifactDirectory", "")) == "" {
+		result["artifactDirectory"] = prepared.ArtifactDirectory
+	}
+	if strings.TrimSpace(shared.StringArg(result, "relativeArtifactDirectory", "")) == "" && prepared.RelativeArtifactDirectory != "" {
+		result["relativeArtifactDirectory"] = prepared.RelativeArtifactDirectory
+	}
+	if strings.TrimSpace(shared.StringArg(result, "scopeKind", "")) == "" {
+		result["scopeKind"] = prepared.ScopeKind
+	}
 }
 
 func openClawChatSendParams(
@@ -952,6 +1058,7 @@ func (o *SessionOrchestrator) normalizeResult(sess *session, result map[string]a
 	if openClawArtifactResponse(result, routing, params) {
 		o.completeOpenClawScopedArtifactExport(result, params, openClawGatewayProviderForArtifacts(result, routing, params), turnID)
 	}
+	delete(result, openClawArtifactExportAttemptedField)
 
 	successValue, hasSuccess := result["success"]
 	success := !hasSuccess || parseBool(successValue)
@@ -1052,6 +1159,9 @@ func (o *SessionOrchestrator) completeOpenClawScopedArtifactExport(
 	}
 	remoteWorkingDirectory := strings.TrimSpace(shared.StringArg(result, "remoteWorkingDirectory", ""))
 	if len(extractArtifactPayloads(result, remoteWorkingDirectory)) > 0 {
+		return
+	}
+	if parseBool(result[openClawArtifactExportAttemptedField]) {
 		return
 	}
 	preparedArtifact := openClawPreparedArtifactScopeFromPayload(result)

@@ -561,8 +561,8 @@ func TestHTTPHandlerGatewayOpenClawFiltersRawGatewayEventsAndKeepsFinalResult(t 
 	if !sawFinal {
 		t.Fatalf("expected final result envelope, got %q", bodyText)
 	}
-	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "chat.send", "agent.wait", "xworkmate.artifacts.export"}) {
-		t.Fatalf("expected artifact workflow methods to stay unchanged, got %#v", got)
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "agent.wait", "xworkmate.artifacts.export"}) {
+		t.Fatalf("expected artifact workflow methods to prepare before chat.send, got %#v", got)
 	}
 }
 
