@@ -51,10 +51,7 @@ func isMultiAgentSessionRequest(params map[string]any) bool {
 		return true
 	}
 	routing := shared.AsMap(params["routing"])
-	if strings.TrimSpace(shared.StringArg(routing, "orchestrationMode", "")) != "" {
-		return true
-	}
-	return false
+	return strings.TrimSpace(shared.StringArg(routing, "orchestrationMode", "")) != ""
 }
 
 func (o *SessionOrchestrator) ProcessMultiAgent(ctx context.Context, method string, params map[string]any, notify func(map[string]any)) (map[string]any, *shared.RPCError) {
