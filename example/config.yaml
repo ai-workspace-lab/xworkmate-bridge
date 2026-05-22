@@ -13,7 +13,7 @@ upstream:
   opencode_url: "ws://127.0.0.1:38992"
 
 openclaw_gateway:
-  max_active: 2
+  max_active: 1
   max_queued: 20
   queue_timeout: "10m"
 

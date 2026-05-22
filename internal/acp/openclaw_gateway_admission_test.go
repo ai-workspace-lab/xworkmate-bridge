@@ -5,6 +5,20 @@ import (
 	"time"
 )
 
+func TestOpenClawGatewayAdmissionGateDefaultsToSingleActiveTask(t *testing.T) {
+	gate := newOpenClawGatewayAdmissionGate(&BridgeConfig{})
+
+	if gate.maxActive != 1 {
+		t.Fatalf("expected single active OpenClaw task by default, got %d", gate.maxActive)
+	}
+	if gate.maxQueued != defaultOpenClawGatewayMaxQueued {
+		t.Fatalf("expected default max queued, got %d", gate.maxQueued)
+	}
+	if gate.timeout != defaultOpenClawGatewayQueueWait {
+		t.Fatalf("expected default queue timeout, got %s", gate.timeout)
+	}
+}
+
 func TestOpenClawGatewayAdmissionGateUsesConfigValues(t *testing.T) {
 	maxActive := 3
 	maxQueued := 7
