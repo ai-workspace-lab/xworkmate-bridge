@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	defaultOpenClawGatewayMaxActive   = 1
+	defaultOpenClawGatewayMaxActive   = 5
 	defaultOpenClawGatewayMaxQueued   = 20
 	defaultOpenClawGatewayQueueWait   = 10 * time.Minute
 	openClawGatewayQueueStatusTick    = 20 * time.Second

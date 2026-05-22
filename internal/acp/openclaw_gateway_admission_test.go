@@ -5,11 +5,11 @@ import (
 	"time"
 )
 
-func TestOpenClawGatewayAdmissionGateDefaultsToSingleActiveTask(t *testing.T) {
+func TestOpenClawGatewayAdmissionGateDefaultsToConfiguredActiveTaskBudget(t *testing.T) {
 	gate := newOpenClawGatewayAdmissionGate(&BridgeConfig{})
 
-	if gate.maxActive != 1 {
-		t.Fatalf("expected single active OpenClaw task by default, got %d", gate.maxActive)
+	if gate.maxActive != 5 {
+		t.Fatalf("expected default active OpenClaw task budget, got %d", gate.maxActive)
 	}
 	if gate.maxQueued != defaultOpenClawGatewayMaxQueued {
 		t.Fatalf("expected default max queued, got %d", gate.maxQueued)
