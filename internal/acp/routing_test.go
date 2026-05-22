@@ -1130,6 +1130,64 @@ func TestExecuteSessionTaskGatewaySurfacesOpenClawAgentWaitError(t *testing.T) {
 	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "agent.wait"}) {
 		t.Fatalf("expected connect, artifact prepare, chat.send, then agent.wait, got %#v", got)
 	}
+	snapshot := server.handleSessionGet(map[string]any{
+		"sessionId": "session-openclaw-wait-fail",
+		"threadId":  "thread-openclaw-wait-fail",
+	})
+	if got := snapshot["status"]; got != string(TaskStateFailed) {
+		t.Fatalf("expected failed session snapshot, got %#v from %#v", got, snapshot)
+	}
+	result := shared.AsMap(snapshot["result"])
+	if got := result["success"]; got != false {
+		t.Fatalf("expected failed result snapshot, got %#v", result)
+	}
+	if got := shared.StringArg(result, "code", ""); got != "OPENCLAW_WAIT_FAILED" {
+		t.Fatalf("expected OpenClaw wait code in snapshot, got %#v", result)
+	}
+	if got := shared.StringArg(result, "message", ""); !strings.Contains(got, "openclaw wait failed") {
+		t.Fatalf("expected OpenClaw wait message in snapshot, got %#v", result)
+	}
+}
+
+func TestSessionCloseReturnsAcceptedAndClosedState(t *testing.T) {
+	server := NewServer()
+	sessionID := "session-close-contract"
+	threadID := "thread-close-contract"
+	_ = server.getOrCreateSession(sessionID, threadID)
+
+	response, rpcErr := server.handleRequest(shared.RPCRequest{
+		Method: "session.close",
+		Params: map[string]any{
+			"sessionId": sessionID,
+			"threadId":  threadID,
+		},
+	}, nil)
+	if rpcErr != nil {
+		t.Fatalf("expected close response, got rpc error: %#v", rpcErr)
+	}
+	if got := response["accepted"]; got != true {
+		t.Fatalf("expected accepted close, got %#v", response)
+	}
+	if got := response["closed"]; got != true {
+		t.Fatalf("expected closed=true for existing session, got %#v", response)
+	}
+
+	response, rpcErr = server.handleRequest(shared.RPCRequest{
+		Method: "session.close",
+		Params: map[string]any{
+			"sessionId": sessionID,
+			"threadId":  threadID,
+		},
+	}, nil)
+	if rpcErr != nil {
+		t.Fatalf("expected idempotent close response, got rpc error: %#v", rpcErr)
+	}
+	if got := response["accepted"]; got != true {
+		t.Fatalf("expected accepted idempotent close, got %#v", response)
+	}
+	if got := response["closed"]; got != false {
+		t.Fatalf("expected closed=false for missing session, got %#v", response)
+	}
 }
 
 func TestExecuteSessionTaskGatewayExportsOpenClawArtifacts(t *testing.T) {

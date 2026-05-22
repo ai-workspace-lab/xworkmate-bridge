@@ -29,8 +29,8 @@ func (s *Server) handleRequest(request shared.RPCRequest, notify func(map[string
 
 	case "session.close":
 		sessionID := shared.StringArg(request.Params, "sessionId", "")
-		s.closeSession(ctx, sessionID)
-		return map[string]any{"accepted": true}, nil
+		closed := s.closeSession(ctx, sessionID)
+		return map[string]any{"accepted": true, "closed": closed}, nil
 
 	case "xworkmate.routing.resolve":
 		res, err := s.routingEngine.Resolve(ctx, request.Params)
@@ -145,7 +145,7 @@ func (s *Server) cancelSession(ctx context.Context, sessionID string) {
 	}
 }
 
-func (s *Server) closeSession(ctx context.Context, sessionID string) {
+func (s *Server) closeSession(ctx context.Context, sessionID string) bool {
 	s.mu.Lock()
 	sess, ok := s.sessions[sessionID]
 	delete(s.sessions, sessionID)
@@ -157,4 +157,5 @@ func (s *Server) closeSession(ctx context.Context, sessionID string) {
 		sess.mu.Unlock()
 		_ = sess.compat.CloseSession(ctx, sessionID)
 	}
+	return ok
 }

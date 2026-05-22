@@ -89,6 +89,11 @@ func (o *SessionOrchestrator) Process(ctx context.Context, method string, params
 	if res.TargetID == "gateway" {
 		result, rpcErr := o.runGateway(ctx, method, params, res, turnID, notify)
 		if rpcErr != nil {
+			failed := o.normalizeGatewayFailureResult(sess, rpcErr, res, turnID)
+			if (isOpenClawProvider(res.GatewayProviderID) || isOpenClawProvider(res.ProviderID)) &&
+				!openClawGatewayBusyError(rpcErr) {
+				o.server.emitSessionUpdate(notify, turnID, openClawGatewayCompletedResultUpdate(sessionID, threadID, turnID, failed))
+			}
 			return nil, rpcErr
 		}
 		return o.normalizeResult(sess, result, res, turnID, params), nil
@@ -128,6 +133,68 @@ func (o *SessionOrchestrator) Process(ctx context.Context, method string, params
 	}
 
 	return o.normalizeResult(sess, result, res, turnID, params), nil
+}
+
+func openClawGatewayBusyError(rpcErr *shared.RPCError) bool {
+	if rpcErr == nil {
+		return false
+	}
+	data := shared.AsMap(rpcErr.Data)
+	return strings.TrimSpace(shared.StringArg(data, "code", "")) == "OPENCLAW_GATEWAY_BUSY"
+}
+
+func (o *SessionOrchestrator) normalizeGatewayFailureResult(
+	sess *session,
+	rpcErr *shared.RPCError,
+	routing RoutingResult,
+	turnID string,
+) map[string]any {
+	message := "gateway execution failed"
+	code := "GATEWAY_EXECUTION_FAILED"
+	if rpcErr != nil {
+		if strings.TrimSpace(rpcErr.Message) != "" {
+			message = strings.TrimSpace(rpcErr.Message)
+		}
+		data := shared.AsMap(rpcErr.Data)
+		if dataCode := strings.TrimSpace(shared.StringArg(data, "code", "")); dataCode != "" {
+			code = dataCode
+		}
+	}
+	result := map[string]any{
+		"success":                   false,
+		"status":                    "failed",
+		"code":                      code,
+		"error":                     message,
+		"message":                   message,
+		"summary":                   message,
+		"output":                    message,
+		"turnId":                    turnID,
+		"mode":                      router.ExecutionTargetGatewayChat,
+		"resolvedExecutionTarget":   routing.TargetID,
+		"resolvedProviderId":        routing.ProviderID,
+		"resolvedGatewayProviderId": routing.GatewayProviderID,
+		"resolvedModel":             routing.Model,
+		"resolvedSkills":            append([]string(nil), routing.Skills...),
+	}
+	artifactRecord := buildArtifactRecord(sess, result, message)
+	if artifactRecord.RemoteWorkingDirectory != "" {
+		result["remoteWorkingDirectory"] = artifactRecord.RemoteWorkingDirectory
+	}
+	if artifactRecord.RemoteWorkspaceRefKind != "" {
+		result["remoteWorkspaceRefKind"] = artifactRecord.RemoteWorkspaceRefKind
+	}
+	if artifactRecord.ResultSummary != "" && strings.TrimSpace(shared.StringArg(result, "resultSummary", "")) == "" {
+		result["resultSummary"] = artifactRecord.ResultSummary
+	}
+
+	sess.mu.Lock()
+	sess.task.State = TaskStateFailed
+	sess.task.UpdatedAt = time.Now()
+	sess.lastResult = cloneMap(result)
+	sess.artifacts = artifactRecord
+	sess.mu.Unlock()
+
+	return result
 }
 
 func (o *SessionOrchestrator) runGateway(
@@ -802,7 +869,14 @@ func gatewayRPCError(errorPayload map[string]any, fallback string) *shared.RPCEr
 	if message == "" {
 		message = fallback
 	}
-	return &shared.RPCError{Code: -32002, Message: message}
+	data := map[string]any{}
+	if code := strings.TrimSpace(shared.StringArg(errorPayload, "code", "")); code != "" {
+		data["code"] = code
+	}
+	if len(data) == 0 {
+		return &shared.RPCError{Code: -32002, Message: message}
+	}
+	return &shared.RPCError{Code: -32002, Message: message, Data: data}
 }
 
 func sessionContinuationUnavailableRPCError(err sessionContinuationUnavailableError) *shared.RPCError {
