@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -538,6 +539,72 @@ func TestExecuteSessionTaskGatewayAutoConnectsLocalOpenClaw(t *testing.T) {
 	}
 	if got := strings.TrimSpace(shared.StringArg(client, "modelIdentifier", "")); got == "" {
 		t.Fatalf("expected non-empty modelIdentifier, got %#v", client)
+	}
+}
+
+func TestGatewayRequestForwardsOpenClawSkillsStatus(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	connected, rpcErr := server.handleRequest(shared.RPCRequest{
+		Method: "xworkmate.gateway.connect",
+		Params: map[string]any{
+			"runtimeId":         "app-runtime",
+			"gatewayProviderId": "openclaw",
+		},
+	}, nil)
+	if rpcErr != nil {
+		t.Fatalf("expected gateway connect, got rpc error: %#v", rpcErr)
+	}
+	if connected["ok"] != true {
+		t.Fatalf("expected gateway connect ok, got %#v", connected)
+	}
+
+	response, rpcErr := server.handleRequest(shared.RPCRequest{
+		Method: "xworkmate.gateway.request",
+		Params: map[string]any{
+			"runtimeId": "app-runtime",
+			"method":    "skills.status",
+			"params": map[string]any{
+				"agentId": "main",
+			},
+			"timeoutMs": float64(15000),
+		},
+	}, nil)
+	if rpcErr != nil {
+		t.Fatalf("expected skills.status gateway response, got rpc error: %#v", rpcErr)
+	}
+	if response["ok"] != true {
+		t.Fatalf("expected skills.status ok, got %#v", response)
+	}
+	payload := shared.AsMap(response["payload"])
+	if got := shared.StringArg(payload, "workspaceDir", ""); got != "/remote/openclaw/workspace" {
+		t.Fatalf("expected workspaceDir from OpenClaw payload, got %#v", payload)
+	}
+	if got := shared.StringArg(payload, "managedSkillsDir", ""); got != "/remote/openclaw/skills" {
+		t.Fatalf("expected managedSkillsDir from OpenClaw payload, got %#v", payload)
+	}
+	skills := shared.ListArg(payload, "skills")
+	if len(skills) != 2 {
+		t.Fatalf("expected two OpenClaw skill records, got %#v", payload["skills"])
+	}
+	first := shared.AsMap(skills[0])
+	if got := shared.StringArg(first, "skillKey", ""); got != "it-infra-continuous-png" {
+		t.Fatalf("expected bridge to preserve skillKey, got %#v", first)
+	}
+	if first["eligible"] != true {
+		t.Fatalf("expected eligible OpenClaw skill, got %#v", first)
+	}
+	second := shared.AsMap(skills[1])
+	if second["blockedByAgentFilter"] != true || second["disabled"] != true {
+		t.Fatalf("expected disabled/blocked skill metadata to be preserved, got %#v", second)
+	}
+	if !slices.Contains(gateway.Methods(), "skills.status") {
+		t.Fatalf("expected fake OpenClaw gateway to receive skills.status, got %#v", gateway.Methods())
 	}
 }
 
@@ -2490,6 +2557,45 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 								"scopeKind":     "task",
 								"encoding":      "base64",
 								"content":       base64.StdEncoding.EncodeToString(content),
+							},
+						},
+					},
+				})
+			case "skills.status":
+				_ = conn.WriteJSON(map[string]any{
+					"type": "res",
+					"id":   id,
+					"ok":   true,
+					"payload": map[string]any{
+						"workspaceDir":     "/remote/openclaw/workspace",
+						"managedSkillsDir": "/remote/openclaw/skills",
+						"skills": []any{
+							map[string]any{
+								"name":        "it-infra-continuous-png",
+								"description": "Generate infrastructure PNGs.",
+								"source":      "openclaw-workspace",
+								"skillKey":    "it-infra-continuous-png",
+								"eligible":    true,
+								"disabled":    false,
+								"missing": map[string]any{
+									"bins":   []any{},
+									"env":    []any{},
+									"config": []any{},
+								},
+							},
+							map[string]any{
+								"name":                 "legacy-disabled",
+								"description":          "Disabled test skill.",
+								"source":               "agents-skills-personal",
+								"skillKey":             "legacy-disabled",
+								"eligible":             false,
+								"disabled":             true,
+								"blockedByAgentFilter": true,
+								"missing": map[string]any{
+									"bins":   []any{"legacy-cli"},
+									"env":    []any{},
+									"config": []any{},
+								},
 							},
 						},
 					},
