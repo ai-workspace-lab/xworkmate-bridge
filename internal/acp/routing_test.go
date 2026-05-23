@@ -521,8 +521,8 @@ func TestExecuteSessionTaskGatewayAutoConnectsLocalOpenClaw(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected numeric OpenClaw agent.wait timeoutMs, got %#v", waitParams)
 	}
-	if got := int64(timeoutMs); got != openClawAgentWaitTimeout.Milliseconds() {
-		t.Fatalf("expected OpenClaw agent.wait timeoutMs %d, got %#v", openClawAgentWaitTimeout.Milliseconds(), waitParams)
+	if got := int64(timeoutMs); got != openClawAgentWaitDefaultTimeout.Milliseconds() {
+		t.Fatalf("expected default OpenClaw agent.wait timeoutMs %d, got %#v", openClawAgentWaitDefaultTimeout.Milliseconds(), waitParams)
 	}
 	if got := int64(timeoutMs); got <= 120000 {
 		t.Fatalf("expected OpenClaw agent.wait timeout to exceed the previous 120s cap, got %#v", waitParams)
@@ -539,6 +539,33 @@ func TestExecuteSessionTaskGatewayAutoConnectsLocalOpenClaw(t *testing.T) {
 	}
 	if got := strings.TrimSpace(shared.StringArg(client, "modelIdentifier", "")); got == "" {
 		t.Fatalf("expected non-empty modelIdentifier, got %#v", client)
+	}
+}
+
+func TestOpenClawAgentWaitTimeoutAdaptsToVideoWork(t *testing.T) {
+	base := openClawAgentWaitTimeout(
+		map[string]any{"taskPrompt": "say pong"},
+		map[string]any{"message": "say pong"},
+	)
+	video := openClawAgentWaitTimeout(
+		map[string]any{
+			"taskPrompt": "测试制作 云原生ServiceMesh网络 主题的 科普视频，使用 it-infra-evolution-video skill 渲染 mp4",
+			"attachments": []any{
+				map[string]any{"path": "assets/images/001.png"},
+				map[string]any{"path": "assets/images/002.png"},
+			},
+		},
+		map[string]any{"message": "测试制作 云原生ServiceMesh网络 主题的 科普视频，使用 it-infra-evolution-video skill 渲染 mp4"},
+	)
+
+	if base != openClawAgentWaitDefaultTimeout {
+		t.Fatalf("expected simple task to use default timeout, got %s", base)
+	}
+	if video <= base {
+		t.Fatalf("expected video task timeout %s to exceed simple task timeout %s", video, base)
+	}
+	if video > openClawAgentWaitMaxTimeout {
+		t.Fatalf("expected video task timeout %s to stay within max %s", video, openClawAgentWaitMaxTimeout)
 	}
 }
 

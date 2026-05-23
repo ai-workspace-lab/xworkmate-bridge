@@ -22,7 +22,9 @@ type SessionOrchestrator struct {
 }
 
 const (
-	openClawAgentWaitTimeout             = 9 * time.Minute
+	openClawAgentWaitDefaultTimeout      = 6 * time.Minute
+	openClawAgentWaitMaxTimeout          = 18 * time.Minute
+	openClawAgentWaitHTTPMargin          = time.Minute
 	openClawNoDisplayableText            = "OpenClaw completed without displayable output."
 	openClawArtifactExportAttemptedField = "_openClawArtifactExportAttempted"
 )
@@ -360,15 +362,16 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 		}
 		logOpenClawArtifactSync(gatewayProvider, sessionKey, runID, "prepare", true, false, false)
 	}
+	waitTimeout := openClawAgentWaitTimeout(params, chatParams)
 	waitStarted := time.Now()
 	waitResult := o.openClawGatewayRequestWithRetry(
 		gatewayProvider,
 		"agent.wait",
 		map[string]any{
 			"runId":     runID,
-			"timeoutMs": openClawAgentWaitTimeout.Milliseconds(),
+			"timeoutMs": waitTimeout.Milliseconds(),
 		},
-		openClawAgentWaitTimeout,
+		waitTimeout,
 		notifyWithCollection,
 	)
 	logOpenClawGatewayTiming(
@@ -628,6 +631,48 @@ func openClawChatSendParams(
 		chatParams["thinking"] = thinking
 	}
 	return chatParams, nil
+}
+
+func openClawAgentWaitTimeout(params map[string]any, chatParams map[string]any) time.Duration {
+	message := strings.TrimSpace(shared.StringArg(chatParams, "message", ""))
+	if message == "" {
+		message = openClawCurrentTurnMessage(params)
+	}
+	timeout := openClawAgentWaitDefaultTimeout
+
+	lowerMessage := strings.ToLower(message)
+	for _, keyword := range []string{
+		"video",
+		"mp4",
+		"hyperframes",
+		"remotion",
+		"ffmpeg",
+		"render",
+		"视频",
+		"渲染",
+		"口播",
+		"字幕",
+	} {
+		if strings.Contains(lowerMessage, keyword) {
+			timeout += 8 * time.Minute
+			break
+		}
+	}
+	if strings.Contains(lowerMessage, "it-infra-evolution-video") ||
+		strings.Contains(lowerMessage, "ai-tech-news-video") ||
+		strings.Contains(lowerMessage, "product-intro-video") {
+		timeout += 4 * time.Minute
+	}
+	if len([]rune(message)) > 1200 {
+		timeout += 2 * time.Minute
+	}
+	if attachments := shared.ListArg(params, "attachments"); len(attachments) > 0 {
+		timeout += time.Duration(min(len(attachments), 6)) * time.Minute
+	}
+	if timeout > openClawAgentWaitMaxTimeout {
+		return openClawAgentWaitMaxTimeout
+	}
+	return timeout
 }
 
 func openClawCurrentTurnMessage(params map[string]any) string {

@@ -36,7 +36,7 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 		Addr:         strings.TrimSpace(addr),
 		Handler:      handler,
 		ReadTimeout:  30 * time.Second,
-		WriteTimeout: openClawAgentWaitTimeout + time.Minute,
+		WriteTimeout: openClawAgentWaitMaxTimeout + openClawAgentWaitHTTPMargin,
 		IdleTimeout:  2 * time.Minute,
 	}
 }

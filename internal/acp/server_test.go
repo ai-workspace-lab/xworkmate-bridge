@@ -15,14 +15,14 @@ func TestHTTPServerWriteTimeoutCoversOpenClawAgentWait(t *testing.T) {
 	if server.IdleTimeout != 2*time.Minute {
 		t.Fatalf("expected fixed idle timeout, got %s", server.IdleTimeout)
 	}
-	if server.WriteTimeout <= openClawAgentWaitTimeout {
+	if server.WriteTimeout <= openClawAgentWaitMaxTimeout {
 		t.Fatalf(
-			"expected write timeout %s to exceed OpenClaw agent.wait timeout %s",
+			"expected write timeout %s to exceed OpenClaw max agent.wait timeout %s",
 			server.WriteTimeout,
-			openClawAgentWaitTimeout,
+			openClawAgentWaitMaxTimeout,
 		)
 	}
-	if got, want := server.WriteTimeout-openClawAgentWaitTimeout, time.Minute; got != want {
+	if got, want := server.WriteTimeout-openClawAgentWaitMaxTimeout, openClawAgentWaitHTTPMargin; got != want {
 		t.Fatalf("expected one-minute write timeout margin, got %s", got)
 	}
 }
