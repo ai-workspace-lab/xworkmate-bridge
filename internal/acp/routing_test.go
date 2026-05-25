@@ -1979,6 +1979,97 @@ func TestOpenClawChatSendParamsPreservesRawPrompt(t *testing.T) {
 	}
 }
 
+func TestOpenClawChatSendParamsMaterializesInlineAttachments(t *testing.T) {
+	workspace := t.TempDir()
+	chatParams, rpcErr := openClawChatSendParams(map[string]any{
+		"threadId":         "thread-attachments",
+		"taskPrompt":       "inspect uploaded image",
+		"workingDirectory": workspace,
+		"attachments": []any{
+			map[string]any{"name": "empty-placeholder.txt", "path": ""},
+		},
+		"inlineAttachments": []any{
+			map[string]any{
+				"name":     "prompt.png",
+				"mimeType": "image/png",
+				"content":  base64.StdEncoding.EncodeToString([]byte("image-bytes")),
+			},
+		},
+	}, "turn-inline-attachments")
+	if rpcErr != nil {
+		t.Fatalf("expected chat params, got rpc error: %#v", rpcErr)
+	}
+
+	attachments := shared.ListArg(chatParams, "attachments")
+	if len(attachments) != 1 {
+		t.Fatalf("expected one materialized attachment, got %#v", attachments)
+	}
+	attachment := shared.AsMap(attachments[0])
+	if got := shared.StringArg(attachment, "name", ""); got != "prompt.png" {
+		t.Fatalf("expected materialized attachment name, got %#v", attachment)
+	}
+	path := shared.StringArg(attachment, "path", "")
+	if path == "" {
+		t.Fatalf("expected materialized attachment path, got %#v", attachment)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("expected materialized file to exist: %v", err)
+	}
+	if string(content) != "image-bytes" {
+		t.Fatalf("expected materialized content, got %q", string(content))
+	}
+	if got := shared.StringArg(chatParams, "message", ""); !strings.Contains(got, path) {
+		t.Fatalf("expected message to include materialized attachment path, got %q", got)
+	}
+	if _, ok := chatParams["inlineAttachments"]; ok {
+		t.Fatalf("chat.send params must not forward raw inlineAttachments, got %#v", chatParams)
+	}
+}
+
+func TestExecuteSessionTaskGatewayRejectsOversizedInlineAttachmentBeforeChatSend(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	oversized := make([]byte, openClawInlineAttachmentMaxFileBytes+1)
+	server := NewServer()
+	response, rpcErr := server.executeSessionTask(task{
+		req: shared.RPCRequest{
+			Method: "session.start",
+			Params: map[string]any{
+				"sessionId":        "session-oversized-attachment",
+				"threadId":         "thread-oversized-attachment",
+				"taskPrompt":       "inspect attachment",
+				"workingDirectory": t.TempDir(),
+				"routing": map[string]any{
+					"routingMode":                "explicit",
+					"explicitExecutionTarget":    "gateway",
+					"preferredGatewayProviderId": "openclaw",
+				},
+				"inlineAttachments": []any{
+					map[string]any{
+						"name":     "too-large.bin",
+						"mimeType": "application/octet-stream",
+						"content":  base64.StdEncoding.EncodeToString(oversized),
+					},
+				},
+			},
+		},
+	})
+	if rpcErr == nil {
+		t.Fatalf("expected oversized attachment rpc error, got response: %#v", response)
+	}
+	if !strings.Contains(rpcErr.Message, "OPENCLAW_ATTACHMENT_FILE_TOO_LARGE") {
+		t.Fatalf("expected attachment size error, got %#v", rpcErr)
+	}
+	if gateway.ChatSendCount() != 0 {
+		t.Fatalf("oversized attachment must not reach chat.send, got %d", gateway.ChatSendCount())
+	}
+}
+
 func TestExecuteSessionTaskGatewayCollectsOpenClawEventArtifacts(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	gateway.artifactMode = "unknown"

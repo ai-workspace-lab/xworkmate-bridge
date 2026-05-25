@@ -3,6 +3,7 @@ package acp
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"net/url"
@@ -20,6 +21,11 @@ import (
 type SessionOrchestrator struct {
 	server *Server
 }
+
+const (
+	openClawInlineAttachmentMaxFileBytes  = 10 * 1024 * 1024
+	openClawInlineAttachmentMaxTotalBytes = 25 * 1024 * 1024
+)
 
 const (
 	openClawAgentWaitDefaultTimeout      = 6 * time.Minute
@@ -624,13 +630,144 @@ func openClawChatSendParams(
 		"message":        message,
 		"idempotencyKey": turnID,
 	}
-	if attachments := shared.ListArg(params, "attachments"); len(attachments) > 0 {
+	attachments := openClawNonEmptyPathAttachments(params)
+	inlineAttachments, rpcErr := materializeOpenClawInlineAttachments(params, turnID)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	attachments = append(attachments, inlineAttachments...)
+	if len(attachments) > 0 {
 		chatParams["attachments"] = attachments
+		chatParams["message"] = shared.AugmentPromptWithAttachments(
+			message,
+			map[string]any{"attachments": attachments},
+		)
 	}
 	if thinking := strings.TrimSpace(shared.StringArg(params, "thinking", "")); thinking != "" {
 		chatParams["thinking"] = thinking
 	}
 	return chatParams, nil
+}
+
+func openClawNonEmptyPathAttachments(params map[string]any) []any {
+	rawAttachments := shared.ListArg(params, "attachments")
+	if len(rawAttachments) == 0 {
+		return nil
+	}
+	attachments := make([]any, 0, len(rawAttachments))
+	for _, raw := range rawAttachments {
+		attachment := shared.AsMap(raw)
+		if len(attachment) == 0 {
+			continue
+		}
+		if strings.TrimSpace(shared.StringArg(attachment, "path", "")) == "" {
+			continue
+		}
+		attachments = append(attachments, map[string]any{
+			"name":        strings.TrimSpace(shared.StringArg(attachment, "name", "attachment")),
+			"description": strings.TrimSpace(shared.StringArg(attachment, "description", "")),
+			"path":        strings.TrimSpace(shared.StringArg(attachment, "path", "")),
+		})
+	}
+	return attachments
+}
+
+func materializeOpenClawInlineAttachments(params map[string]any, turnID string) ([]any, *shared.RPCError) {
+	rawAttachments := shared.ListArg(params, "inlineAttachments")
+	if len(rawAttachments) == 0 {
+		return nil, nil
+	}
+	workingDirectory := strings.TrimSpace(shared.StringArg(params, "workingDirectory", ""))
+	if workingDirectory == "" {
+		return nil, &shared.RPCError{Code: -32602, Message: "OPENCLAW_ATTACHMENT_WORKING_DIRECTORY_REQUIRED"}
+	}
+	attachmentDirectory := filepath.Join(
+		workingDirectory,
+		".xworkmate",
+		"attachments",
+		safeOpenClawAttachmentPathSegment(turnID, "turn"),
+	)
+	if err := os.MkdirAll(attachmentDirectory, 0o755); err != nil {
+		return nil, &shared.RPCError{Code: -32002, Message: "OPENCLAW_ATTACHMENT_DIRECTORY_FAILED: " + err.Error()}
+	}
+	attachments := make([]any, 0, len(rawAttachments))
+	totalBytes := 0
+	for index, raw := range rawAttachments {
+		attachment := shared.AsMap(raw)
+		if len(attachment) == 0 {
+			continue
+		}
+		name := safeOpenClawAttachmentFileName(
+			shared.StringArg(attachment, "name", shared.StringArg(attachment, "fileName", "attachment")),
+		)
+		mimeType := strings.TrimSpace(shared.StringArg(attachment, "mimeType", shared.StringArg(attachment, "description", "")))
+		content := strings.TrimSpace(shared.StringArg(attachment, "content", ""))
+		if content == "" {
+			continue
+		}
+		bytes, err := decodeOpenClawInlineAttachmentContent(content)
+		if err != nil {
+			return nil, &shared.RPCError{Code: -32602, Message: "OPENCLAW_ATTACHMENT_INVALID_BASE64: " + name}
+		}
+		if len(bytes) > openClawInlineAttachmentMaxFileBytes {
+			return nil, &shared.RPCError{Code: -32602, Message: "OPENCLAW_ATTACHMENT_FILE_TOO_LARGE: " + name}
+		}
+		if totalBytes+len(bytes) > openClawInlineAttachmentMaxTotalBytes {
+			return nil, &shared.RPCError{Code: -32602, Message: "OPENCLAW_ATTACHMENT_TOTAL_TOO_LARGE"}
+		}
+		totalBytes += len(bytes)
+		path := filepath.Join(attachmentDirectory, fmt.Sprintf("%02d-%s", index+1, name))
+		if err := os.WriteFile(path, bytes, 0o600); err != nil {
+			return nil, &shared.RPCError{Code: -32002, Message: "OPENCLAW_ATTACHMENT_WRITE_FAILED: " + err.Error()}
+		}
+		attachments = append(attachments, map[string]any{
+			"name":        name,
+			"description": mimeType,
+			"path":        path,
+			"sizeBytes":   len(bytes),
+			"source":      "inlineAttachment",
+		})
+	}
+	return attachments, nil
+}
+
+func decodeOpenClawInlineAttachmentContent(content string) ([]byte, error) {
+	normalized := strings.TrimSpace(content)
+	if comma := strings.LastIndex(normalized, ","); comma >= 0 {
+		normalized = strings.TrimSpace(normalized[comma+1:])
+	}
+	return base64.StdEncoding.DecodeString(normalized)
+}
+
+func safeOpenClawAttachmentPathSegment(value string, fallback string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		trimmed = fallback
+	}
+	var builder strings.Builder
+	for _, r := range trimmed {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			builder.WriteRune(r)
+		} else {
+			builder.WriteByte('-')
+		}
+	}
+	result := strings.Trim(builder.String(), "-")
+	if result == "" {
+		return fallback
+	}
+	return result
+}
+
+func safeOpenClawAttachmentFileName(value string) string {
+	name := strings.TrimSpace(filepath.Base(value))
+	if name == "." || name == string(os.PathSeparator) || name == "" {
+		name = "attachment"
+	}
+	name = strings.ReplaceAll(name, string(os.PathSeparator), "-")
+	name = strings.ReplaceAll(name, "/", "-")
+	name = strings.ReplaceAll(name, "\\", "-")
+	return name
 }
 
 func openClawAgentWaitTimeout(params map[string]any, chatParams map[string]any) time.Duration {
