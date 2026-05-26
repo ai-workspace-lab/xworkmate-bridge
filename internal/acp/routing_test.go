@@ -2027,6 +2027,45 @@ func TestOpenClawChatSendParamsMaterializesInlineAttachments(t *testing.T) {
 	}
 }
 
+func TestOpenClawChatSendParamsMaterializesInlineAttachmentsInRemoteHint(t *testing.T) {
+	remoteWorkspace := t.TempDir()
+	chatParams, rpcErr := openClawChatSendParams(map[string]any{
+		"threadId":                   "thread-remote-attachments",
+		"taskPrompt":                 "inspect uploaded file",
+		"workingDirectory":           "/Users/local/.xworkmate/threads/thread-remote-attachments",
+		"remoteWorkingDirectoryHint": remoteWorkspace,
+		"inlineAttachments": []any{
+			map[string]any{
+				"name":     "note.txt",
+				"mimeType": "text/plain",
+				"content":  base64.StdEncoding.EncodeToString([]byte("note body")),
+			},
+		},
+	}, "turn-remote-attachments")
+	if rpcErr != nil {
+		t.Fatalf("expected chat params, got rpc error: %#v", rpcErr)
+	}
+
+	attachments := shared.ListArg(chatParams, "attachments")
+	if len(attachments) != 1 {
+		t.Fatalf("expected one materialized attachment, got %#v", attachments)
+	}
+	path := shared.StringArg(shared.AsMap(attachments[0]), "path", "")
+	if !strings.HasPrefix(path, remoteWorkspace) {
+		t.Fatalf("expected attachment under remote workspace %q, got %q", remoteWorkspace, path)
+	}
+	if strings.Contains(path, "/Users/local/") {
+		t.Fatalf("attachment path must not use desktop local workspace, got %q", path)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("expected materialized file to exist: %v", err)
+	}
+	if string(content) != "note body" {
+		t.Fatalf("expected materialized content, got %q", string(content))
+	}
+}
+
 func TestExecuteSessionTaskGatewayRejectsOversizedInlineAttachmentBeforeChatSend(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()

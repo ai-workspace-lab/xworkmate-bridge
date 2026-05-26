@@ -681,6 +681,7 @@ func materializeOpenClawInlineAttachments(params map[string]any, turnID string) 
 	if workingDirectory == "" {
 		return nil, &shared.RPCError{Code: -32602, Message: "OPENCLAW_ATTACHMENT_WORKING_DIRECTORY_REQUIRED"}
 	}
+	workingDirectory = openClawAttachmentWorkingDirectory(params, workingDirectory)
 	attachmentDirectory := filepath.Join(
 		workingDirectory,
 		".xworkmate",
@@ -729,6 +730,24 @@ func materializeOpenClawInlineAttachments(params map[string]any, turnID string) 
 		})
 	}
 	return attachments, nil
+}
+
+func openClawAttachmentWorkingDirectory(params map[string]any, workingDirectory string) string {
+	candidate := strings.TrimSpace(workingDirectory)
+	remoteHint := strings.TrimSpace(shared.StringArg(params, "remoteWorkingDirectoryHint", ""))
+	if remoteHint == "" || remoteHint == candidate {
+		return candidate
+	}
+	if isDesktopLocalWorkspacePath(candidate) {
+		return remoteHint
+	}
+	return candidate
+}
+
+func isDesktopLocalWorkspacePath(path string) bool {
+	cleaned := filepath.Clean(strings.TrimSpace(path))
+	return strings.HasPrefix(cleaned, "/Users/") ||
+		strings.HasPrefix(cleaned, "/Volumes/")
 }
 
 func decodeOpenClawInlineAttachmentContent(content string) ([]byte, error) {
