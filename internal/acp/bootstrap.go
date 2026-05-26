@@ -3,10 +3,13 @@ package acp
 import (
 	"context"
 	"os"
+	"time"
 
 	"xworkmate-bridge/internal/gatewayruntime"
 	"xworkmate-bridge/internal/memory"
 )
+
+const bootstrapProviderProbeTimeout = 2 * time.Second
 
 // Bootstrap initializes the control plane components
 func (s *Server) Bootstrap() {
@@ -67,13 +70,39 @@ func (s *Server) Bootstrap() {
 			"category":   category,
 		})
 		if compat, ok := s.providers[id]; ok {
-			probe := compat.Probe(context.Background())
+			probe := probeProviderForBootstrap(compat, bootstrapProviderProbeTimeout)
 			s.catalog.ProviderProbeSummary = append(s.catalog.ProviderProbeSummary, map[string]any{
 				"providerId": id,
 				"available":  probe.Available,
 				"status":     probe.Status,
 			})
 		}
+	}
+}
+
+func probeProviderForBootstrap(
+	compat ProviderCompat,
+	timeout time.Duration,
+) ProviderProbeResult {
+	if compat == nil {
+		return ProviderProbeResult{Available: false, Status: "provider unavailable"}
+	}
+	if timeout <= 0 {
+		timeout = bootstrapProviderProbeTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	resultCh := make(chan ProviderProbeResult, 1)
+	go func() {
+		resultCh <- compat.Probe(ctx)
+	}()
+
+	select {
+	case result := <-resultCh:
+		return result
+	case <-ctx.Done():
+		return ProviderProbeResult{Available: false, Status: ctx.Err().Error()}
 	}
 }
 
