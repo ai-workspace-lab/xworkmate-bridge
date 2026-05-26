@@ -2066,6 +2066,49 @@ func TestOpenClawChatSendParamsMaterializesInlineAttachmentsInRemoteHint(t *test
 	}
 }
 
+func TestOpenClawChatSendParamsMapsOwnerScopedWorkspaceToWritableRoot(t *testing.T) {
+	writableRoot := t.TempDir()
+	t.Setenv("OPENCLAW_WRITABLE_WORKSPACE_ROOT", writableRoot)
+	ownerWorkspace := "/owners/local/device/demo/threads/draft-1"
+	params := withOpenClawWritableWorkspace(map[string]any{
+		"sessionId":                  "draft-1",
+		"threadId":                   "draft-1",
+		"taskPrompt":                 "write into currentTaskWorkspace: " + ownerWorkspace,
+		"workingDirectory":           ownerWorkspace,
+		"remoteWorkingDirectoryHint": ownerWorkspace,
+		"inlineAttachments": []any{
+			map[string]any{
+				"name":     "note.txt",
+				"mimeType": "text/plain",
+				"content":  base64.StdEncoding.EncodeToString([]byte("note body")),
+			},
+		},
+	}, "draft-1")
+
+	chatParams, rpcErr := openClawChatSendParams(params, "turn-owner-workspace")
+	if rpcErr != nil {
+		t.Fatalf("expected chat params, got rpc error: %#v", rpcErr)
+	}
+	writableWorkspace := filepath.Join(writableRoot, "draft-1")
+	if got := shared.StringArg(params, "workingDirectory", ""); got != writableWorkspace {
+		t.Fatalf("expected writable working directory %q, got %q", writableWorkspace, got)
+	}
+	if got := shared.StringArg(params, "remoteWorkingDirectoryHint", ""); got != writableWorkspace {
+		t.Fatalf("expected writable remote hint %q, got %q", writableWorkspace, got)
+	}
+	message := shared.StringArg(chatParams, "message", "")
+	if strings.Contains(message, "/owners/") {
+		t.Fatalf("message must not reference owner-scoped workspace, got %q", message)
+	}
+	if !strings.Contains(message, writableWorkspace) {
+		t.Fatalf("message should reference writable workspace %q, got %q", writableWorkspace, message)
+	}
+	path := shared.StringArg(shared.AsMap(shared.ListArg(chatParams, "attachments")[0]), "path", "")
+	if !strings.HasPrefix(path, writableWorkspace) {
+		t.Fatalf("expected materialized attachment under writable workspace %q, got %q", writableWorkspace, path)
+	}
+}
+
 func TestExecuteSessionTaskGatewayRejectsOversizedInlineAttachmentBeforeChatSend(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()

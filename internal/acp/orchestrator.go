@@ -320,6 +320,7 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 		}
 	}
 	sessionKey := openClawSessionKey(params, turnID)
+	params = withOpenClawWritableWorkspace(params, sessionKey)
 	chatParams, rpcErr := openClawChatSendParams(params, turnID)
 	if rpcErr != nil {
 		return nil, rpcErr
@@ -647,6 +648,61 @@ func openClawChatSendParams(
 		chatParams["thinking"] = thinking
 	}
 	return chatParams, nil
+}
+
+func withOpenClawWritableWorkspace(params map[string]any, sessionKey string) map[string]any {
+	workingDirectory := strings.TrimSpace(shared.StringArg(params, "workingDirectory", ""))
+	remoteHint := strings.TrimSpace(shared.StringArg(params, "remoteWorkingDirectoryHint", ""))
+	ownerScoped := firstOwnerScopedWorkspace(workingDirectory, remoteHint)
+	if ownerScoped == "" {
+		return params
+	}
+	writable := openClawWritableWorkspaceForOwnerPath(ownerScoped, sessionKey)
+	if writable == "" || writable == ownerScoped {
+		return params
+	}
+	next := make(map[string]any, len(params)+1)
+	for key, value := range params {
+		next[key] = value
+	}
+	if workingDirectory == ownerScoped {
+		next["workingDirectory"] = writable
+	}
+	if remoteHint == ownerScoped {
+		next["remoteWorkingDirectoryHint"] = writable
+	}
+	for _, key := range []string{"taskPrompt", "prompt", "message"} {
+		if value, ok := next[key].(string); ok && strings.Contains(value, ownerScoped) {
+			next[key] = strings.ReplaceAll(value, ownerScoped, writable)
+		}
+	}
+	return next
+}
+
+func firstOwnerScopedWorkspace(values ...string) string {
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if strings.HasPrefix(filepath.Clean(trimmed), "/owners/") {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func openClawWritableWorkspaceForOwnerPath(ownerPath string, sessionKey string) string {
+	root := strings.TrimSpace(os.Getenv("OPENCLAW_WRITABLE_WORKSPACE_ROOT"))
+	if root == "" {
+		root = "/home/ubuntu/.openclaw/workspace/task_artifacts"
+	}
+	root = strings.TrimRight(filepath.Clean(root), string(os.PathSeparator))
+	if root == "" || root == "." || root == string(os.PathSeparator) {
+		return ""
+	}
+	leaf := safeOpenClawAttachmentPathSegment(sessionKey, "task")
+	if leaf == "task" {
+		leaf = safeOpenClawAttachmentPathSegment(filepath.Base(filepath.Clean(ownerPath)), "task")
+	}
+	return filepath.Join(root, leaf)
 }
 
 func openClawNonEmptyPathAttachments(params map[string]any) []any {
