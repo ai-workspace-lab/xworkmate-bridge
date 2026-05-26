@@ -101,9 +101,8 @@ App-facing canonical transport 定义为：
 - multi-agent 作为 bridge core 路径
 - 以 reverse proxy 为中心的 bridge 定位
 
-保留 `/gateway/openclaw` 的精确定义：它只是 OpenClaw `session.start` 与 follow-up
-`session.message` 的 task submit endpoint，capabilities、routing、cancel、close 和
-gateway control-plane method 继续走 `/acp` 或 `/acp/rpc`。
+OpenClaw `session.start` 与 follow-up `session.message` 使用 `/acp/rpc` 加 routing metadata；
+capabilities、routing、cancel、close 和 gateway control-plane method 也继续走 `/acp` 或 `/acp/rpc`。
 
 ### 后续规则
 

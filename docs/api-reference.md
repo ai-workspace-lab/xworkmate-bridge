@@ -6,8 +6,7 @@
 
 - `xworkmate-bridge` 是 **APP-facing ACP control plane and provider runtime layer**
 - App-facing canonical transport 是 `GET /acp` WebSocket upgrade 后的 JSON-RPC stream
-- `POST /acp/rpc` 仅作为 CI、脚本、调试和兼容 fallback
-- `POST /gateway/openclaw` 仅是 OpenClaw `session.start` / `session.message` task submit 专用入口，不是全局 ACP base endpoint
+- `POST /acp/rpc` 作为 CI、脚本、调试、HTTP fallback 和 OpenClaw gateway task submit 入口
 - `/acp-server/*` 不属于 APP-facing contract，APP 不应保存或拼接这些 provider direct path
 
 ## 1. Runtime Entry Points
@@ -33,9 +32,8 @@
 | `/acp` | `GET` + WebSocket upgrade | 是 | App-facing JSON-RPC WebSocket 主入口 |
 | `/acp/rpc` | `POST` | 是 | JSON-RPC HTTP fallback / CI / 调试入口 |
 | `/acp/rpc` | `OPTIONS` | 否 | CORS preflight |
-| `/gateway/openclaw` | `POST` | 是 | OpenClaw `session.start` / `session.message` task submit 专用入口 |
 
-线上 Caddy 反代 `/api*`、`/acp*`、`/gateway/openclaw` 和 `/` 到 bridge origin。`/acp-server/*` 显式返回 `404`。
+线上 Caddy 反代 `/api*`、`/acp*`、`/artifacts/*` 和 `/` 到 bridge origin。`/acp-server/*` 显式返回 `404`。
 
 ## 3. Auth / Origin
 
@@ -146,8 +144,7 @@ bridge 对 app 的稳定 method family 只有：
 路径约束：
 
 - `/acp/rpc` 是 capabilities、routing、agent、multi-agent、jobs、tools proxy、cancel、close 的 canonical HTTP RPC 入口。
-- `/gateway/openclaw` 只允许 OpenClaw `session.start` 和 follow-up `session.message`。
-- `/gateway/openclaw` 拒绝 `acp.capabilities`、`xworkmate.routing.resolve`、`xworkmate.gateway.*`、`session.cancel` 和 `session.close`。
+- OpenClaw `session.start` 和 follow-up `session.message` 也通过 `/acp/rpc`，由 `routing.explicitExecutionTarget=gateway` 与 `routing.preferredGatewayProviderId=openclaw` 表达。
 
 ## 6. `acp.capabilities`
 
@@ -261,7 +258,7 @@ multi-agent 输入仍使用同一个 `session.start` / `session.message` method�
 - `routing.steps`: `{ "providerId": "codex", "prompt": "...", "outputAs": "...", "timeoutMs": 300000 }[]`
 - `routing.participants`、`routing.maxTurns`、`routing.stopConditions` 用于 `conversation`
 
-multi-agent 只允许通过 `/acp` 或 `/acp/rpc` 进入。`/gateway/openclaw` 仍是 OpenClaw task submit 专用入口，并继续拒绝 `multiAgent=true`。
+multi-agent 只允许通过 `/acp` 或 `/acp/rpc` 进入；OpenClaw gateway 单任务同样使用 `/acp/rpc`，但不能与 `multiAgent=true` 混用。
 
 统一结果字段：
 
@@ -300,7 +297,7 @@ bridge 保证：
 }
 ```
 
-OpenClaw gateway 任务的 HTTP task submit 路径是 `/gateway/openclaw`，并且只用于 `session.start` 与同一 OpenClaw task 的 follow-up `session.message`。Bridge 会强制 routing 到 `gateway/openclaw`，并拒绝 `multiAgent=true` 或 agent/provider 冲突参数。
+OpenClaw gateway 任务的 HTTP task submit 路径是 `/acp/rpc`。请求必须在 routing 中声明 `explicitExecutionTarget=gateway` 与 `preferredGatewayProviderId=openclaw`；bridge 不再要求或暴露独立的 OpenClaw task URL。
 
 ## 9. `session.cancel` / `session.close`
 
@@ -327,7 +324,7 @@ gateway method family 保留为 control-plane contract：
 
 - app 调 gateway runtime 时仍然只通过 bridge JSON-RPC methods
 - `openclaw` 是 bridge-owned gateway provider，不是 app-facing direct route
-- gateway control-plane method 仍走 `/acp` 或 `/acp/rpc`，不走 `/gateway/openclaw`
+- gateway task 和 control-plane method 都走 `/acp` 或 `/acp/rpc`
 
 ## 11. Internal Async Jobs
 

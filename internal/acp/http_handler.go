@@ -51,10 +51,6 @@ func (s *Server) Handler() http.Handler {
 		case openClawArtifactDownloadPath:
 			s.HandleOpenClawArtifactDownload(w, r)
 		default:
-			if r.URL.Path == "/gateway/openclaw" {
-				s.HandleOpenClawGatewayRPC(w, r)
-				return
-			}
 			if strings.HasPrefix(r.URL.Path, "/acp-server/") {
 				s.HandleDisabledProviderDirectPath(w, r)
 				return
@@ -115,11 +111,7 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
-	s.handleRPCWithTransform(w, r, rejectOpenClawTaskSubmitOnCanonicalRPC)
-}
-
-func (s *Server) HandleOpenClawGatewayRPC(w http.ResponseWriter, r *http.Request) {
-	s.handleRPCWithTransform(w, r, forceOpenClawGatewayRequest)
+	s.handleRPCWithTransform(w, r, nil)
 }
 
 func (s *Server) HandleDisabledProviderDirectPath(w http.ResponseWriter, r *http.Request) {
@@ -193,6 +185,9 @@ func (s *Server) handleRPCWithTransform(
 
 	accept := strings.ToLower(r.Header.Get("Accept"))
 	stream := strings.Contains(accept, "text/event-stream")
+	openClawGatewayTask := requestUsesOpenClawGatewaySubmit(
+		shared.AsMap(request.Params),
+	)
 	if stream {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
@@ -211,7 +206,7 @@ func (s *Server) handleRPCWithTransform(
 		if !stream {
 			return
 		}
-		if r.URL.Path == "/gateway/openclaw" {
+		if openClawGatewayTask {
 			if reason := openClawGatewayNotificationDropReason(message); reason != "" {
 				log.Printf(
 					"level=warn component=acp_sse event=notification_dropped path=%q rpcMethod=%q requestId=%q sessionId=%q threadId=%q reason=%q notificationMethod=%q",
@@ -229,7 +224,7 @@ func (s *Server) handleRPCWithTransform(
 		streamWriter.write(message)
 	}
 	if stream {
-		if r.URL.Path == "/gateway/openclaw" {
+		if openClawGatewayTask {
 			streamWriter.write(map[string]any{
 				"jsonrpc": "2.0",
 				"method":  "xworkmate.bridge.accepted",
@@ -266,7 +261,7 @@ func (s *Server) handleRPCWithTransform(
 		_ = json.NewEncoder(w).Encode(envelope)
 		return
 	}
-	if r.URL.Path == "/gateway/openclaw" {
+	if openClawGatewayTask {
 		stripOpenClawArtifactInlineContent(response)
 	}
 	if stream {
@@ -442,77 +437,6 @@ func sseEventType(payload map[string]any) string {
 		return "error"
 	}
 	return "unknown"
-}
-
-func forceOpenClawGatewayRequest(request shared.RPCRequest) (shared.RPCRequest, *shared.RPCError) {
-	method := strings.TrimSpace(request.Method)
-	switch method {
-	case "session.start", "session.message":
-	default:
-		return request, &shared.RPCError{Code: -32601, Message: "OPENCLAW_GATEWAY_METHOD_NOT_ALLOWED: " + method}
-	}
-	params := shared.AsMap(request.Params)
-	if params == nil {
-		params = map[string]any{}
-	}
-	if parseBool(params["multiAgent"]) || strings.EqualFold(strings.TrimSpace(shared.StringArg(params, "mode", "")), "multi-agent") {
-		return request, &shared.RPCError{Code: -32602, Message: "OPENCLAW_GATEWAY_CONFLICT: multiAgent is not supported on /gateway/openclaw"}
-	}
-	if provider := strings.TrimSpace(shared.StringArg(params, "provider", "")); provider != "" {
-		return request, &shared.RPCError{Code: -32602, Message: "OPENCLAW_GATEWAY_CONFLICT: provider must not be set on /gateway/openclaw"}
-	}
-	for _, key := range []string{"executionTarget", "requestedExecutionTarget"} {
-		if target := strings.TrimSpace(shared.StringArg(params, key, "")); target != "" && !strings.EqualFold(target, "gateway") {
-			return request, &shared.RPCError{Code: -32602, Message: "OPENCLAW_GATEWAY_CONFLICT: " + key + " must be gateway"}
-		}
-	}
-	for _, key := range []string{"preferredGatewayProviderId", "gatewayProviderId", "gatewayProvider"} {
-		if provider := strings.TrimSpace(shared.StringArg(params, key, "")); provider != "" && !strings.EqualFold(provider, "openclaw") {
-			return request, &shared.RPCError{Code: -32602, Message: "OPENCLAW_GATEWAY_CONFLICT: gateway provider must be openclaw"}
-		}
-	}
-	routing := shared.AsMap(params["routing"])
-	if routing == nil {
-		routing = map[string]any{}
-	}
-	if strings.TrimSpace(shared.StringArg(routing, "orchestrationMode", "")) != "" {
-		return request, &shared.RPCError{Code: -32602, Message: "OPENCLAW_GATEWAY_CONFLICT: multiAgent is not supported on /gateway/openclaw"}
-	}
-	if provider := strings.TrimSpace(shared.StringArg(routing, "explicitProviderId", "")); provider != "" {
-		return request, &shared.RPCError{Code: -32602, Message: "OPENCLAW_GATEWAY_CONFLICT: explicitProviderId must not be set on /gateway/openclaw"}
-	}
-	if target := strings.TrimSpace(shared.StringArg(routing, "explicitExecutionTarget", "")); target != "" && !strings.EqualFold(target, "gateway") {
-		return request, &shared.RPCError{Code: -32602, Message: "OPENCLAW_GATEWAY_CONFLICT: explicitExecutionTarget must be gateway"}
-	}
-	for _, key := range []string{"preferredGatewayProviderId", "gatewayProviderId", "gatewayProvider"} {
-		if provider := strings.TrimSpace(shared.StringArg(routing, key, "")); provider != "" && !strings.EqualFold(provider, "openclaw") {
-			return request, &shared.RPCError{Code: -32602, Message: "OPENCLAW_GATEWAY_CONFLICT: gateway provider must be openclaw"}
-		}
-	}
-	routing["routingMode"] = "explicit"
-	routing["explicitExecutionTarget"] = "gateway"
-	routing["preferredGatewayProviderId"] = "openclaw"
-	delete(routing, "explicitProviderId")
-	params["routing"] = routing
-	params["requestedExecutionTarget"] = "gateway"
-	params["executionTarget"] = "gateway"
-	request.Params = params
-	return request, nil
-}
-
-func rejectOpenClawTaskSubmitOnCanonicalRPC(request shared.RPCRequest) (shared.RPCRequest, *shared.RPCError) {
-	method := strings.TrimSpace(request.Method)
-	if method != "session.start" && method != "session.message" {
-		return request, nil
-	}
-	params := shared.AsMap(request.Params)
-	if parseBool(params["multiAgent"]) || strings.EqualFold(strings.TrimSpace(shared.StringArg(params, "mode", "")), "multi-agent") {
-		return request, nil
-	}
-	if requestUsesOpenClawGatewaySubmit(params) {
-		return request, &shared.RPCError{Code: -32602, Message: "OPENCLAW_TASK_ENDPOINT_REQUIRED: use /gateway/openclaw for OpenClaw task submission"}
-	}
-	return request, nil
 }
 
 func requestUsesOpenClawGatewaySubmit(params map[string]any) bool {

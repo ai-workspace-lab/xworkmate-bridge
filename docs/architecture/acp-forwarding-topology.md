@@ -9,8 +9,7 @@ Last Updated: 2026-05-03
 对 `xworkmate-app` 来说，bridge 只有一个 canonical surface：
 
 - `GET /acp` WebSocket，默认主链
-- `POST /acp/rpc`，CI、脚本、调试和兼容 fallback
-- `POST /gateway/openclaw`，仅 OpenClaw `session.start` / follow-up `session.message` task submit
+- `POST /acp/rpc`，CI、脚本、调试、兼容 fallback 和 OpenClaw gateway task submit
 
 app 只感知 method family：
 
@@ -36,9 +35,8 @@ flowchart LR
         B4["xworkmate.routing.resolve"]
         B5["session.*"]
         B6["xworkmate.gateway.*"]
-        B7["POST /gateway/openclaw<br/>OpenClaw task submit only"]
-        B8["provider_compat"]
-        B9["gateway compat"]
+        B7["provider_compat"]
+        B8["gateway compat"]
     end
 
     subgraph ADAPTERS["adapter runtime"]
@@ -62,21 +60,20 @@ flowchart LR
     B2 --> B4
     B2 --> B5
     B2 --> B6
-    B7 --> B5
-    B5 --> B8
-    B6 --> B9
-    B8 --> C1
-    B8 --> C2
-    B8 --> C3
-    B8 --> C4
-    B9 --> D1
+    B5 --> B7
+    B6 --> B8
+    B7 --> C1
+    B7 --> C2
+    B7 --> C3
+    B7 --> C4
+    B8 --> D1
 ```
 
 ## Invariants
 
 - app 不直接访问 provider-specific public URL
-- app 只在 OpenClaw `session.start` / follow-up `session.message` 时使用 `/gateway/openclaw`
-- app 不把 `/gateway/openclaw` 解析或保存为全局 ACP base endpoint
+- app 的 OpenClaw `session.start` / follow-up `session.message` 也使用 `/acp/rpc`
+- app 不保存或解析 provider/gateway 专用 URL
 - provider catalog 与 gatewayProviders 由 bridge 独占生成
 - bridge 只暴露 canonical ACP contract
 - provider / gateway 实际地址属于 bridge internal truth

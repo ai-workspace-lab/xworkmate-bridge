@@ -15,7 +15,7 @@ Last Updated: 2026-04-23
 - `GET https://xworkmate-bridge.svc.plus/api/ping`
 - `GET wss://xworkmate-bridge.svc.plus/acp`
 - `POST https://xworkmate-bridge.svc.plus/acp/rpc`
-- `POST https://xworkmate-bridge.svc.plus/gateway/openclaw` for OpenClaw `session.start` / `session.message` only
+- OpenClaw `session.start` / `session.message` through `POST https://xworkmate-bridge.svc.plus/acp/rpc` with explicit gateway routing
 
 不再把以下路径视为 public validation target：
 
@@ -59,7 +59,7 @@ Last Updated: 2026-04-23
 - 最终结果包含 `turnId`
 
 OpenClaw 的 `session.start` 与同一 task 的 follow-up `session.message` 使用
-`/gateway/openclaw`。`session.cancel` 与 `session.close` 仍使用 `/acp` 或 `/acp/rpc`。
+`/acp/rpc`。`session.cancel` 与 `session.close` 仍使用 `/acp` 或 `/acp/rpc`。
 
 ### 5. Gateway Contract
 

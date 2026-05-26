@@ -27,8 +27,7 @@ APP-facing ACP control plane。
 负责：
 
 - `/acp` App-facing WebSocket JSON-RPC 主入口
-- `/acp/rpc` HTTP JSON-RPC fallback / CI / 调试入口
-- `/gateway/openclaw` OpenClaw task submit 专用入口，只接受 `session.start` 和 `session.message`
+- `/acp/rpc` HTTP JSON-RPC fallback / CI / 调试 / OpenClaw task submit 入口
 - JSON-RPC / hybrid envelope
 - `acp.capabilities`
 - `xworkmate.routing.resolve`
@@ -106,10 +105,11 @@ APP-facing ACP control plane。
 以下逻辑不属于当前 APP-facing contract：
 
 - `/acp-server/*`
+- `/gateway/openclaw`
 - multi-agent 执行路径
 - provider-specific alias handler
 
-`/gateway/openclaw` 只保留为 OpenClaw task submit 专用 handler，不再作为 provider alias、gateway alias 或通用 ACP base endpoint。
+OpenClaw task submit 使用 `/acp/rpc` 和 routing metadata，不再保留独立 app-facing handler。
 
 ## 3. `provider_compat`
 

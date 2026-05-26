@@ -28,10 +28,9 @@ xworkmate-app
   -> bridge 内部路由到 codex / opencode / gemini / hermes / openclaw
 ```
 
-例外：OpenClaw task submit 的 HTTP fallback 专用入口是
-`POST https://xworkmate-bridge.svc.plus/gateway/openclaw`。它只接受
-`session.start` 和同一任务生命周期内的 follow-up `session.message`，不得作为
-capabilities、routing、cancel、close 或其他 provider 的通用 ACP base endpoint。
+OpenClaw task submit 也使用 `/acp/rpc`，通过
+`routing.explicitExecutionTarget=gateway` 和
+`routing.preferredGatewayProviderId=openclaw` 表达 gateway 目标。
 
 ## 2. App-Facing Contract
 
@@ -220,15 +219,13 @@ Gateway/OpenClaw 显式路由示例：
 }
 ```
 
-OpenClaw gateway 任务的 HTTP task submit 专用入口是：
+OpenClaw gateway 任务的 HTTP task submit 入口是：
 
 ```text
-POST https://xworkmate-bridge.svc.plus/gateway/openclaw
+POST https://xworkmate-bridge.svc.plus/acp/rpc
 ```
 
-它只承载 `session.start` 和 follow-up `session.message`。Bridge 会强制注入
-`explicitExecutionTarget=gateway` 与 `preferredGatewayProviderId=openclaw`，并拒绝
-`multiAgent=true`、agent/provider 冲突参数、`acp.capabilities`、`xworkmate.routing.resolve`、`session.cancel` 和 `session.close`。
+它承载 `session.start` 和 follow-up `session.message`，并由 routing 字段明确声明 OpenClaw gateway 目标。
 
 ```json
 {
@@ -250,7 +247,7 @@ POST https://xworkmate-bridge.svc.plus/gateway/openclaw
 ```
 
 OpenClaw 的 `session.message` 复用同一 `sessionId` / `threadId`，继续提交到
-`/gateway/openclaw`。其他 provider 的 `session.message` 走 `/acp` 或 `/acp/rpc`。
+`/acp/rpc`。其他 provider 的 `session.message` 也走 `/acp` 或 `/acp/rpc`。
 
 `session.cancel` 和 `session.close` 属于 control-plane 操作，继续走 `/acp` 或 `/acp/rpc`。
 
@@ -259,8 +256,7 @@ OpenClaw 的 `session.message` 复用同一 `sessionId` / `threadId`，继续提
 | Path | 协议 | APP 是否使用 | 设计定位 |
 | --- | --- | --- | --- |
 | `/acp` | WebSocket | 是，默认 | JSON-RPC 主入口 |
-| `/acp/rpc` | HTTP POST | 仅 fallback / CI / 调试 | JSON-RPC 辅助入口 |
-| `/gateway/openclaw` | HTTP POST | 仅 OpenClaw task submit | 只接受 `session.start` / `session.message` |
+| `/acp/rpc` | HTTP POST | fallback / CI / 调试 / OpenClaw task submit | JSON-RPC 辅助入口 |
 | `/api/ping` | HTTP GET | 否 | 发布与运行健康检查 |
 | `/` | HTTP GET | 否 | 简单运行状态 |
 | `/acp-server/*` | 无 APP contract | 否 | 线上 Caddy 显式返回 `404` |
@@ -268,8 +264,8 @@ OpenClaw 的 `session.message` 复用同一 `sessionId` / `threadId`，继续提
 陈旧接口清理规则：
 
 - 删除 APP 侧对 `/acp-server/codex`、`/acp-server/opencode`、`/acp-server/gemini`、`/acp-server/hermes` 的任何引用。
-- 只允许 APP 的 Gateway/OpenClaw `session.start` 与 follow-up `session.message` 使用 `/gateway/openclaw`。
-- 禁止把 `/gateway/openclaw` 保存或解析为全局 ACP base endpoint。
+- APP 的 Gateway/OpenClaw `session.start` 与 follow-up `session.message` 使用 `/acp/rpc` 和 routing metadata。
+- 禁止把 provider/gateway 专用 URL 保存或解析为全局 ACP base endpoint。
 - 不在 APP 侧保存 provider/gateway URL、端口或 service 名。
 - 不把 provider 选择逻辑散落在 APP 的 URL 拼接逻辑里。
 - 所有 provider/gateway 能力与可用性都来自 `acp.capabilities`。
@@ -285,7 +281,7 @@ OpenClaw 的 `session.message` 复用同一 `sessionId` / `threadId`，继续提
 ```text
 /api* -> 127.0.0.1:8787
 /acp* -> 127.0.0.1:8787
-/gateway/openclaw -> 127.0.0.1:8787
+/artifacts/* -> 127.0.0.1:8787
 /acp-server/* -> 404
 /     -> 127.0.0.1:8787
 ```
@@ -321,11 +317,10 @@ Authorization: Bearer $BRIDGE_AUTH_TOKEN
 | WebSocket `/acp` 握手 | `101 Switching Protocols` |
 | WebSocket `acp.capabilities` | `ok=true`，返回 `agent/gateway`、`codex/opencode/gemini/hermes`、`openclaw` |
 | `POST /acp/rpc acp.capabilities` | `200`，返回同一能力目录 |
-| `POST /gateway/openclaw session.start` | `200`，成功或 structured provider failure；不应是 route/auth failure |
+| `POST /acp/rpc session.start` with OpenClaw routing | `200`，成功或 structured provider failure；不应是 route/auth failure |
 | `POST /acp-server/hermes` | `404` |
 | `POST /acp-server/codex` | `404` |
 | `POST /acp-server/gemini` | `404` |
 | `POST /acp-server/opencode` | `404` |
 
-`/gateway/openclaw` 当前是专用 OpenClaw task submit contract，不是全局 ACP base endpoint。APP 的
-capabilities、routing、agent、multi-agent、cancel 和 close 必须继续使用 `/acp` 或 `/acp/rpc`。
+OpenClaw task submit 当前使用 `/acp/rpc` 加 routing metadata。APP 的 capabilities、routing、agent、multi-agent、cancel 和 close 也必须继续使用 `/acp` 或 `/acp/rpc`。

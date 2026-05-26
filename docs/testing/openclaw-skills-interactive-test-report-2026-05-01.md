@@ -1,15 +1,16 @@
 # OpenClaw Skills Interactive Test Report
 - **Execution Time:** 2026-05-01 10:37:05
 - **BRIDGE_SERVER_URL:** https://xworkmate-bridge.svc.plus
-- **Gateway Path:** /gateway/openclaw
+- **Gateway Path:** /acp/rpc with explicit OpenClaw gateway routing
 - **Token:** [REDACTED]
 - **Test Case File:** /home/ubuntu/.openclaw/workspace/skills-test-cases.md
 - **Runtime Status:** Active (openclaw-gateway.service active)
 
-> Historical note: this run submitted OpenClaw work through `/acp/rpc`. The
-> current APP contract uses `/gateway/openclaw` for OpenClaw `session.start`
-> and follow-up `session.message`, while capabilities, routing, cancel, and
-> close stay on `/acp/rpc` or `/acp`.
+> Historical note: older diagnostics used `/gateway/openclaw` before the
+> task-submit contract was finalized. Current app-facing OpenClaw work uses
+> `/acp/rpc` for `session.start` and follow-up `session.message`, with
+> `routing.explicitExecutionTarget=gateway` and
+> `routing.preferredGatewayProviderId=openclaw`.
 
 ## Summary
 | skill | total | pass | fail | blocked | notes |
@@ -107,7 +108,7 @@
 - **video-translator**: Needs translation service API key.
 - **browser-automation**: Needs local chrome or Browserbase API key.
 ### Gateway Path Verification
-- Historical run observed `/gateway/openclaw` with curl before the task-submit contract was finalized.
+- Historical run observed a direct OpenClaw gateway path with curl before the task-submit contract was finalized.
 - Actual interaction in this report was successful via `/acp/rpc` with `explicitExecutionTarget: gateway`.
-- Current contract sends OpenClaw `session.start` and follow-up `session.message` to `/gateway/openclaw`.
+- Current contract sends OpenClaw `session.start` and follow-up `session.message` to `/acp/rpc` with explicit OpenClaw routing metadata.
 - Bearer authentication is correctly enforced at the bridge level.
