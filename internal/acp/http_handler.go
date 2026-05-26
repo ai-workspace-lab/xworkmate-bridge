@@ -182,6 +182,9 @@ func (s *Server) handleRPCWithTransform(
 		}
 		request = transformed
 	}
+	if s.taskForwarder.forward(r.Context(), w, r, request) {
+		return
+	}
 
 	accept := strings.ToLower(r.Header.Get("Accept"))
 	stream := strings.Contains(accept, "text/event-stream")

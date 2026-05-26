@@ -87,6 +87,7 @@ type Server struct {
 	gateway       *gatewayruntime.Manager
 	openClawGate  *openClawGatewayAdmissionGate
 	jobs          *jobManager
+	taskForwarder *distributedTaskForwarder
 
 	// Legacy / Common
 	authService    interface{} // Minimal auth dependency

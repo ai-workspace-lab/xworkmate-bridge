@@ -24,7 +24,13 @@ type BridgeConfig struct {
 		GeminiURL   string `yaml:"gemini_url"`
 		HermesURL   string `yaml:"hermes_url"`
 	} `yaml:"upstream"`
+	Distributed     DistributedConfig     `yaml:"distributed"`
 	OpenClawGateway OpenClawGatewayConfig `yaml:"openclaw_gateway"`
+}
+
+type DistributedConfig struct {
+	TaskForwardEndpoint string `yaml:"task_forward_endpoint"`
+	TaskForwardToken    string `yaml:"task_forward_token"`
 }
 
 type OpenClawGatewayConfig struct {
@@ -69,6 +75,29 @@ func bridgeUpstreamAuthorizationHeader() string {
 
 func bridgeSharedAuthToken() string {
 	return strings.TrimSpace(shared.EnvOrDefault("BRIDGE_AUTH_TOKEN", ""))
+}
+
+func resolveDistributedTaskForwardEndpoint(config *BridgeConfig) string {
+	yamlVal := ""
+	if config != nil {
+		yamlVal = config.Distributed.TaskForwardEndpoint
+	}
+	return resolveURL(yamlVal, "XWORKMATE_BRIDGE_TASK_FORWARD_ENDPOINT", "BRIDGE_TASK_FORWARD_ENDPOINT")
+}
+
+func resolveDistributedTaskForwardToken(config *BridgeConfig) string {
+	if token := strings.TrimSpace(os.Getenv("XWORKMATE_BRIDGE_TASK_FORWARD_TOKEN")); token != "" {
+		return token
+	}
+	if token := strings.TrimSpace(os.Getenv("BRIDGE_TASK_FORWARD_TOKEN")); token != "" {
+		return token
+	}
+	if config != nil {
+		if token := strings.TrimSpace(config.Distributed.TaskForwardToken); token != "" {
+			return token
+		}
+	}
+	return bridgeSharedAuthToken()
 }
 
 func newProductionProviderCatalog() (*BridgeConfig, map[string]syncedProvider, []string) {
