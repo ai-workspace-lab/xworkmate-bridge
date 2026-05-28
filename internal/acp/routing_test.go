@@ -569,6 +569,22 @@ func TestOpenClawAgentWaitTimeoutAdaptsToVideoWork(t *testing.T) {
 	}
 }
 
+func TestOpenClawAgentWaitTimeoutUsesOneHourForLongPDFImageWork(t *testing.T) {
+	prompt := "拆分为多章节。每个章节调用 Codex 使用 GPT images2 模型制作插图，最后输出为更新版本 PDF 文件"
+
+	timeout := openClawAgentWaitTimeout(
+		map[string]any{"taskPrompt": prompt},
+		map[string]any{"message": prompt},
+	)
+
+	if openClawAgentWaitMaxTimeout != time.Hour {
+		t.Fatalf("expected OpenClaw max agent.wait timeout to be one hour, got %s", openClawAgentWaitMaxTimeout)
+	}
+	if timeout != openClawAgentWaitMaxTimeout {
+		t.Fatalf("expected long PDF image task to use max timeout %s, got %s", openClawAgentWaitMaxTimeout, timeout)
+	}
+}
+
 func TestGatewayRequestForwardsOpenClawSkillsStatus(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()

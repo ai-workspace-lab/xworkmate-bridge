@@ -29,7 +29,7 @@ const (
 
 const (
 	openClawAgentWaitDefaultTimeout      = 6 * time.Minute
-	openClawAgentWaitMaxTimeout          = 18 * time.Minute
+	openClawAgentWaitMaxTimeout          = time.Hour
 	openClawAgentWaitHTTPMargin          = time.Minute
 	openClawNoDisplayableText            = "OpenClaw completed without displayable output."
 	openClawArtifactExportAttemptedField = "_openClawArtifactExportAttempted"
@@ -853,6 +853,9 @@ func openClawAgentWaitTimeout(params map[string]any, chatParams map[string]any) 
 	timeout := openClawAgentWaitDefaultTimeout
 
 	lowerMessage := strings.ToLower(message)
+	if isOpenClawLongArtifactTask(lowerMessage) {
+		return openClawAgentWaitMaxTimeout
+	}
 	for _, keyword := range []string{
 		"video",
 		"mp4",
@@ -885,6 +888,55 @@ func openClawAgentWaitTimeout(params map[string]any, chatParams map[string]any) 
 		return openClawAgentWaitMaxTimeout
 	}
 	return timeout
+}
+
+func isOpenClawLongArtifactTask(message string) bool {
+	hasDocumentOutput := openClawMessageContainsAny(message, []string{
+		"pdf",
+		"ppt",
+		"pptx",
+		"powerpoint",
+		"docx",
+		"document",
+		"文档",
+		"文件",
+		"输出",
+		"导出",
+	})
+	hasImageWork := openClawMessageContainsAny(message, []string{
+		"gpt images",
+		"gpt-images",
+		"images2",
+		"image",
+		"images",
+		"illustration",
+		"插图",
+		"配图",
+		"图片",
+		"生成图",
+	})
+	hasMultiStageWork := openClawMessageContainsAny(message, []string{
+		"chapter",
+		"section",
+		"codex",
+		"artifact export",
+		"章节",
+		"每章",
+		"拆分",
+		"多章节",
+		"汇总",
+		"排版",
+	})
+	return hasDocumentOutput && hasImageWork && hasMultiStageWork
+}
+
+func openClawMessageContainsAny(message string, keywords []string) bool {
+	for _, keyword := range keywords {
+		if strings.Contains(message, keyword) {
+			return true
+		}
+	}
+	return false
 }
 
 func openClawCurrentTurnMessage(params map[string]any) string {
