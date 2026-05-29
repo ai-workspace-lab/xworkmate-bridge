@@ -336,6 +336,7 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 		return nil, prepareErr
 	}
 	logOpenClawArtifactSync(gatewayProvider, sessionKey, turnID, "prepare", true, false, false)
+	applyOpenClawPreparedArtifactToChatParams(chatParams, preparedArtifact, sessionKey, turnID)
 	sendStarted := time.Now()
 	sendResult := o.openClawGatewayRequestWithRetry(
 		gatewayProvider,
@@ -615,6 +616,68 @@ func applyOpenClawPreparedArtifactToResult(result map[string]any, prepared *open
 	if strings.TrimSpace(shared.StringArg(result, "scopeKind", "")) == "" {
 		result["scopeKind"] = prepared.ScopeKind
 	}
+}
+
+func applyOpenClawPreparedArtifactToChatParams(
+	chatParams map[string]any,
+	prepared *openClawPreparedArtifactScope,
+	sessionKey string,
+	runID string,
+) {
+	if chatParams == nil || prepared == nil || strings.TrimSpace(prepared.ArtifactDirectory) == "" {
+		return
+	}
+	receipt := openClawArtifactSystemProvenanceReceipt(prepared, sessionKey, runID)
+	if receipt == "" {
+		return
+	}
+	existing := strings.TrimSpace(shared.StringArg(chatParams, "systemProvenanceReceipt", ""))
+	if existing != "" {
+		chatParams["systemProvenanceReceipt"] = existing + "\n\n" + receipt
+		return
+	}
+	chatParams["systemProvenanceReceipt"] = receipt
+}
+
+func openClawArtifactSystemProvenanceReceipt(
+	prepared *openClawPreparedArtifactScope,
+	sessionKey string,
+	runID string,
+) string {
+	if prepared == nil {
+		return ""
+	}
+	artifactDirectory := strings.TrimSpace(prepared.ArtifactDirectory)
+	artifactScope := strings.TrimSpace(prepared.ArtifactScope)
+	if artifactDirectory == "" || artifactScope == "" {
+		return ""
+	}
+	lines := []string{
+		"XWorkmate task artifact context:",
+		"- Treat artifactDirectory as the working directory for all files generated in this turn.",
+		"- Write final artifacts directly under artifactDirectory using relative paths such as assets/images/... or prompts/....",
+		"- Do not create a nested task_artifacts/<session> directory inside artifactDirectory.",
+		"- Environment contract for shell commands:",
+		"  export XWORKMATE_TASK_ARTIFACT_DIR=" + shellSingleQuote(artifactDirectory),
+		"  export XWORKMATE_ARTIFACT_DIRECTORY=" + shellSingleQuote(artifactDirectory),
+		"  export XWORKMATE_ARTIFACT_SCOPE=" + shellSingleQuote(artifactScope),
+		"  export XWORKMATE_SESSION_KEY=" + shellSingleQuote(strings.TrimSpace(sessionKey)),
+		"  export XWORKMATE_RUN_ID=" + shellSingleQuote(strings.TrimSpace(runID)),
+		"  cd " + shellSingleQuote(artifactDirectory),
+		"artifactDirectory: " + artifactDirectory,
+		"artifactScope: " + artifactScope,
+	}
+	if relative := strings.TrimSpace(prepared.RelativeArtifactDirectory); relative != "" {
+		lines = append(lines, "relativeArtifactDirectory: "+relative)
+	}
+	if remote := strings.TrimSpace(prepared.RemoteWorkingDirectory); remote != "" {
+		lines = append(lines, "remoteWorkingDirectory: "+remote)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func shellSingleQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func openClawChatSendParams(
