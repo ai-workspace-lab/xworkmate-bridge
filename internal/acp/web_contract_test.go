@@ -324,6 +324,119 @@ func TestHTTPHandlerGatewayOpenClawAdmissionQueuesExcessConcurrentSSE(t *testing
 	}
 }
 
+func TestHTTPHandlerGatewayOpenClawHandlesFiveConcurrentE2ECases(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+	gateway.agentWaitDelayMs.Store(200)
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
+	t.Setenv("BRIDGE_CONFIG_PATH", filepath.Join(t.TempDir(), "missing-config.yaml"))
+	t.Setenv("XWORKMATE_BRIDGE_OPENCLAW_GATEWAY_MAX_ACTIVE", "5")
+	t.Setenv("XWORKMATE_BRIDGE_OPENCLAW_GATEWAY_MAX_QUEUED", "20")
+	t.Setenv("XWORKMATE_BRIDGE_OPENCLAW_GATEWAY_QUEUE_TIMEOUT", "5s")
+	server := NewServer()
+	httpServer := httptest.NewServer(server.Handler())
+	defer httpServer.Close()
+
+	prompts := []string{
+		"从单机权限 → 网络边界 → Web安全 → 云身份 → Zero Trust → AI Agent 身份 → AI模型与知识保护 演进 制作 使用codex 制作连续制作 7张的一些列图片",
+		"参考附件模版制作 ,围绕 从单机权限 → 网络边界 → Web安全 → 云身份 → Zero Trust → AI Agent 身份 → AI模型与知识保护 演进 连续制作 7张的一些列图片",
+		"拆章节 -> 每章调用 Codex -> 每章 GPT images2 生成图 -> 汇总排版 -> 输出 PDF make artifact",
+		"围绕 从单机权限 → 网络边界 → Web安全 → 云身份 → Zero Trust → AI Agent 身份 → AI模型与知识保护 演进 右侧是当下 测试制作视频",
+		"从单机权限 → 网络边界 → Web安全 → 云身份 → Zero Trust → AI Agent 身份 → AI模型与知识保护 演进 拆章节 -> 每章调用 Codex -> 每章 GPT images2 生成图 -> 汇总排版 -> 制作视频",
+	}
+	type result struct {
+		body string
+		err  error
+	}
+	results := make(chan result, len(prompts))
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for index, prompt := range prompts {
+		wg.Add(1)
+		go func(index int, prompt string) {
+			defer wg.Done()
+			<-start
+			body := fmt.Sprintf(
+				`{"jsonrpc":"2.0","id":"e2e-%d","method":"session.start","params":{"sessionId":"e2e-s%d","threadId":"e2e-t%d","taskPrompt":%q,"workingDirectory":%q,"routing":{"routingMode":"explicit","explicitExecutionTarget":"gateway","preferredGatewayProviderId":"openclaw"}}}`,
+				index,
+				index,
+				index,
+				prompt,
+				t.TempDir(),
+			)
+			request, err := http.NewRequest(
+				http.MethodPost,
+				httpServer.URL+"/acp/rpc",
+				strings.NewReader(body),
+			)
+			if err != nil {
+				results <- result{err: err}
+				return
+			}
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Accept", "text/event-stream")
+			request.Header.Set("Authorization", "Bearer bridge-test-token")
+			response, err := http.DefaultClient.Do(request)
+			if err != nil {
+				results <- result{err: err}
+				return
+			}
+			defer func() { _ = response.Body.Close() }()
+			responseBody, err := io.ReadAll(response.Body)
+			if err != nil {
+				results <- result{err: err}
+				return
+			}
+			if response.StatusCode != http.StatusOK {
+				results <- result{err: fmt.Errorf("expected 200, got %d: %s", response.StatusCode, string(responseBody))}
+				return
+			}
+			results <- result{body: string(responseBody)}
+		}(index, prompt)
+	}
+	close(start)
+	waitForOpenClawGatewayCount(t, gateway.ChatSendCount, len(prompts))
+	wg.Wait()
+	close(results)
+
+	var finalCount int
+	for item := range results {
+		if item.err != nil {
+			t.Fatalf("concurrent e2e request failed: %v", item.err)
+		}
+		if strings.Contains(item.body, `"event":"queued"`) {
+			t.Fatalf("expected five active OpenClaw slots without queueing, got queued event: %s", item.body)
+		}
+		for _, unexpected := range []string{
+			"invalid handshake",
+			"SOCKET_CLOSED",
+			"ACP_HTTP_CONNECTION_CLOSED",
+			"GATEWAY_CONNECT_FAILED",
+		} {
+			if strings.Contains(item.body, unexpected) {
+				t.Fatalf("unexpected gateway stability error %q in body: %s", unexpected, item.body)
+			}
+		}
+		if strings.Contains(item.body, `"result"`) && strings.Contains(item.body, `data: [DONE]`) {
+			finalCount += 1
+		}
+	}
+	if finalCount != len(prompts) {
+		t.Fatalf("expected all five e2e requests to return final result, got %d", finalCount)
+	}
+	if got := gateway.ConnectCount(); got != 1 {
+		t.Fatalf("expected bridge to reuse one established OpenClaw connection, got %d connects", got)
+	}
+	if got := gateway.ChatSendCount(); got != len(prompts) {
+		t.Fatalf("expected five chat.send calls, got %d", got)
+	}
+	if got := gateway.AgentWaitCount(); got != len(prompts) {
+		t.Fatalf("expected five agent.wait calls, got %d", got)
+	}
+}
+
 func TestHTTPHandlerGatewayOpenClawAdmissionRejectsWhenQueueFull(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()

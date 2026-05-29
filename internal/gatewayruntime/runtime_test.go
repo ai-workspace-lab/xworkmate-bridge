@@ -92,6 +92,102 @@ func TestManagerReconnectsAfterSocketClose(t *testing.T) {
 	}
 }
 
+func TestManagerSerializesConcurrentConnectReuseBeforeRequests(t *testing.T) {
+	server := newFakeGatewayServer(t)
+	server.enforceConnectFirst.Store(true)
+	defer server.Close()
+
+	manager := NewManager()
+	manager.ReconnectDelay = 20 * time.Millisecond
+	const workers = 5
+	start := make(chan struct{})
+	errs := make(chan string, workers)
+	var wg sync.WaitGroup
+	for index := 0; index < workers; index++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			connectResult := manager.Connect(
+				buildTestConnectRequest(server.Port()),
+				func(map[string]any) {},
+			)
+			if !connectResult.OK {
+				errs <- "connect failed: " + stringValue(connectResult.Error["message"])
+				return
+			}
+			requestResult := manager.Request(
+				"runtime-1",
+				"chat.send",
+				map[string]any{"message": "pong"},
+				2*time.Second,
+				func(map[string]any) {},
+			)
+			if !requestResult.OK {
+				errs <- "request failed: " + stringValue(requestResult.Error["message"])
+				return
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		t.Fatal(err)
+	}
+	if got := server.InvalidHandshakeCount(); got != 0 {
+		t.Fatalf("expected no invalid handshake, got %d", got)
+	}
+	if got := server.ConnectCount(); got != 1 {
+		t.Fatalf("expected concurrent connect calls to reuse one established gateway session, got %d", got)
+	}
+}
+
+func TestManagerDropsConnectionAfterInvalidHandshake(t *testing.T) {
+	server := newFakeGatewayServer(t)
+	defer server.Close()
+
+	manager := NewManager()
+	result := manager.Connect(buildTestConnectRequest(server.Port()), func(map[string]any) {})
+	if !result.OK {
+		t.Fatalf("expected connect success, got %#v", result.Error)
+	}
+
+	server.invalidNextRequest.Store(true)
+	failed := manager.Request(
+		"runtime-1",
+		"chat.send",
+		map[string]any{"message": "pong"},
+		2*time.Second,
+		func(map[string]any) {},
+	)
+	if failed.OK {
+		t.Fatalf("expected invalid handshake failure")
+	}
+	if got := stringValue(failed.Error["code"]); got != "INVALID_HANDSHAKE" {
+		t.Fatalf("expected invalid handshake code, got %#v", failed.Error)
+	}
+
+	reconnected := manager.Connect(buildTestConnectRequest(server.Port()), func(map[string]any) {})
+	if !reconnected.OK {
+		t.Fatalf("expected reconnect success, got %#v", reconnected.Error)
+	}
+	requestResult := manager.Request(
+		"runtime-1",
+		"chat.send",
+		map[string]any{"message": "pong"},
+		2*time.Second,
+		func(map[string]any) {},
+	)
+	if !requestResult.OK {
+		t.Fatalf("expected request after reconnect to succeed, got %#v", requestResult.Error)
+	}
+	if got := server.ConnectCount(); got != 2 {
+		t.Fatalf("expected reconnect after invalid handshake, got %d connects", got)
+	}
+}
+
 func TestManagerSuppressesReconnectForPairingRequired(t *testing.T) {
 	server := newFakeGatewayServer(t)
 	server.connectErrorCode = "NOT_PAIRED"
@@ -179,7 +275,10 @@ type fakeGatewayServer struct {
 	server                 *http.Server
 	listener               net.Listener
 	connectCount           atomic.Int32
+	invalidHandshakeCount  atomic.Int32
 	closeAfterConnect      atomic.Bool
+	enforceConnectFirst    atomic.Bool
+	invalidNextRequest     atomic.Bool
 	connectErrorCode       string
 	connectErrorDetailCode string
 }
@@ -208,6 +307,7 @@ func newFakeGatewayServer(t *testing.T) *fakeGatewayServer {
 				"nonce": "nonce-1",
 			},
 		})
+		connected := false
 		for {
 			_, payload, err := conn.ReadMessage()
 			if err != nil {
@@ -222,9 +322,36 @@ func newFakeGatewayServer(t *testing.T) *fakeGatewayServer {
 			}
 			id := frame["id"]
 			method := stringValue(frame["method"])
+			if fake.enforceConnectFirst.Load() && !connected && method != "connect" {
+				fake.invalidHandshakeCount.Add(1)
+				_ = conn.WriteJSON(map[string]any{
+					"type": "res",
+					"id":   id,
+					"ok":   false,
+					"error": map[string]any{
+						"code":    "INVALID_HANDSHAKE",
+						"message": "invalid handshake: first request must be connect",
+					},
+				})
+				continue
+			}
+			if fake.invalidNextRequest.Swap(false) && method != "connect" {
+				fake.invalidHandshakeCount.Add(1)
+				_ = conn.WriteJSON(map[string]any{
+					"type": "res",
+					"id":   id,
+					"ok":   false,
+					"error": map[string]any{
+						"code":    "INVALID_HANDSHAKE",
+						"message": "invalid handshake: first request must be connect",
+					},
+				})
+				continue
+			}
 			switch method {
 			case "connect":
 				fake.connectCount.Add(1)
+				connected = true
 				if fake.connectErrorCode != "" {
 					_ = conn.WriteJSON(map[string]any{
 						"type": "res",
@@ -294,6 +421,10 @@ func (f *fakeGatewayServer) Port() int {
 
 func (f *fakeGatewayServer) ConnectCount() int {
 	return int(f.connectCount.Load())
+}
+
+func (f *fakeGatewayServer) InvalidHandshakeCount() int {
+	return int(f.invalidHandshakeCount.Load())
 }
 
 func (f *fakeGatewayServer) Close() {

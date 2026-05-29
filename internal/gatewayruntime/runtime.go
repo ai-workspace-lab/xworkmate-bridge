@@ -138,8 +138,7 @@ func (m *Manager) Connect(
 	}
 	m.mu.Unlock()
 
-	current.configure(request, notify)
-	return current.connect()
+	return current.connect(request, notify)
 }
 
 func (m *Manager) Request(
@@ -223,6 +222,7 @@ type session struct {
 	runtimeID string
 
 	mu                sync.Mutex
+	connectMu         sync.Mutex
 	writeMu           sync.Mutex
 	notify            func(map[string]any)
 	config            ConnectRequest
@@ -273,7 +273,17 @@ func (s *session) setNotify(notify func(map[string]any)) {
 	s.notify = notify
 }
 
-func (s *session) connect() ConnectResult {
+func (s *session) connect(request ConnectRequest, notify func(map[string]any)) ConnectResult {
+	s.connectMu.Lock()
+	defer s.connectMu.Unlock()
+
+	if snapshot, ok := s.connectedSnapshotFor(request, notify); ok {
+		return ConnectResult{
+			OK:       true,
+			Snapshot: snapshot,
+		}
+	}
+	s.configure(request, notify)
 	s.appendLog(
 		"info",
 		"connect",
@@ -308,6 +318,29 @@ func (s *session) connect() ConnectResult {
 		Snapshot: s.snapshotMap(),
 		Error:    gatewayErr.Map(),
 	}
+}
+
+func (s *session) connectedSnapshotFor(
+	request ConnectRequest,
+	notify func(map[string]any),
+) (map[string]any, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.conn == nil || s.snapshot.Status != "connected" {
+		return nil, false
+	}
+	if !sameConnectTarget(s.config, request) {
+		return nil, false
+	}
+	s.notify = notify
+	return s.snapshot.Map(), true
+}
+
+func sameConnectTarget(current ConnectRequest, next ConnectRequest) bool {
+	return strings.TrimSpace(current.Mode) == strings.TrimSpace(next.Mode) &&
+		strings.TrimSpace(current.Endpoint.Host) == strings.TrimSpace(next.Endpoint.Host) &&
+		current.Endpoint.Port == next.Endpoint.Port &&
+		current.Endpoint.TLS == next.Endpoint.TLS
 }
 
 func (s *session) connectAttempt() (ConnectResult, *GatewayError) {
@@ -352,7 +385,7 @@ func (s *session) connectAttempt() (ConnectResult, *GatewayError) {
 		s.closeConn(conn)
 		return ConnectResult{}, gatewayErr
 	}
-	requestResult := s.requestRemote("connect", params, 12*time.Second, false)
+	requestResult := s.requestRemoteOnConn("connect", params, 12*time.Second, false, conn)
 	if !requestResult.OK {
 		s.closeConn(conn)
 		return ConnectResult{}, mapToGatewayError(requestResult.Error, "connect failed")
@@ -435,12 +468,25 @@ func (s *session) requestRemote(
 	timeout time.Duration,
 	requireConnected bool,
 ) RequestResult {
+	return s.requestRemoteOnConn(method, params, timeout, requireConnected, nil)
+}
+
+func (s *session) requestRemoteOnConn(
+	method string,
+	params map[string]any,
+	timeout time.Duration,
+	requireConnected bool,
+	boundConn *websocket.Conn,
+) RequestResult {
 	if timeout <= 0 {
 		timeout = defaultRequestTimeout
 	}
 
 	s.mu.Lock()
 	conn := s.conn
+	if boundConn != nil {
+		conn = boundConn
+	}
 	connected := s.snapshot.Status == "connected"
 	if conn == nil || (requireConnected && !connected) {
 		s.mu.Unlock()
@@ -491,6 +537,9 @@ func (s *session) requestRemote(
 		s.mu.Unlock()
 		if !response.OK {
 			gatewayErr := parseRemoteError(response.Error)
+			if isInvalidHandshakeGatewayError(gatewayErr) {
+				s.resetConnAfterProtocolError(conn, gatewayErr)
+			}
 			if !shouldAutoReconnectForCodes(
 				gatewayErr.Code,
 				gatewayErr.DetailCode(),
@@ -530,6 +579,60 @@ func (s *session) requestRemote(
 			}).Map(),
 		}
 	}
+}
+
+func (s *session) resetConnAfterProtocolError(conn *websocket.Conn, err *GatewayError) {
+	if conn == nil {
+		return
+	}
+	message := "gateway protocol handshake failed"
+	code := "INVALID_HANDSHAKE"
+	if err != nil {
+		if strings.TrimSpace(err.Message) != "" {
+			message = strings.TrimSpace(err.Message)
+		}
+		if strings.TrimSpace(err.Code) != "" {
+			code = strings.TrimSpace(err.Code)
+		}
+	}
+	s.mu.Lock()
+	if s.conn != conn {
+		s.mu.Unlock()
+		return
+	}
+	s.conn = nil
+	pending := s.takePendingLocked()
+	s.snapshot.Status = "error"
+	s.snapshot.StatusText = "Disconnected"
+	s.snapshot.LastError = message
+	s.snapshot.LastErrorCode = code
+	s.snapshot.LastErrorDetailCode = ""
+	s.mu.Unlock()
+
+	for _, ch := range pending {
+		ch <- remoteResponse{
+			OK: false,
+			Error: (&GatewayError{
+				Message: "socket closed",
+				Code:    "SOCKET_CLOSED",
+			}).Map(),
+		}
+	}
+	_ = conn.Close()
+	s.appendLog("warn", "socket", message)
+}
+
+func isInvalidHandshakeGatewayError(err *GatewayError) bool {
+	if err == nil {
+		return false
+	}
+	code := strings.TrimSpace(strings.ToUpper(err.Code))
+	if code == "INVALID_HANDSHAKE" {
+		return true
+	}
+	message := strings.TrimSpace(strings.ToLower(err.Message))
+	return strings.Contains(message, "invalid handshake") ||
+		strings.Contains(message, "first request must be connect")
 }
 
 func (s *session) disconnect() {

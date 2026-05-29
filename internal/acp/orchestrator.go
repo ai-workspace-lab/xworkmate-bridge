@@ -1233,11 +1233,13 @@ func (o *SessionOrchestrator) openClawGatewayRequestWithRetry(
 
 func isOpenClawRetryableGatewayError(errorPayload map[string]any) bool {
 	code := strings.TrimSpace(strings.ToUpper(shared.StringArg(errorPayload, "code", "")))
-	if code == "SOCKET_CLOSED" || code == "SOCKET_FAILURE" || code == "OFFLINE" {
+	if code == "SOCKET_CLOSED" || code == "SOCKET_FAILURE" || code == "OFFLINE" || code == "INVALID_HANDSHAKE" {
 		return true
 	}
 	message := strings.TrimSpace(strings.ToLower(shared.StringArg(errorPayload, "message", "")))
-	return strings.Contains(message, "socket closed")
+	return strings.Contains(message, "socket closed") ||
+		strings.Contains(message, "invalid handshake") ||
+		strings.Contains(message, "first request must be connect")
 }
 
 func firstNonEmptyString(values map[string]any, keys ...string) string {
