@@ -34,3 +34,16 @@ func TestStaticTokenAuthServiceValidateAuthorizationHeaderStrictWhenSet(t *testi
 		t.Fatal("expected non-bearer header to be rejected")
 	}
 }
+
+func TestStaticTokenAuthServiceValidateAuthorizationHeaderAcceptsReviewToken(t *testing.T) {
+	svc := NewStaticTokenAuthService("production-secret", "review-secret")
+	if !svc.ValidateAuthorizationHeader("Bearer production-secret") {
+		t.Fatal("expected production bearer header to be accepted")
+	}
+	if !svc.ValidateAuthorizationHeader("Bearer review-secret") {
+		t.Fatal("expected review bearer header to be accepted")
+	}
+	if svc.ValidateAuthorizationHeader("Bearer disabled-review-secret") {
+		t.Fatal("expected unconfigured review bearer header to be rejected")
+	}
+}

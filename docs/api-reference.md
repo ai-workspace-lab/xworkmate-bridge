@@ -40,15 +40,16 @@
 环境变量：
 
 - `BRIDGE_AUTH_TOKEN`
+- `BRIDGE_REVIEW_AUTH_TOKEN`（可选）：Apple review / beta 工测专用临时 token。清空该环境变量并重启/reload bridge 即可单独关停，不影响主 token。
 - `ACP_ALLOWED_ORIGINS`
 
 规则：
 
 - `/acp` 与 `/acp/rpc` 都做 origin allowlist 校验
 - 空 `Origin` 默认允许
-- `/api/ping`、`/acp`、`/acp/rpc` 在 `BRIDGE_AUTH_TOKEN` 非空时都要求 bearer header
-- `BRIDGE_AUTH_TOKEN` 为空时默认放行
-- `BRIDGE_AUTH_TOKEN` 非空时，接受裸 token 或 `Bearer <token>`
+- `/api/ping`、`/acp`、`/acp/rpc` 在任一 bridge token 非空时都要求 bearer header
+- `BRIDGE_AUTH_TOKEN` 与 `BRIDGE_REVIEW_AUTH_TOKEN` 都为空时默认放行
+- token 非空时，接受裸 token 或 `Bearer <token>`
 - `xworkmate-app` 生产 Origin 固定为 `https://xworkmate.svc.plus`
 
 ## 3.1 Lightweight Distributed Task Forwarding

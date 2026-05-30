@@ -899,6 +899,27 @@ func TestHandleRPCCapabilitiesRequiresBearerAuthorizationWhenBridgeAuthTokenConf
 	}
 }
 
+func TestHandleRPCAllowsReviewBearerAuthorizationWhenConfigured(t *testing.T) {
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
+	t.Setenv("BRIDGE_REVIEW_AUTH_TOKEN", "review-bridge-test-token")
+	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
+	server := NewServer()
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"http://127.0.0.1/acp/rpc",
+		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"acp.capabilities"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer review-bridge-test-token")
+
+	server.HandleRPC(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200 for configured review token, got %d", recorder.Code)
+	}
+}
+
 func TestHandleRPCRejectsUnknownOrigin(t *testing.T) {
 	t.Setenv("ACP_ALLOWED_ORIGINS", "https://xworkmate.svc.plus")
 	t.Setenv("BRIDGE_AUTH_TOKEN", "")

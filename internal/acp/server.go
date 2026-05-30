@@ -47,8 +47,11 @@ func NewServer() *Server {
 		sessions:       make(map[string]*session),
 		config:         config,
 		allowedOrigins: shared.ParseAllowedOrigins(shared.EnvOrDefault("ACP_ALLOWED_ORIGINS", "https://xworkmate.svc.plus,http://localhost:*,http://127.0.0.1:*")),
-		authService:    service.NewStaticTokenAuthService(shared.EnvOrDefault("BRIDGE_AUTH_TOKEN", "")),
-		openClawGate:   newOpenClawGatewayAdmissionGate(config),
+		authService: service.NewStaticTokenAuthService(
+			shared.EnvOrDefault("BRIDGE_AUTH_TOKEN", ""),
+			shared.EnvOrDefault("BRIDGE_REVIEW_AUTH_TOKEN", ""),
+		),
+		openClawGate: newOpenClawGatewayAdmissionGate(config),
 		taskForwarder: newDistributedTaskForwarder(distributedTaskForwarderConfig{
 			Endpoint: resolveDistributedTaskForwardEndpoint(config),
 			Token:    resolveDistributedTaskForwardToken(config),
