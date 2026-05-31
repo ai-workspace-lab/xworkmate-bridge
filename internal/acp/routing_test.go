@@ -706,6 +706,137 @@ func TestExecuteSessionTaskGatewayNoDisplayableOutputFails(t *testing.T) {
 	}
 }
 
+func TestExecuteSessionTaskGatewayComplexArtifactContractAcceptsRequiredFinalArtifact(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	response, rpcErr := server.executeSessionTask(task{
+		req: shared.RPCRequest{
+			Method: "session.start",
+			Params: map[string]any{
+				"sessionId":        "session-openclaw-complex-pdf",
+				"threadId":         "thread-openclaw-complex-pdf",
+				"taskPrompt":       "make pdf artifact",
+				"workingDirectory": t.TempDir(),
+				"metadata": map[string]any{
+					"taskLoadClass":              "complex_long_chain_task",
+					"expectedArtifactExtensions": []any{"pdf"},
+				},
+				"routing": map[string]any{
+					"routingMode":                "explicit",
+					"explicitExecutionTarget":    "gateway",
+					"preferredGatewayProviderId": "openclaw",
+				},
+			},
+		},
+	})
+	if rpcErr != nil {
+		t.Fatalf("expected gateway response, got rpc error: %#v", rpcErr)
+	}
+	if got := response["success"]; got != true {
+		t.Fatalf("expected required PDF artifact to satisfy contract, got %#v", response)
+	}
+	artifacts := responseArtifactMaps(t, response)
+	if len(artifacts) != 1 || artifacts[0]["relativePath"] != "exports/final.pdf" {
+		t.Fatalf("expected final PDF artifact, got %#v", artifacts)
+	}
+	if got := response["expectedArtifactExtensions"]; fmt.Sprint(got) != "[pdf]" {
+		t.Fatalf("expected artifact extension diagnostics, got %#v", response)
+	}
+}
+
+func TestExecuteSessionTaskGatewayComplexArtifactContractFailsWithPartialArtifacts(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	response, rpcErr := server.executeSessionTask(task{
+		req: shared.RPCRequest{
+			Method: "session.start",
+			Params: map[string]any{
+				"sessionId":        "session-openclaw-partial-pdf",
+				"threadId":         "thread-openclaw-partial-pdf",
+				"taskPrompt":       "make partial artifact",
+				"workingDirectory": t.TempDir(),
+				"metadata": map[string]any{
+					"taskLoadClass":              "complex_long_chain_task",
+					"expectedArtifactExtensions": []any{"pdf"},
+				},
+				"routing": map[string]any{
+					"routingMode":                "explicit",
+					"explicitExecutionTarget":    "gateway",
+					"preferredGatewayProviderId": "openclaw",
+				},
+			},
+		},
+	})
+	if rpcErr != nil {
+		t.Fatalf("expected structured partial-artifact response, got rpc error: %#v", rpcErr)
+	}
+	if got := response["success"]; got != false {
+		t.Fatalf("expected partial artifact response to fail, got %#v", response)
+	}
+	if got := response["code"]; got != "OPENCLAW_REQUIRED_ARTIFACT_MISSING" {
+		t.Fatalf("expected required artifact missing code, got %#v", response)
+	}
+	artifacts := responseArtifactMaps(t, response)
+	if len(artifacts) != 1 || artifacts[0]["relativePath"] != "chapters/intro.md" {
+		t.Fatalf("expected partial artifact to remain exported, got %#v", artifacts)
+	}
+	if got := response["missingArtifactExtensions"]; fmt.Sprint(got) != "[pdf]" {
+		t.Fatalf("expected missing PDF diagnostics, got %#v", response)
+	}
+}
+
+func TestExecuteSessionTaskGatewayComplexArtifactContractNoFilesKeepsNoDisplayableOutput(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	response, rpcErr := server.executeSessionTask(task{
+		req: shared.RPCRequest{
+			Method: "session.start",
+			Params: map[string]any{
+				"sessionId":        "session-openclaw-no-complex-output",
+				"threadId":         "thread-openclaw-no-complex-output",
+				"taskPrompt":       "silent-turn",
+				"workingDirectory": t.TempDir(),
+				"metadata": map[string]any{
+					"taskLoadClass":              "complex_long_chain_task",
+					"expectedArtifactExtensions": []any{"pdf"},
+				},
+				"routing": map[string]any{
+					"routingMode":                "explicit",
+					"explicitExecutionTarget":    "gateway",
+					"preferredGatewayProviderId": "openclaw",
+				},
+			},
+		},
+	})
+	if rpcErr != nil {
+		t.Fatalf("expected structured no-output response, got rpc error: %#v", rpcErr)
+	}
+	if got := response["code"]; got != "OPENCLAW_NO_DISPLAYABLE_OUTPUT" {
+		t.Fatalf("expected no-displayable code for empty complex run, got %#v", response)
+	}
+	if got := response["expectedArtifactExtensions"]; fmt.Sprint(got) != "[pdf]" {
+		t.Fatalf("expected expected extension diagnostics, got %#v", response)
+	}
+	if got := strings.TrimSpace(shared.StringArg(response, "artifactScope", "")); got == "" {
+		t.Fatalf("expected artifact scope diagnostics, got %#v", response)
+	}
+}
+
 func TestExecuteSessionMessageGatewayUsesOpenClawChatSend(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
@@ -2725,6 +2856,32 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 						},
 					}
 				}
+				if strings.Contains(fake.runMessage(runID), "make pdf artifact") {
+					payload["artifacts"] = []any{
+						map[string]any{
+							"relativePath":  "exports/final.pdf",
+							"label":         "final.pdf",
+							"contentType":   "application/pdf",
+							"sizeBytes":     12,
+							"sha256":        "fake-sha256",
+							"artifactScope": artifactScope,
+							"scopeKind":     "task",
+						},
+					}
+				}
+				if strings.Contains(fake.runMessage(runID), "make partial artifact") {
+					payload["artifacts"] = []any{
+						map[string]any{
+							"relativePath":  "chapters/intro.md",
+							"label":         "intro.md",
+							"contentType":   "text/markdown",
+							"sizeBytes":     12,
+							"sha256":        "fake-sha256",
+							"artifactScope": artifactScope,
+							"scopeKind":     "task",
+						},
+					}
+				}
 				_ = conn.WriteJSON(map[string]any{
 					"type":    "res",
 					"id":      id,
@@ -2977,6 +3134,22 @@ func sameMethods(got []string, want []string) bool {
 		}
 	}
 	return true
+}
+
+func responseArtifactMaps(t *testing.T, response map[string]any) []map[string]any {
+	t.Helper()
+	if artifacts, ok := response["artifacts"].([]map[string]any); ok {
+		return artifacts
+	}
+	raw, ok := response["artifacts"].([]any)
+	if !ok {
+		t.Fatalf("expected artifacts payload, got %#v", response["artifacts"])
+	}
+	artifacts := make([]map[string]any, 0, len(raw))
+	for _, item := range raw {
+		artifacts = append(artifacts, shared.AsMap(item))
+	}
+	return artifacts
 }
 
 func mustStepMaps(t *testing.T, value any) []map[string]any {

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -32,6 +33,7 @@ const (
 	openClawAgentWaitMaxTimeout          = time.Hour
 	openClawAgentWaitHTTPMargin          = time.Minute
 	openClawNoDisplayableText            = "OpenClaw completed without displayable output."
+	openClawRequiredArtifactMissingText  = "OpenClaw completed without required final artifacts."
 	openClawArtifactExportAttemptedField = "_openClawArtifactExportAttempted"
 )
 
@@ -325,6 +327,7 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
+	artifactContract := openClawArtifactContractForParams(params, chatParams)
 	artifactSinceUnixMs := time.Now().Add(-1 * time.Second).UnixMilli()
 	preparedArtifact, prepareErr := o.openClawArtifactPrepare(
 		gatewayProvider,
@@ -336,7 +339,7 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 		return nil, prepareErr
 	}
 	logOpenClawArtifactSync(gatewayProvider, sessionKey, turnID, "prepare", true, false, false)
-	applyOpenClawPreparedArtifactToChatParams(chatParams, preparedArtifact, sessionKey, turnID)
+	applyOpenClawPreparedArtifactToChatParams(chatParams, preparedArtifact, sessionKey, turnID, artifactContract)
 	sendStarted := time.Now()
 	sendResult := o.openClawGatewayRequestWithRetry(
 		gatewayProvider,
@@ -369,6 +372,7 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 			return nil, prepareErr
 		}
 		logOpenClawArtifactSync(gatewayProvider, sessionKey, runID, "prepare", true, false, false)
+		applyOpenClawPreparedArtifactToChatParams(chatParams, preparedArtifact, sessionKey, runID, artifactContract)
 	}
 	waitTimeout := openClawAgentWaitTimeout(params, chatParams)
 	waitStarted := time.Now()
@@ -429,6 +433,7 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 	logOpenClawArtifactSync(gatewayProvider, sessionKey, runID, "export", preparedArtifact != nil, exportedCount > 0, exportedCount == 0)
 	o.server.decorateOpenClawArtifactDownloadURLs(result, shared.StringArg(chatParams, "sessionKey", ""), runID)
 	stripOpenClawArtifactInlineContent(result)
+	applyOpenClawArtifactContractResult(result, artifactContract)
 	guardOpenClawNoDisplayableResult(result, noDisplayableOutput)
 	if notify != nil {
 		notify(shared.NotificationEnvelope("session.update", openClawGatewayCompletedResultUpdate(sessionID, threadID, turnID, result)))
@@ -623,11 +628,12 @@ func applyOpenClawPreparedArtifactToChatParams(
 	prepared *openClawPreparedArtifactScope,
 	sessionKey string,
 	runID string,
+	contract openClawArtifactContract,
 ) {
 	if chatParams == nil || prepared == nil || strings.TrimSpace(prepared.ArtifactDirectory) == "" {
 		return
 	}
-	receipt := openClawArtifactSystemProvenanceReceipt(prepared, sessionKey, runID)
+	receipt := openClawArtifactSystemProvenanceReceipt(prepared, sessionKey, runID, contract)
 	if receipt == "" {
 		return
 	}
@@ -643,6 +649,7 @@ func openClawArtifactSystemProvenanceReceipt(
 	prepared *openClawPreparedArtifactScope,
 	sessionKey string,
 	runID string,
+	contract openClawArtifactContract,
 ) string {
 	if prepared == nil {
 		return ""
@@ -673,11 +680,106 @@ func openClawArtifactSystemProvenanceReceipt(
 	if remote := strings.TrimSpace(prepared.RemoteWorkingDirectory); remote != "" {
 		lines = append(lines, "remoteWorkingDirectory: "+remote)
 	}
+	if contract.ComplexLongChain {
+		lines = append(lines,
+			"",
+			"Complex XWorkmate artifact contract:",
+			"- Persist the stage plan, intermediate outputs, generated assets, final manifest, and final deliverables inside artifactDirectory.",
+			"- Use clear relative paths that match the task structure instead of global cache or temporary directories.",
+			"- Do not report completion until requested final deliverables are present in artifactDirectory.",
+		)
+	}
+	if len(contract.ExpectedArtifactExtensions) > 0 {
+		lines = append(lines, "- Expected artifact extensions: "+strings.Join(contract.ExpectedArtifactExtensions, ", "))
+	}
+	if len(contract.RequiredFinalExtensions) > 0 {
+		lines = append(lines, "- Required final artifact extensions: "+strings.Join(contract.RequiredFinalExtensions, ", "))
+	}
 	return strings.Join(lines, "\n")
 }
 
 func shellSingleQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+type openClawArtifactContract struct {
+	TaskLoadClass              string
+	ComplexLongChain           bool
+	ExpectedArtifactExtensions []string
+	RequiredFinalExtensions    []string
+}
+
+var (
+	openClawDottedExtensionPattern = regexp.MustCompile(`(?i)\.([a-z0-9]{2,5})\b`)
+	openClawFormatTokenPattern     = regexp.MustCompile(`(?i)\b([a-z0-9]{2,5})\s*(?:格式|文件|产物|artifact|file|output)`)
+	openClawOutputTokenPattern     = regexp.MustCompile(`(?i)(?:输出|导出|生成|制作)\s*([a-z0-9]{2,5})`)
+)
+
+func openClawArtifactContractForParams(params map[string]any, chatParams map[string]any) openClawArtifactContract {
+	metadata := shared.AsMap(params["metadata"])
+	taskLoadClass := strings.TrimSpace(shared.StringArg(metadata, "taskLoadClass", ""))
+	message := strings.TrimSpace(shared.StringArg(chatParams, "message", ""))
+	if message == "" {
+		message = openClawCurrentTurnMessage(params)
+	}
+	lowerMessage := strings.ToLower(message)
+	expected := normalizeOpenClawExtensionList(shared.ListArg(metadata, "expectedArtifactExtensions"))
+	if len(expected) == 0 {
+		expected = extractOpenClawExtensionMentions(lowerMessage)
+	}
+	complex := taskLoadClass == "complex_long_chain_task" || isOpenClawLongArtifactTask(lowerMessage)
+	return openClawArtifactContract{
+		TaskLoadClass:              taskLoadClass,
+		ComplexLongChain:           complex,
+		ExpectedArtifactExtensions: expected,
+		RequiredFinalExtensions:    append([]string(nil), expected...),
+	}
+}
+
+func normalizeOpenClawExtensionList(values []any) []string {
+	result := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		extension := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(fmt.Sprint(value))), ".")
+		if extension == "" || seen[extension] {
+			continue
+		}
+		seen[extension] = true
+		result = append(result, extension)
+	}
+	return result
+}
+
+func extractOpenClawExtensionMentions(message string) []string {
+	result := make([]string, 0, 4)
+	add := func(value string) {
+		extension := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(value)), ".")
+		if extension == "" {
+			return
+		}
+		for _, existing := range result {
+			if existing == extension {
+				return
+			}
+		}
+		result = append(result, extension)
+	}
+	for _, match := range openClawDottedExtensionPattern.FindAllStringSubmatch(message, -1) {
+		if len(match) > 1 {
+			add(match[1])
+		}
+	}
+	for _, match := range openClawFormatTokenPattern.FindAllStringSubmatch(message, -1) {
+		if len(match) > 1 {
+			add(match[1])
+		}
+	}
+	for _, match := range openClawOutputTokenPattern.FindAllStringSubmatch(message, -1) {
+		if len(match) > 1 {
+			add(match[1])
+		}
+	}
+	return result
 }
 
 func openClawChatSendParams(
@@ -916,7 +1018,8 @@ func openClawAgentWaitTimeout(params map[string]any, chatParams map[string]any) 
 	timeout := openClawAgentWaitDefaultTimeout
 
 	lowerMessage := strings.ToLower(message)
-	if isOpenClawLongArtifactTask(lowerMessage) {
+	if strings.TrimSpace(shared.StringArg(shared.AsMap(params["metadata"]), "taskLoadClass", "")) == "complex_long_chain_task" ||
+		isOpenClawLongArtifactTask(lowerMessage) {
 		return openClawAgentWaitMaxTimeout
 	}
 	for _, keyword := range []string{
@@ -1166,6 +1269,70 @@ func guardOpenClawNoDisplayableResult(result map[string]any, noDisplayableOutput
 	result["message"] = openClawNoDisplayableText
 	result["output"] = openClawNoDisplayableText
 	result["summary"] = openClawNoDisplayableText
+}
+
+func applyOpenClawArtifactContractResult(result map[string]any, contract openClawArtifactContract) {
+	if result == nil {
+		return
+	}
+	if strings.TrimSpace(contract.TaskLoadClass) != "" {
+		result["taskLoadClass"] = contract.TaskLoadClass
+	}
+	if len(contract.ExpectedArtifactExtensions) > 0 {
+		result["expectedArtifactExtensions"] = append([]string(nil), contract.ExpectedArtifactExtensions...)
+	}
+	if len(contract.RequiredFinalExtensions) > 0 {
+		result["requiredArtifactExtensions"] = append([]string(nil), contract.RequiredFinalExtensions...)
+	}
+	if !contract.ComplexLongChain || len(contract.RequiredFinalExtensions) == 0 || !parseBool(result["success"]) {
+		return
+	}
+	remoteWorkingDirectory := strings.TrimSpace(shared.StringArg(result, "remoteWorkingDirectory", ""))
+	artifacts := extractArtifactPayloads(result, remoteWorkingDirectory)
+	if len(artifacts) == 0 {
+		return
+	}
+	missing := missingOpenClawArtifactExtensions(artifacts, contract.RequiredFinalExtensions)
+	if len(missing) == 0 {
+		return
+	}
+	result["success"] = false
+	result["status"] = "failed"
+	result["code"] = "OPENCLAW_REQUIRED_ARTIFACT_MISSING"
+	result["error"] = "openclaw returned partial artifacts without required final deliverables"
+	result["message"] = openClawRequiredArtifactMissingText
+	result["output"] = openClawRequiredArtifactMissingText
+	result["summary"] = openClawRequiredArtifactMissingText
+	result["missingArtifactExtensions"] = missing
+}
+
+func missingOpenClawArtifactExtensions(artifacts []map[string]any, required []string) []string {
+	seen := map[string]bool{}
+	for _, artifact := range artifacts {
+		if extension := openClawArtifactExtension(artifact); extension != "" {
+			seen[extension] = true
+		}
+	}
+	missing := make([]string, 0, len(required))
+	for _, extension := range required {
+		if !seen[extension] {
+			missing = append(missing, extension)
+		}
+	}
+	return missing
+}
+
+func openClawArtifactExtension(artifact map[string]any) string {
+	for _, key := range []string{"relativePath", "path", "label", "name"} {
+		value := strings.TrimSpace(shared.StringArg(artifact, key, ""))
+		if value == "" {
+			continue
+		}
+		if extension := strings.TrimPrefix(strings.ToLower(filepath.Ext(value)), "."); extension != "" {
+			return extension
+		}
+	}
+	return ""
 }
 
 func mergeOpenClawArtifactPayload(result map[string]any, source map[string]any) {
