@@ -5,7 +5,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -340,16 +342,12 @@ func sameConnectTarget(current ConnectRequest, next ConnectRequest) bool {
 	return strings.TrimSpace(current.Mode) == strings.TrimSpace(next.Mode) &&
 		strings.TrimSpace(current.Endpoint.Host) == strings.TrimSpace(next.Endpoint.Host) &&
 		current.Endpoint.Port == next.Endpoint.Port &&
-		current.Endpoint.TLS == next.Endpoint.TLS
+		current.Endpoint.TLS == next.Endpoint.TLS &&
+		normalizeEndpointPath(current.Endpoint.Path) == normalizeEndpointPath(next.Endpoint.Path)
 }
 
 func (s *session) connectAttempt() (ConnectResult, *GatewayError) {
-	url := fmt.Sprintf(
-		"%s://%s:%d",
-		resolveRemoteScheme(s.config.Endpoint.TLS),
-		s.config.Endpoint.Host,
-		s.config.Endpoint.Port,
-	)
+	url := remoteEndpointURL(s.config.Endpoint)
 	dialer := websocket.Dialer{
 		HandshakeTimeout: s.manager.ConnectTimeout,
 		Proxy:            http.ProxyFromEnvironment,
@@ -579,6 +577,25 @@ func (s *session) requestRemoteOnConn(
 			}).Map(),
 		}
 	}
+}
+
+func remoteEndpointURL(endpoint Endpoint) string {
+	return (&url.URL{
+		Scheme: resolveRemoteScheme(endpoint.TLS),
+		Host:   net.JoinHostPort(endpoint.Host, fmt.Sprintf("%d", endpoint.Port)),
+		Path:   normalizeEndpointPath(endpoint.Path),
+	}).String()
+}
+
+func normalizeEndpointPath(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" || trimmed == "/" {
+		return ""
+	}
+	if strings.HasPrefix(trimmed, "/") {
+		return trimmed
+	}
+	return "/" + trimmed
 }
 
 func (s *session) resetConnAfterProtocolError(conn *websocket.Conn, err *GatewayError) {

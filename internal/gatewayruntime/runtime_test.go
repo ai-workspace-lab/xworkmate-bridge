@@ -2,6 +2,7 @@ package gatewayruntime
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -54,6 +55,96 @@ func TestManagerConnectAndRequest(t *testing.T) {
 	defer mu.Unlock()
 	if len(notifications) == 0 {
 		t.Fatalf("expected notifications during connect")
+	}
+}
+
+func TestManagerConnectAdvertisesCurrentOpenClawProtocol(t *testing.T) {
+	server := newFakeGatewayServer(t)
+	server.expectedProtocol = defaultProtocolVersion
+	defer server.Close()
+
+	manager := NewManager()
+	result := manager.Connect(buildTestConnectRequest(server.Port()), func(map[string]any) {})
+	if !result.OK {
+		t.Fatalf("expected connect success, got %#v", result.Error)
+	}
+
+	params := server.LastConnectParams()
+	if params["minProtocol"] != float64(defaultProtocolVersion) {
+		t.Fatalf("expected minProtocol %d, got %#v", defaultProtocolVersion, params["minProtocol"])
+	}
+	if params["maxProtocol"] != float64(defaultProtocolVersion) {
+		t.Fatalf("expected maxProtocol %d, got %#v", defaultProtocolVersion, params["maxProtocol"])
+	}
+}
+
+func TestGatewayFakeRejectsProtocol3AndAcceptsCurrentProtocol(t *testing.T) {
+	server := newFakeGatewayServer(t)
+	server.expectedProtocol = defaultProtocolVersion
+	defer server.Close()
+
+	manager := NewManager()
+	result := manager.Connect(buildTestConnectRequest(server.Port()), func(map[string]any) {})
+	if !result.OK {
+		t.Fatalf("expected current bridge protocol to connect, got %#v", result.Error)
+	}
+
+	conn, _, err := websocket.DefaultDialer.Dial(
+		fmt.Sprintf("ws://127.0.0.1:%d", server.Port()),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("dial fake gateway: %v", err)
+	}
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	var challenge map[string]any
+	if err := conn.ReadJSON(&challenge); err != nil {
+		t.Fatalf("read challenge: %v", err)
+	}
+	if challenge["event"] != "connect.challenge" {
+		t.Fatalf("expected connect challenge, got %#v", challenge)
+	}
+
+	if err := conn.WriteJSON(map[string]any{
+		"type":   "req",
+		"id":     "legacy-connect",
+		"method": "connect",
+		"params": map[string]any{
+			"minProtocol": float64(3),
+			"maxProtocol": float64(3),
+		},
+	}); err != nil {
+		t.Fatalf("write legacy connect: %v", err)
+	}
+
+	var response map[string]any
+	if err := conn.ReadJSON(&response); err != nil {
+		t.Fatalf("read legacy connect response: %v", err)
+	}
+	if response["ok"] != false {
+		t.Fatalf("expected protocol 3 rejection, got %#v", response)
+	}
+	errorPayload := asMap(response["error"])
+	if stringValue(errorPayload["message"]) != "protocol mismatch" {
+		t.Fatalf("expected protocol mismatch error, got %#v", response)
+	}
+}
+
+func TestManagerConnectPreservesEndpointPath(t *testing.T) {
+	server := newFakeGatewayServer(t)
+	server.expectedPath = "/gateway/openclaw"
+	defer server.Close()
+
+	manager := NewManager()
+	request := buildTestConnectRequest(server.Port())
+	request.Endpoint.Path = "/gateway/openclaw"
+
+	result := manager.Connect(request, func(map[string]any) {})
+	if !result.OK {
+		t.Fatalf("expected connect success through path-scoped endpoint, got %#v", result.Error)
 	}
 }
 
@@ -281,6 +372,9 @@ type fakeGatewayServer struct {
 	invalidNextRequest     atomic.Bool
 	connectErrorCode       string
 	connectErrorDetailCode string
+	expectedProtocol       int
+	expectedPath           string
+	lastConnectParams      atomic.Value
 }
 
 func newFakeGatewayServer(t *testing.T) *fakeGatewayServer {
@@ -293,6 +387,10 @@ func newFakeGatewayServer(t *testing.T) *fakeGatewayServer {
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if fake.expectedPath != "" && r.URL.Path != fake.expectedPath {
+			http.NotFound(w, r)
+			return
+		}
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
@@ -352,6 +450,29 @@ func newFakeGatewayServer(t *testing.T) *fakeGatewayServer {
 			case "connect":
 				fake.connectCount.Add(1)
 				connected = true
+				params := asMap(frame["params"])
+				fake.lastConnectParams.Store(params)
+				if fake.expectedProtocol > 0 &&
+					(params["minProtocol"] != float64(fake.expectedProtocol) ||
+						params["maxProtocol"] != float64(fake.expectedProtocol)) {
+					_ = conn.WriteJSON(map[string]any{
+						"type": "res",
+						"id":   id,
+						"ok":   false,
+						"error": map[string]any{
+							"code":    "INVALID_REQUEST",
+							"message": "protocol mismatch",
+							"details": map[string]any{
+								"code":                 "PROTOCOL_MISMATCH",
+								"clientMinProtocol":    params["minProtocol"],
+								"clientMaxProtocol":    params["maxProtocol"],
+								"expectedProtocol":     fake.expectedProtocol,
+								"minimumProbeProtocol": fake.expectedProtocol,
+							},
+						},
+					})
+					continue
+				}
 				if fake.connectErrorCode != "" {
 					_ = conn.WriteJSON(map[string]any{
 						"type": "res",
@@ -417,6 +538,15 @@ func newFakeGatewayServer(t *testing.T) *fakeGatewayServer {
 
 func (f *fakeGatewayServer) Port() int {
 	return f.listener.Addr().(*net.TCPAddr).Port
+}
+
+func (f *fakeGatewayServer) LastConnectParams() map[string]any {
+	value := f.lastConnectParams.Load()
+	if value == nil {
+		return map[string]any{}
+	}
+	params, _ := value.(map[string]any)
+	return params
 }
 
 func (f *fakeGatewayServer) ConnectCount() int {
