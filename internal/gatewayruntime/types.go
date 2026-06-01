@@ -3,7 +3,7 @@ package gatewayruntime
 import "time"
 
 const (
-	defaultProtocolVersion = 3
+	defaultProtocolVersion = 4
 	defaultReconnectDelay  = 2 * time.Second
 	defaultConnectTimeout  = 10 * time.Second
 	defaultChallengeWait   = 2 * time.Second

@@ -137,6 +137,7 @@ func applyProductionGatewayRouting(
 		Host: parsed.Hostname(),
 		Port: port,
 		TLS:  tls,
+		Path: parsed.EscapedPath(),
 	}
 	request.Auth.Token = bridgeSharedAuthToken()
 	request.Auth.Password = ""
