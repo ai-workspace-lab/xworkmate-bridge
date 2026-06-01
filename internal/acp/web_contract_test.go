@@ -338,6 +338,7 @@ func TestHTTPHandlerGatewayOpenClawHandlesFiveConcurrentE2ECases(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
 	gateway.agentWaitDelayMs.Store(200)
+	gateway.artifactWorkspaceRoot = t.TempDir()
 
 	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
 	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
@@ -440,12 +441,12 @@ func TestHTTPHandlerGatewayOpenClawHandlesFiveConcurrentE2ECases(t *testing.T) {
 	if got := gateway.ConnectCount(); got != 1 {
 		t.Fatalf("expected bridge to reuse one established OpenClaw connection, got %d connects", got)
 	}
-	expectedGatewayTurns := len(prompts) + 1
+	expectedGatewayTurns := len(prompts)
 	if got := gateway.ChatSendCount(); got != expectedGatewayTurns {
-		t.Fatalf("expected five primary chat.send calls plus one final-deliverable repair, got %d", got)
+		t.Fatalf("expected five primary chat.send calls without model repair turns, got %d", got)
 	}
 	if got := gateway.AgentWaitCount(); got != expectedGatewayTurns {
-		t.Fatalf("expected five primary agent.wait calls plus one final-deliverable repair, got %d", got)
+		t.Fatalf("expected five primary agent.wait calls without model repair turns, got %d", got)
 	}
 }
 

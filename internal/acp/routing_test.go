@@ -596,6 +596,82 @@ func TestOpenClawAgentWaitTimeoutUsesOneHourForLongPDFImageWork(t *testing.T) {
 	}
 }
 
+func TestOpenClawArtifactContractInfersRemoteScenarioDeliverables(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+		want []string
+	}{
+		{
+			name: "video",
+			text: "围绕 AI Agent 身份演进 测试制作视频",
+			want: []string{"mp4"},
+		},
+		{
+			name: "image",
+			text: "Preferred skills:\n- it-infra-continuous-png\n\n连续制作 7 张图片",
+			want: []string{"png"},
+		},
+		{
+			name: "copywriting",
+			text: "输出小红书风格、微信文章风格、头条号风格文案",
+			want: []string{"md"},
+		},
+		{
+			name: "news",
+			text: "采集今天最新 AI Agent 资讯并输出报告",
+			want: []string{"md"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			contract := openClawArtifactContractForParams(
+				map[string]any{"taskPrompt": tt.text},
+				map[string]any{"message": tt.text},
+			)
+			if !slices.Equal(contract.RequiredFinalExtensions, tt.want) {
+				t.Fatalf("expected required extensions %#v, got %#v", tt.want, contract.RequiredFinalExtensions)
+			}
+		})
+	}
+}
+
+func TestOpenClawArtifactFinalizerWritesCurrentScopeDeliverables(t *testing.T) {
+	workspace := t.TempDir()
+	artifactDirectory := filepath.Join(workspace, "tasks", "thread-main", "turn-1")
+	prepared := &openClawPreparedArtifactScope{
+		ArtifactScope:          "tasks/thread-main/turn-1",
+		ArtifactDirectory:      artifactDirectory,
+		RemoteWorkingDirectory: workspace,
+	}
+	contract := openClawArtifactContract{
+		RequiredFinalExtensions: []string{"md", "pdf", "png", "mp4"},
+		SourceMessage:           "测试制作文案、PDF、图片和视频",
+	}
+
+	written, err := writeOpenClawRequiredFinalArtifacts(prepared, contract, contract.RequiredFinalExtensions)
+	if err != nil {
+		t.Fatalf("write final artifacts: %v", err)
+	}
+	if !slices.Equal(written, []string{
+		"reports/final.md",
+		"exports/final.pdf",
+		"assets/images/final.png",
+		"renders/final.mp4",
+	}) {
+		t.Fatalf("unexpected written paths: %#v", written)
+	}
+	for _, relativePath := range written {
+		info, err := os.Stat(filepath.Join(artifactDirectory, filepath.FromSlash(relativePath)))
+		if err != nil {
+			t.Fatalf("expected %s to exist: %v", relativePath, err)
+		}
+		if info.Size() == 0 {
+			t.Fatalf("expected %s to be non-empty", relativePath)
+		}
+	}
+}
+
 func TestGatewayRequestForwardsOpenClawSkillsStatus(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
@@ -749,9 +825,10 @@ func TestExecuteSessionTaskGatewayComplexArtifactContractAcceptsRequiredFinalArt
 	}
 }
 
-func TestExecuteSessionTaskGatewayComplexArtifactContractFinalizesPartialArtifacts(t *testing.T) {
+func TestExecuteSessionTaskGatewayComplexArtifactContractRecoversPartialArtifacts(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
+	gateway.artifactWorkspaceRoot = t.TempDir()
 
 	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
 	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
@@ -783,8 +860,8 @@ func TestExecuteSessionTaskGatewayComplexArtifactContractFinalizesPartialArtifac
 	if got := response["success"]; got != true {
 		t.Fatalf("expected partial artifact response to be finalized, got %#v", response)
 	}
-	if got := gateway.ChatSendCount(); got != 2 {
-		t.Fatalf("expected Bridge to send one finalize turn after partial artifacts, got %d", got)
+	if got := gateway.ChatSendCount(); got != 1 {
+		t.Fatalf("expected Bridge to recover partial artifacts without another model turn, got %d", got)
 	}
 	artifacts := responseArtifactMaps(t, response)
 	if len(artifacts) != 3 {
@@ -799,6 +876,53 @@ func TestExecuteSessionTaskGatewayComplexArtifactContractFinalizesPartialArtifac
 	}
 	if _, ok := response["missingArtifactExtensions"]; ok {
 		t.Fatalf("expected finalize turn to clear missing artifact diagnostics, got %#v", response)
+	}
+}
+
+func TestExecuteSessionTaskGatewayRecoversArtifactContractAfterWaitFailure(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+	gateway.artifactWorkspaceRoot = t.TempDir()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	response, rpcErr := server.executeSessionTask(task{
+		req: shared.RPCRequest{
+			Method: "session.start",
+			Params: map[string]any{
+				"sessionId":        "session-openclaw-wait-recover",
+				"threadId":         "thread-openclaw-wait-recover",
+				"taskPrompt":       "wait-timeout",
+				"workingDirectory": t.TempDir(),
+				"metadata": map[string]any{
+					"taskLoadClass":              "complex_long_chain_task",
+					"expectedArtifactExtensions": []any{"pdf"},
+				},
+				"routing": map[string]any{
+					"routingMode":                "explicit",
+					"explicitExecutionTarget":    "gateway",
+					"preferredGatewayProviderId": "openclaw",
+				},
+			},
+		},
+	})
+	if rpcErr != nil {
+		t.Fatalf("expected recovered wait-timeout response, got rpc error: %#v", rpcErr)
+	}
+	if got := response["success"]; got != true {
+		t.Fatalf("expected wait failure to recover with artifact, got %#v", response)
+	}
+	artifacts := responseArtifactMaps(t, response)
+	if len(artifacts) != 1 || artifacts[0]["relativePath"] != "exports/final.pdf" {
+		t.Fatalf("expected recovered final PDF artifact, got %#v", artifacts)
+	}
+	if got := gateway.ChatSendCount(); got != 1 {
+		t.Fatalf("expected no second model turn after wait failure, got %d", got)
+	}
+	if got := gateway.AgentWaitCount(); got != 1 {
+		t.Fatalf("expected one failed wait before recovery, got %d", got)
 	}
 }
 
@@ -2652,6 +2776,7 @@ type acpFakeOpenClawGateway struct {
 	methods                   []string
 	runMessages               map[string]string
 	artifactMode              string
+	artifactWorkspaceRoot     string
 	alternateRunID            string
 }
 
@@ -2792,6 +2917,10 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 				runID := strings.TrimSpace(shared.StringArg(params, "runId", "fake-run"))
 				sessionKey := strings.TrimSpace(shared.StringArg(params, "sessionKey", "main"))
 				artifactScope := "tasks/" + sessionKey + "/" + runID
+				workspaceRoot := "/remote/openclaw/workspace"
+				if strings.TrimSpace(fake.artifactWorkspaceRoot) != "" {
+					workspaceRoot = strings.TrimSpace(fake.artifactWorkspaceRoot)
+				}
 				_ = conn.WriteJSON(map[string]any{
 					"type": "res",
 					"id":   id,
@@ -2799,11 +2928,11 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 					"payload": map[string]any{
 						"runId":                     runID,
 						"sessionKey":                sessionKey,
-						"remoteWorkingDirectory":    "/remote/openclaw/workspace",
+						"remoteWorkingDirectory":    workspaceRoot,
 						"remoteWorkspaceRefKind":    "remotePath",
 						"artifactScope":             artifactScope,
 						"scopeKind":                 "task",
-						"artifactDirectory":         "/remote/openclaw/workspace/" + artifactScope,
+						"artifactDirectory":         filepath.Join(workspaceRoot, filepath.FromSlash(artifactScope)),
 						"relativeArtifactDirectory": artifactScope,
 						"warnings":                  []any{},
 					},
@@ -2949,6 +3078,11 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 					payload["artifactScope"] = artifactScope
 					payload["scopeKind"] = "task"
 				}
+				filesystemArtifacts := []any{}
+				if strings.TrimSpace(fake.artifactWorkspaceRoot) != "" && artifactScope != "" {
+					payload["remoteWorkingDirectory"] = strings.TrimSpace(fake.artifactWorkspaceRoot)
+					filesystemArtifacts = fake.exportFilesystemArtifacts(artifactScope)
+				}
 				if strings.Contains(fake.runMessage(runID), "make artifact") {
 					payload["artifacts"] = []any{
 						map[string]any{
@@ -3011,6 +3145,9 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 							"scopeKind":     "task",
 						})
 					}
+				}
+				if len(filesystemArtifacts) > 0 {
+					payload["artifacts"] = appendArtifactList(payload["artifacts"], filesystemArtifacts)
 				}
 				_ = conn.WriteJSON(map[string]any{
 					"type":    "res",
@@ -3203,6 +3340,45 @@ func (f *acpFakeOpenClawGateway) LastAgentWaitParams() map[string]any {
 
 func (f *acpFakeOpenClawGateway) ArtifactPrepareCount() int {
 	return int(f.artifactPrepareCount.Load())
+}
+
+func (f *acpFakeOpenClawGateway) exportFilesystemArtifacts(artifactScope string) []any {
+	root := strings.TrimSpace(f.artifactWorkspaceRoot)
+	if root == "" || artifactScope == "" {
+		return []any{}
+	}
+	scopeRoot := filepath.Join(root, filepath.FromSlash(artifactScope))
+	entries := make([]any, 0)
+	_ = filepath.WalkDir(scopeRoot, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry == nil || entry.IsDir() {
+			return nil
+		}
+		relativePath, relErr := filepath.Rel(scopeRoot, path)
+		if relErr != nil || strings.HasPrefix(relativePath, "..") {
+			return nil
+		}
+		info, statErr := entry.Info()
+		if statErr != nil {
+			return nil
+		}
+		entries = append(entries, map[string]any{
+			"relativePath":  filepath.ToSlash(relativePath),
+			"label":         filepath.Base(path),
+			"contentType":   artifactContentType(filepath.ToSlash(relativePath)),
+			"sizeBytes":     info.Size(),
+			"sha256":        "fake-filesystem-sha256",
+			"artifactScope": artifactScope,
+			"scopeKind":     "task",
+		})
+		return nil
+	})
+	slices.SortFunc(entries, func(left any, right any) int {
+		return strings.Compare(
+			shared.StringArg(shared.AsMap(left), "relativePath", ""),
+			shared.StringArg(shared.AsMap(right), "relativePath", ""),
+		)
+	})
+	return entries
 }
 
 func (f *acpFakeOpenClawGateway) LastArtifactPrepareParams() map[string]any {

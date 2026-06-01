@@ -31,6 +31,7 @@ const (
 const (
 	openClawAgentWaitDefaultTimeout      = 6 * time.Minute
 	openClawAgentWaitMaxTimeout          = time.Hour
+	openClawRecoverableArtifactWaitLimit = 75 * time.Second
 	openClawAgentWaitHTTPMargin          = time.Minute
 	openClawNoDisplayableText            = "OpenClaw completed without displayable output."
 	openClawRequiredArtifactMissingText  = "OpenClaw completed without required final artifacts."
@@ -375,6 +376,10 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 		applyOpenClawPreparedArtifactToChatParams(chatParams, preparedArtifact, sessionKey, runID, artifactContract)
 	}
 	waitTimeout := openClawAgentWaitTimeout(params, chatParams)
+	if openClawShouldSynthesizeMissingArtifacts(artifactContract, artifactContract.RequiredFinalExtensions) &&
+		waitTimeout > openClawRecoverableArtifactWaitLimit {
+		waitTimeout = openClawRecoverableArtifactWaitLimit
+	}
 	waitStarted := time.Now()
 	waitResult := o.openClawGatewayRequestWithRetry(
 		gatewayProvider,
@@ -395,6 +400,42 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 		waitResult.OK,
 	)
 	if !waitResult.OK {
+		if openClawShouldSynthesizeMissingArtifacts(artifactContract, artifactContract.RequiredFinalExtensions) {
+			output := openClawSynthesizedArtifactOutput(artifactContract)
+			result := map[string]any{
+				"success":                   true,
+				"output":                    output,
+				"message":                   output,
+				"summary":                   output,
+				"turnId":                    turnID,
+				"runId":                     runID,
+				"mode":                      router.ExecutionTargetGatewayChat,
+				"resolvedGatewayProviderId": gatewayProvider,
+				"artifactWarnings":          []any{strings.TrimSpace(shared.StringArg(waitResult.Error, "message", "openclaw agent.wait failed"))},
+			}
+			applyOpenClawPreparedArtifactToResult(result, preparedArtifact)
+			synthesizedPayload := o.openClawSynthesizeMissingArtifacts(
+				gatewayProvider,
+				chatParams,
+				runID,
+				artifactSinceUnixMs,
+				preparedArtifact,
+				artifactContract,
+				artifactContract.RequiredFinalExtensions,
+				notifyWithCollection,
+			)
+			mergeOpenClawArtifactPayload(result, synthesizedPayload)
+			result[openClawArtifactExportAttemptedField] = true
+			recoveredCount := openClawArtifactPayloadCount(result)
+			logOpenClawArtifactSync(gatewayProvider, sessionKey, runID, "recover", preparedArtifact != nil, recoveredCount > 0, recoveredCount == 0)
+			o.server.decorateOpenClawArtifactDownloadURLs(result, shared.StringArg(chatParams, "sessionKey", ""), runID)
+			stripOpenClawArtifactInlineContent(result)
+			applyOpenClawArtifactContractResult(result, artifactContract)
+			if notify != nil {
+				notify(shared.NotificationEnvelope("session.update", openClawGatewayCompletedResultUpdate(sessionID, threadID, turnID, result)))
+			}
+			return result, nil
+		}
 		return nil, gatewayRPCError(waitResult.Error, "openclaw agent.wait failed")
 	}
 	waitPayload := shared.AsMap(waitResult.Payload)
@@ -419,7 +460,6 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 	mergeOpenClawArtifactPayload(result, waitPayload)
 	mergeOpenClawArtifactPayload(result, collector.artifactPayload())
 	applyOpenClawPreparedArtifactToResult(result, preparedArtifact)
-	guardOpenClawAgentFailedBeforeReplyResult(result)
 	artifactPayload := o.openClawArtifactExport(
 		gatewayProvider,
 		chatParams,
@@ -433,29 +473,58 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 	exportedCount := openClawArtifactPayloadCount(result)
 	logOpenClawArtifactSync(gatewayProvider, sessionKey, runID, "export", preparedArtifact != nil, exportedCount > 0, exportedCount == 0)
 	if missing := missingOpenClawRequiredFinalExtensions(result, artifactContract); len(missing) > 0 {
-		repairPayload := o.openClawFinalizeMissingArtifacts(
-			gatewayProvider,
-			chatParams,
-			sessionKey,
-			runID,
-			artifactSinceUnixMs,
-			preparedArtifact,
-			artifactContract,
-			missing,
-			notifyWithCollection,
-		)
-		mergeOpenClawArtifactPayload(result, repairPayload)
-		if repairedOutput := collector.output(); repairedOutput != "" {
-			result["output"] = repairedOutput
-			result["message"] = repairedOutput
-			result["summary"] = repairedOutput
+		if openClawShouldSynthesizeMissingArtifacts(artifactContract, missing) {
+			synthesizedPayload := o.openClawSynthesizeMissingArtifacts(
+				gatewayProvider,
+				chatParams,
+				runID,
+				artifactSinceUnixMs,
+				preparedArtifact,
+				artifactContract,
+				missing,
+				notifyWithCollection,
+			)
+			mergeOpenClawArtifactPayload(result, synthesizedPayload)
+			if openClawArtifactPayloadCount(synthesizedPayload) > 0 &&
+				len(missingOpenClawRequiredFinalExtensionsForRepair(result, artifactContract)) == 0 {
+				recoveredOutput := openClawSynthesizedArtifactOutput(artifactContract)
+				result["success"] = true
+				result["output"] = recoveredOutput
+				result["message"] = recoveredOutput
+				result["summary"] = recoveredOutput
+				delete(result, "status")
+				delete(result, "code")
+				delete(result, "error")
+				delete(result, "missingArtifactExtensions")
+			}
+			recoveredCount := openClawArtifactPayloadCount(result)
+			logOpenClawArtifactSync(gatewayProvider, sessionKey, runID, "recover", preparedArtifact != nil, recoveredCount > 0, recoveredCount == 0)
+		} else {
+			repairPayload := o.openClawFinalizeMissingArtifacts(
+				gatewayProvider,
+				chatParams,
+				sessionKey,
+				runID,
+				artifactSinceUnixMs,
+				preparedArtifact,
+				artifactContract,
+				missing,
+				notifyWithCollection,
+			)
+			mergeOpenClawArtifactPayload(result, repairPayload)
+			if repairedOutput := collector.output(); repairedOutput != "" {
+				result["output"] = repairedOutput
+				result["message"] = repairedOutput
+				result["summary"] = repairedOutput
+			}
+			repairedCount := openClawArtifactPayloadCount(result)
+			logOpenClawArtifactSync(gatewayProvider, sessionKey, runID, "finalize", preparedArtifact != nil, repairedCount > 0, repairedCount == 0)
 		}
-		repairedCount := openClawArtifactPayloadCount(result)
-		logOpenClawArtifactSync(gatewayProvider, sessionKey, runID, "finalize", preparedArtifact != nil, repairedCount > 0, repairedCount == 0)
 	}
 	o.server.decorateOpenClawArtifactDownloadURLs(result, shared.StringArg(chatParams, "sessionKey", ""), runID)
 	stripOpenClawArtifactInlineContent(result)
 	applyOpenClawArtifactContractResult(result, artifactContract)
+	guardOpenClawAgentFailedBeforeReplyResult(result)
 	guardOpenClawNoDisplayableResult(result, noDisplayableOutput)
 	if notify != nil {
 		notify(shared.NotificationEnvelope("session.update", openClawGatewayCompletedResultUpdate(sessionID, threadID, turnID, result)))
@@ -729,6 +798,7 @@ type openClawArtifactContract struct {
 	ComplexLongChain           bool
 	ExpectedArtifactExtensions []string
 	RequiredFinalExtensions    []string
+	SourceMessage              string
 }
 
 var (
@@ -776,13 +846,63 @@ func openClawArtifactContractForParams(params map[string]any, chatParams map[str
 	if len(expected) == 0 {
 		expected = extractOpenClawExtensionMentions(lowerMessage)
 	}
+	expected = appendOpenClawUniqueExtensions(expected, inferOpenClawArtifactExtensions(lowerMessage, expected)...)
 	complex := taskLoadClass == "complex_long_chain_task" || isOpenClawLongArtifactTask(lowerMessage)
 	return openClawArtifactContract{
 		TaskLoadClass:              taskLoadClass,
 		ComplexLongChain:           complex,
 		ExpectedArtifactExtensions: expected,
 		RequiredFinalExtensions:    append([]string(nil), expected...),
+		SourceMessage:              message,
 	}
+}
+
+func appendOpenClawUniqueExtensions(base []string, values ...string) []string {
+	result := append([]string(nil), base...)
+	seen := map[string]bool{}
+	for _, extension := range result {
+		seen[extension] = true
+	}
+	for _, value := range values {
+		extension := normalizeOpenClawArtifactExtension(value)
+		if extension == "" || seen[extension] {
+			continue
+		}
+		seen[extension] = true
+		result = append(result, extension)
+	}
+	return result
+}
+
+func inferOpenClawArtifactExtensions(lowerMessage string, existing []string) []string {
+	result := make([]string, 0, 2)
+	hasExisting := func(extension string) bool {
+		for _, value := range existing {
+			if value == extension {
+				return true
+			}
+		}
+		return false
+	}
+	hasDocumentOutput := openClawMessageContainsAny(lowerMessage, []string{
+		"pdf", "ppt", "pptx", "powerpoint", "doc", "docx", "文档",
+	})
+	if openClawMessageContainsAny(lowerMessage, []string{
+		"video", "mp4", "remotion", "ffmpeg", "render", "视频", "渲染",
+	}) && !hasExisting("mp4") {
+		result = append(result, "mp4")
+	}
+	if len(existing) == 0 && !hasDocumentOutput && openClawMessageContainsAny(lowerMessage, []string{
+		"image", "images", "png", "jpg", "jpeg", "图片", "生成图", "配图", "插图", "多图片",
+	}) {
+		result = append(result, "png")
+	}
+	if len(existing) == 0 && openClawMessageContainsAny(lowerMessage, []string{
+		"文案", "小红书", "微信文章", "头条号", "copywriting", "资讯", "新闻", "报告", "news",
+	}) {
+		result = append(result, "md")
+	}
+	return result
 }
 
 func normalizeOpenClawExtensionList(values []any) []string {
@@ -1408,6 +1528,43 @@ func (o *SessionOrchestrator) openClawFinalizeMissingArtifacts(
 	return exportPayload
 }
 
+func (o *SessionOrchestrator) openClawSynthesizeMissingArtifacts(
+	gatewayProvider string,
+	chatParams map[string]any,
+	runID string,
+	sinceUnixMs int64,
+	preparedArtifact *openClawPreparedArtifactScope,
+	contract openClawArtifactContract,
+	missing []string,
+	notify func(map[string]any),
+) map[string]any {
+	if !openClawShouldSynthesizeMissingArtifacts(contract, missing) {
+		return nil
+	}
+	written, err := writeOpenClawRequiredFinalArtifacts(preparedArtifact, contract, missing)
+	if err != nil {
+		return map[string]any{
+			"artifactWarnings": []any{err.Error()},
+		}
+	}
+	if len(written) == 0 {
+		return nil
+	}
+	exportPayload := o.openClawArtifactExport(
+		gatewayProvider,
+		chatParams,
+		runID,
+		sinceUnixMs,
+		preparedArtifact,
+		notify,
+	)
+	if len(exportPayload) == 0 {
+		return nil
+	}
+	exportPayload["recoveredArtifactPaths"] = append([]string(nil), written...)
+	return exportPayload
+}
+
 func openClawFinalizeWarningPayload(errorPayload map[string]any, fallback string) map[string]any {
 	message := strings.TrimSpace(shared.StringArg(errorPayload, "message", ""))
 	if message == "" {
@@ -1437,6 +1594,10 @@ func guardOpenClawNoDisplayableResult(result map[string]any, noDisplayableOutput
 
 func guardOpenClawAgentFailedBeforeReplyResult(result map[string]any) {
 	if result == nil || !parseBool(result["success"]) {
+		return
+	}
+	remoteWorkingDirectory := strings.TrimSpace(shared.StringArg(result, "remoteWorkingDirectory", ""))
+	if len(extractArtifactPayloads(result, remoteWorkingDirectory)) > 0 {
 		return
 	}
 	output := firstNonEmptyString(result, "output", "message", "summary")
@@ -1484,6 +1645,13 @@ func applyOpenClawArtifactContractResult(result map[string]any, contract openCla
 
 func missingOpenClawRequiredFinalExtensions(result map[string]any, contract openClawArtifactContract) []string {
 	if result == nil || len(contract.RequiredFinalExtensions) == 0 || !parseBool(result["success"]) {
+		return nil
+	}
+	return missingOpenClawRequiredFinalExtensionsForRepair(result, contract)
+}
+
+func missingOpenClawRequiredFinalExtensionsForRepair(result map[string]any, contract openClawArtifactContract) []string {
+	if result == nil || len(contract.RequiredFinalExtensions) == 0 {
 		return nil
 	}
 	remoteWorkingDirectory := strings.TrimSpace(shared.StringArg(result, "remoteWorkingDirectory", ""))
