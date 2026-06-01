@@ -5,7 +5,7 @@ TARGET_HOST="${1:?target host is required}"
 BINARY_PATH="${2:?binary path is required}"
 EXPECTED_COMMIT="${3:?expected short commit is required}"
 REMOTE_TMP="/tmp/xworkmate-bridge-${EXPECTED_COMMIT}"
-REMOTE_BINARY="/usr/local/bin/xworkmate-go-core"
+REMOTE_BINARY="${REMOTE_BINARY:-/usr/local/bin/xworkmate-go-core}"
 STALE_DROPIN="/etc/systemd/system/xworkmate-bridge.service.d/10-hotfix-openclaw-artifacts.conf"
 SERVICE_NAME="xworkmate-bridge.service"
 

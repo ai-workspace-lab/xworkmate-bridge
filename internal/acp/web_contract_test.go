@@ -783,6 +783,23 @@ func TestHTTPHandlerPingRequiresBearerAuthorizationWhenBridgeAuthTokenConfigured
 	}
 }
 
+func TestHTTPHandlerPingAllowsReviewBearerAuthorizationWhenConfigured(t *testing.T) {
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
+	t.Setenv("BRIDGE_REVIEW_AUTH_TOKEN", "review-bridge-test-token")
+	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
+	server := NewServer()
+	handler := server.Handler()
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/ping", nil)
+	request.Header.Set("Authorization", "Bearer review-bridge-test-token")
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200 for configured review token, got %d", recorder.Code)
+	}
+}
+
 func TestParseImageVersionInfoHandlesTaggedImageRef(t *testing.T) {
 	info := ParseImageVersionInfo("ghcr.io/x-evor/xworkmate-bridge:main-2026-04-12")
 
