@@ -419,6 +419,7 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 	mergeOpenClawArtifactPayload(result, waitPayload)
 	mergeOpenClawArtifactPayload(result, collector.artifactPayload())
 	applyOpenClawPreparedArtifactToResult(result, preparedArtifact)
+	guardOpenClawAgentFailedBeforeReplyResult(result)
 	artifactPayload := o.openClawArtifactExport(
 		gatewayProvider,
 		chatParams,
@@ -1434,6 +1435,23 @@ func guardOpenClawNoDisplayableResult(result map[string]any, noDisplayableOutput
 	result["summary"] = openClawNoDisplayableText
 }
 
+func guardOpenClawAgentFailedBeforeReplyResult(result map[string]any) {
+	if result == nil || !parseBool(result["success"]) {
+		return
+	}
+	output := firstNonEmptyString(result, "output", "message", "summary")
+	if !strings.Contains(strings.ToLower(output), "agent failed before reply") {
+		return
+	}
+	result["success"] = false
+	result["status"] = "failed"
+	result["code"] = "OPENCLAW_AGENT_FAILED_BEFORE_REPLY"
+	result["error"] = output
+	result["message"] = output
+	result["output"] = output
+	result["summary"] = output
+}
+
 func applyOpenClawArtifactContractResult(result map[string]any, contract openClawArtifactContract) {
 	if result == nil {
 		return
@@ -1447,7 +1465,7 @@ func applyOpenClawArtifactContractResult(result map[string]any, contract openCla
 	if len(contract.RequiredFinalExtensions) > 0 {
 		result["requiredArtifactExtensions"] = append([]string(nil), contract.RequiredFinalExtensions...)
 	}
-	if !contract.ComplexLongChain || len(contract.RequiredFinalExtensions) == 0 || !parseBool(result["success"]) {
+	if len(contract.RequiredFinalExtensions) == 0 || !parseBool(result["success"]) {
 		return
 	}
 	missing := missingOpenClawRequiredFinalExtensions(result, contract)
@@ -1465,13 +1483,13 @@ func applyOpenClawArtifactContractResult(result map[string]any, contract openCla
 }
 
 func missingOpenClawRequiredFinalExtensions(result map[string]any, contract openClawArtifactContract) []string {
-	if result == nil || !contract.ComplexLongChain || len(contract.RequiredFinalExtensions) == 0 || !parseBool(result["success"]) {
+	if result == nil || len(contract.RequiredFinalExtensions) == 0 || !parseBool(result["success"]) {
 		return nil
 	}
 	remoteWorkingDirectory := strings.TrimSpace(shared.StringArg(result, "remoteWorkingDirectory", ""))
 	artifacts := extractArtifactPayloads(result, remoteWorkingDirectory)
 	if len(artifacts) == 0 {
-		return nil
+		return append([]string(nil), contract.RequiredFinalExtensions...)
 	}
 	return missingOpenClawArtifactExtensions(artifacts, contract.RequiredFinalExtensions)
 }
