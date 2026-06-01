@@ -1106,7 +1106,7 @@ func TestHandleRPCSessionStartSucceedsWithExplicitProvider(t *testing.T) {
 
 	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
 
-	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
+	t.Setenv("BRIDGE_CONFIG_PATH", filepath.Join(t.TempDir(), "missing-config.yaml"))
 	server := NewServer()
 	setTestBridgeProvider(server, syncedProvider{
 		ProviderID:          "opencode",
