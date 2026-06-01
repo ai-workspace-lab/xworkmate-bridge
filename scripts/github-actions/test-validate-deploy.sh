@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRIPT_PATH="${ROOT_DIR}/scripts/github-actions/validate-deploy.sh"
-IMAGE_REF="ghcr.io/x-evor/xworkmate-bridge:425a38f1e8076899400d4a858d4678dffd876afb"
+EXPECTED_COMMIT="425a38f"
 
 RUN_OUTPUT=""
 RUN_STATUS=0
@@ -104,7 +104,7 @@ case "${scenario}" in
   bridge-timeout)
     case "${url}" in
       https://xworkmate-bridge.svc.plus/api/ping)
-        printf '{"status":"ok","image":"ghcr.io/x-evor/xworkmate-bridge:425a38f1e8076899400d4a858d4678dffd876afb","tag":"425a38f1e8076899400d4a858d4678dffd876afb","commit":"425a38f1e8076899400d4a858d4678dffd876afb","version":"425a38f1e8076899400d4a858d4678dffd876afb"}\n'
+        printf '{"status":"ok","commit":"425a38f","version":"v1.0-beta2","buildDate":"2026-06-01T00:00:00Z"}\n'
         ;;
       https://xworkmate-bridge.svc.plus/)
         printf 'xworkmate-bridge is running\n'
@@ -127,7 +127,7 @@ case "${scenario}" in
           printf 'curl: (28) Operation timed out after 20001 milliseconds with 0 bytes received\n' >&2
           exit 1
         fi
-        printf '{"status":"ok","image":"ghcr.io/x-evor/xworkmate-bridge:425a38f1e8076899400d4a858d4678dffd876afb","tag":"425a38f1e8076899400d4a858d4678dffd876afb","commit":"425a38f1e8076899400d4a858d4678dffd876afb","version":"425a38f1e8076899400d4a858d4678dffd876afb"}\n'
+        printf '{"status":"ok","commit":"425a38f","version":"v1.0-beta2","buildDate":"2026-06-01T00:00:00Z"}\n'
         ;;
       https://xworkmate-bridge.svc.plus/)
         printf 'xworkmate-bridge is running\n'
@@ -162,7 +162,7 @@ case "${scenario}" in
           printf 'curl: (28) Operation timed out after 20001 milliseconds with 0 bytes received\n' >&2
           exit 1
         fi
-        printf '{"status":"ok","version":"","buildDate":"","commit":"","image":""}\n'
+        printf '{"status":"ok","commit":"425a38f","version":"v1.0-beta2","buildDate":"2026-06-01T00:00:00Z"}\n'
         ;;
       https://xworkmate-bridge.svc.plus/)
         printf 'xworkmate-bridge is running\n'
@@ -220,7 +220,7 @@ run_validate_capture() {
     FAKE_CURL_STATE_DIR="${RUN_STATE_DIR}" \
     BRIDGE_SERVER_URL="https://xworkmate-bridge.svc.plus" \
     BRIDGE_AUTH_TOKEN="test-token" \
-    bash "${SCRIPT_PATH}" "${IMAGE_REF}" 2>&1
+    bash "${SCRIPT_PATH}" "${EXPECTED_COMMIT}" 2>&1
   )"
   RUN_STATUS=$?
   set -e

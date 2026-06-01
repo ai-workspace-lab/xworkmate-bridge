@@ -18,6 +18,12 @@ var (
 )
 
 func main() {
+	acp.SetRuntimeVersionInfo(acp.RuntimeVersionInfo{
+		Commit:    buildCommit,
+		Version:   buildVersion,
+		BuildDate: buildDate,
+	})
+
 	if len(os.Args) < 2 {
 		printUsage()
 		os.Exit(1)
@@ -42,9 +48,6 @@ func main() {
 			os.Exit(1)
 		}
 	default:
-		// Backward compatibility for old subcommands (optional, but we said no backward compatibility)
-		// However, for the transition, we can be nice or just fail.
-		// The user said "彻底清理陈旧代码", so I'll just fail with a help message.
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
 		printUsage()
 		os.Exit(1)

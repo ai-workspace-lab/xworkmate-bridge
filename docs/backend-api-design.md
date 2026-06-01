@@ -313,7 +313,7 @@ Authorization: Bearer $BRIDGE_AUTH_TOKEN
 
 | 验证项 | 结果 |
 | --- | --- |
-| `GET /api/ping` | `200`，返回 `status=image/tag/commit/version` |
+| `GET /api/ping` | `200`，返回二进制运行元数据 `status/commit/version/buildDate` |
 | WebSocket `/acp` 握手 | `101 Switching Protocols` |
 | WebSocket `acp.capabilities` | `ok=true`，返回 `agent/gateway`、`codex/opencode/gemini/hermes`、`openclaw` |
 | `POST /acp/rpc acp.capabilities` | `200`，返回同一能力目录 |

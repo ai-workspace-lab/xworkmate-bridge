@@ -19,8 +19,15 @@ import (
 )
 
 func TestHTTPHandlerRootAndPingExposeRuntimeVersionInfo(t *testing.T) {
-	t.Setenv("IMAGE", "ghcr.io/x-evor/xworkmate-bridge:0123456789abcdef0123456789abcdef01234567")
 	t.Setenv("BRIDGE_AUTH_TOKEN", "")
+	SetRuntimeVersionInfo(RuntimeVersionInfo{
+		Commit:    "0123456",
+		Version:   "v1.1.4-protocol4",
+		BuildDate: "2026-06-01T00:00:00Z",
+	})
+	t.Cleanup(func() {
+		SetRuntimeVersionInfo(RuntimeVersionInfo{})
+	})
 
 	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
@@ -53,17 +60,20 @@ func TestHTTPHandlerRootAndPingExposeRuntimeVersionInfo(t *testing.T) {
 	if got := payload["status"]; got != "ok" {
 		t.Fatalf("expected status ok, got %#v", got)
 	}
-	if got := payload["image"]; got != "ghcr.io/x-evor/xworkmate-bridge:0123456789abcdef0123456789abcdef01234567" {
-		t.Fatalf("expected full image ref, got %#v", got)
+	if _, ok := payload["image"]; ok {
+		t.Fatalf("expected ping payload to omit stale image ref, got %#v", payload["image"])
 	}
-	if got := payload["tag"]; got != "0123456789abcdef0123456789abcdef01234567" {
-		t.Fatalf("expected full image tag, got %#v", got)
+	if _, ok := payload["tag"]; ok {
+		t.Fatalf("expected ping payload to omit stale image tag, got %#v", payload["tag"])
 	}
-	if got := payload["commit"]; got != "0123456789abcdef0123456789abcdef01234567" {
-		t.Fatalf("expected full image commit, got %#v", got)
+	if got := payload["commit"]; got != "0123456" {
+		t.Fatalf("expected binary commit, got %#v", got)
 	}
-	if got := payload["version"]; got != "0123456789abcdef0123456789abcdef01234567" {
-		t.Fatalf("expected full image version, got %#v", got)
+	if got := payload["version"]; got != "v1.1.4-protocol4" {
+		t.Fatalf("expected binary version, got %#v", got)
+	}
+	if got := payload["buildDate"]; got != "2026-06-01T00:00:00Z" {
+		t.Fatalf("expected binary build date, got %#v", got)
 	}
 }
 
@@ -797,23 +807,6 @@ func TestHTTPHandlerPingAllowsReviewBearerAuthorizationWhenConfigured(t *testing
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected 200 for configured review token, got %d", recorder.Code)
-	}
-}
-
-func TestParseImageVersionInfoHandlesTaggedImageRef(t *testing.T) {
-	info := ParseImageVersionInfo("ghcr.io/x-evor/xworkmate-bridge:main-2026-04-12")
-
-	if info.ImageRef != "ghcr.io/x-evor/xworkmate-bridge:main-2026-04-12" {
-		t.Fatalf("expected full image ref, got %q", info.ImageRef)
-	}
-	if info.Tag != "main-2026-04-12" {
-		t.Fatalf("expected tag main-2026-04-12, got %q", info.Tag)
-	}
-	if info.Commit != "" {
-		t.Fatalf("expected empty commit for non-hex tag, got %q", info.Commit)
-	}
-	if info.Version != "main-2026-04-12" {
-		t.Fatalf("expected version main-2026-04-12, got %q", info.Version)
 	}
 }
 

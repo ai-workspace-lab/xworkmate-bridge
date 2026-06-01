@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-IMAGE_REF="${1:?image_ref is required}"
+EXPECTED_COMMIT="${1:?expected bridge binary commit is required}"
 RETRYABLE_TRANSPORT=10
 RETRYABLE_NOT_READY=11
 FAST_HTTP_TIMEOUT_SECONDS=20
@@ -20,13 +20,10 @@ normalize_url() {
   printf '%s\n' "${value}"
 }
 
-image_ref="$(printf '%s' "${IMAGE_REF}" | tr -d '\n' | xargs)"
-image_no_digest="${image_ref%@*}"
-tag="${image_no_digest##*:}"
-commit=""
-version="${tag}"
-if [[ "${tag}" =~ ^[0-9a-f]{40}$ ]]; then
-  commit="${tag}"
+expected_commit="$(printf '%s' "${EXPECTED_COMMIT}" | tr -d '\n' | xargs)"
+if [[ ! "${expected_commit}" =~ ^[0-9a-f]{7,40}$ ]]; then
+  echo "invalid expected bridge binary commit: ${expected_commit}" >&2
+  exit 2
 fi
 
 BASE_URL="$(normalize_url "${BRIDGE_SERVER_URL:-${2:-https://xworkmate-bridge.svc.plus}}")"
@@ -137,24 +134,21 @@ wait_for_release_ping_once() {
     return "${exit_code}"
   fi
 
-  if PING_JSON="${ping_json}" python3 - "${image_ref}" "${tag}" "${commit}" "${version}" <<'PY'
+  if PING_JSON="${ping_json}" python3 - "${expected_commit}" <<'PY'
 import json
 import os
 import sys
 
-image_ref, tag, commit, version = sys.argv[1:5]
+expected_commit = sys.argv[1]
 payload = json.loads(os.environ["PING_JSON"])
 if payload.get("status") != "ok":
     raise SystemExit("ping status not ok")
-if payload.get("image"):
-    if payload.get("image") != image_ref:
-        raise SystemExit(f"expected image {image_ref!r}, got {payload.get('image')!r}")
-    if tag and payload.get("tag") != tag:
-        raise SystemExit(f"expected tag {tag!r}, got {payload.get('tag')!r}")
-    if commit and payload.get("commit") != commit:
-        raise SystemExit(f"expected commit {commit!r}, got {payload.get('commit')!r}")
-    if version and payload.get("version") != version:
-        raise SystemExit(f"expected version {version!r}, got {payload.get('version')!r}")
+if payload.get("image") or payload.get("tag"):
+    raise SystemExit("stale image/tag runtime metadata is still exposed")
+if payload.get("commit") != expected_commit:
+    raise SystemExit(f"expected binary commit {expected_commit!r}, got {payload.get('commit')!r}")
+if not str(payload.get("version") or "").strip():
+    raise SystemExit("bridge binary version is empty")
 PY
   then
     return 0

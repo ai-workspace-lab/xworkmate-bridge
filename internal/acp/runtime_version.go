@@ -1,54 +1,26 @@
 package acp
 
-import "strings"
+import "sync"
 
-type imageVersionInfo struct {
-	ImageRef string `json:"image_ref"`
-	Tag      string `json:"tag,omitempty"`
-	Commit   string `json:"commit,omitempty"`
-	Version  string `json:"version,omitempty"`
+type RuntimeVersionInfo struct {
+	Commit    string `json:"commit,omitempty"`
+	Version   string `json:"version,omitempty"`
+	BuildDate string `json:"buildDate,omitempty"`
 }
 
-func ParseImageVersionInfo(imageRef string) imageVersionInfo {
-	ref := strings.TrimSpace(imageRef)
-	info := imageVersionInfo{ImageRef: ref}
-	if ref == "" {
-		return info
-	}
+var runtimeVersionState = struct {
+	sync.RWMutex
+	info RuntimeVersionInfo
+}{}
 
-	if idx := strings.LastIndex(ref, "@"); idx >= 0 {
-		ref = ref[:idx]
-	}
-
-	tag := ref
-	if idx := strings.LastIndex(tag, ":"); idx >= 0 && idx > strings.LastIndex(tag, "/") {
-		tag = tag[idx+1:]
-	}
-	tag = strings.TrimSpace(tag)
-	info.Tag = tag
-
-	switch {
-	case isHexCommit(tag):
-		info.Commit = tag
-		info.Version = tag
-	default:
-		info.Version = tag
-	}
-
-	return info
+func SetRuntimeVersionInfo(info RuntimeVersionInfo) {
+	runtimeVersionState.Lock()
+	defer runtimeVersionState.Unlock()
+	runtimeVersionState.info = info
 }
 
-func isHexCommit(value string) bool {
-	if len(value) != 40 {
-		return false
-	}
-	for _, r := range value {
-		switch {
-		case r >= '0' && r <= '9':
-		case r >= 'a' && r <= 'f':
-		default:
-			return false
-		}
-	}
-	return true
+func CurrentRuntimeVersionInfo() RuntimeVersionInfo {
+	runtimeVersionState.RLock()
+	defer runtimeVersionState.RUnlock()
+	return runtimeVersionState.info
 }

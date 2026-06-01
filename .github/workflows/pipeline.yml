@@ -248,7 +248,6 @@ jobs:
           ANSIBLE_CONFIG: ./ansible.cfg
           BRIDGE_AUTH_TOKEN: ${{ env.INTERNAL_SERVICE_TOKEN }}
         run: |
-          SERVICE_COMPOSE_IMAGE="$(cat ../xworkmate-bridge/dist/image-artifact/service-image-ref.txt | xargs)"
           CHECK_MODE_FLAG=""
           if [[ "${{ steps.deploy_meta.outputs.run_apply }}" != "true" ]]; then
             CHECK_MODE_FLAG="-C"
@@ -256,10 +255,7 @@ jobs:
           ansible-playbook -i inventory.ini deploy_xworkmate_bridge_vhosts.yml \
             -D ${CHECK_MODE_FLAG} \
             --tags xworkmate_bridge \
-            -l "${{ steps.deploy_meta.outputs.target_host }}" \
-            -e "service_compose_image=${SERVICE_COMPOSE_IMAGE}" \
-            -e "ghcr_username=${{ env.GHCR_USERNAME }}" \
-            -e "ghcr_password=${{ env.GHCR_PASSWORD }}"
+            -l "${{ steps.deploy_meta.outputs.target_host }}"
 
   publish_release:
     name: Publish GitHub Release
@@ -320,7 +316,7 @@ jobs:
       - name: Validate deployed endpoints
         env:
           BRIDGE_AUTH_TOKEN: ${{ env.INTERNAL_SERVICE_TOKEN }}
-        run: bash ./scripts/github-actions/validate-deploy.sh "${{ needs.build.outputs.service_image_ref }}" "${BRIDGE_SERVER_URL}"
+        run: bash ./scripts/github-actions/validate-deploy.sh "$(git rev-parse --short HEAD)" "${BRIDGE_SERVER_URL}"
 
       - name: Validate public ACP contract
         env:

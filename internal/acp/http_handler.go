@@ -8,7 +8,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,13 +31,12 @@ func (s *Server) Handler() http.Handler {
 				shared.WriteJSONError(w, nil, http.StatusUnauthorized, -32001, "missing bearer authorization")
 				return
 			}
-			info := ParseImageVersionInfo(os.Getenv("IMAGE"))
+			info := CurrentRuntimeVersionInfo()
 			resp := map[string]any{
-				"status":  "ok",
-				"image":   info.ImageRef,
-				"tag":     info.Tag,
-				"commit":  info.Commit,
-				"version": info.Version,
+				"status":    "ok",
+				"commit":    info.Commit,
+				"version":   info.Version,
+				"buildDate": info.BuildDate,
 			}
 			body, _ := json.Marshal(resp)
 			w.Header().Set("Content-Type", "application/json")
