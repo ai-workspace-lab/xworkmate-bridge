@@ -749,7 +749,7 @@ func TestExecuteSessionTaskGatewayComplexArtifactContractAcceptsRequiredFinalArt
 	}
 }
 
-func TestExecuteSessionTaskGatewayComplexArtifactContractFailsWithPartialArtifacts(t *testing.T) {
+func TestExecuteSessionTaskGatewayComplexArtifactContractFinalizesPartialArtifacts(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
 
@@ -778,20 +778,27 @@ func TestExecuteSessionTaskGatewayComplexArtifactContractFailsWithPartialArtifac
 		},
 	})
 	if rpcErr != nil {
-		t.Fatalf("expected structured partial-artifact response, got rpc error: %#v", rpcErr)
+		t.Fatalf("expected finalized partial-artifact response, got rpc error: %#v", rpcErr)
 	}
-	if got := response["success"]; got != false {
-		t.Fatalf("expected partial artifact response to fail, got %#v", response)
+	if got := response["success"]; got != true {
+		t.Fatalf("expected partial artifact response to be finalized, got %#v", response)
 	}
-	if got := response["code"]; got != "OPENCLAW_REQUIRED_ARTIFACT_MISSING" {
-		t.Fatalf("expected required artifact missing code, got %#v", response)
+	if got := gateway.ChatSendCount(); got != 2 {
+		t.Fatalf("expected Bridge to send one finalize turn after partial artifacts, got %d", got)
 	}
 	artifacts := responseArtifactMaps(t, response)
-	if len(artifacts) != 1 || artifacts[0]["relativePath"] != "chapters/intro.md" {
-		t.Fatalf("expected partial artifact to remain exported, got %#v", artifacts)
+	if len(artifacts) != 3 {
+		t.Fatalf("expected initial partial artifact plus finalized export artifacts, got %#v", artifacts)
 	}
-	if got := response["missingArtifactExtensions"]; fmt.Sprint(got) != "[pdf]" {
-		t.Fatalf("expected missing PDF diagnostics, got %#v", response)
+	seen := map[string]bool{}
+	for _, artifact := range artifacts {
+		seen[fmt.Sprint(artifact["relativePath"])] = true
+	}
+	if !seen["chapters/intro.md"] || !seen["exports/final.pdf"] {
+		t.Fatalf("expected partial markdown and final PDF artifacts, got %#v", artifacts)
+	}
+	if _, ok := response["missingArtifactExtensions"]; ok {
+		t.Fatalf("expected finalize turn to clear missing artifact diagnostics, got %#v", response)
 	}
 }
 
@@ -2542,6 +2549,7 @@ type acpFakeOpenClawGateway struct {
 	agentWaitDelayMs          atomic.Int64
 	largeGatewayPayloadBytes  atomic.Int64
 	emitAgentDelta            atomic.Bool
+	finalizeRequested         atomic.Bool
 	lastConnectClient         atomic.Value
 	lastChatSendParams        atomic.Value
 	lastArtifactPrepareParams atomic.Value
@@ -2670,7 +2678,11 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 				if strings.TrimSpace(fake.alternateRunID) != "" {
 					runID = strings.TrimSpace(fake.alternateRunID)
 				}
-				fake.recordRunMessage(runID, strings.TrimSpace(shared.StringArg(params, "message", "")))
+				message := strings.TrimSpace(shared.StringArg(params, "message", ""))
+				if strings.Contains(message, "XWorkmate final deliverable repair:") {
+					fake.finalizeRequested.Store(true)
+				}
+				fake.recordRunMessage(runID, message)
 				_ = conn.WriteJSON(map[string]any{
 					"type": "res",
 					"id":   id,
@@ -2855,6 +2867,17 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 							"content":       "ZmluYWwgcmVwb3J0",
 						},
 					}
+					if fake.finalizeRequested.Load() {
+						payload["artifacts"] = append(payload["artifacts"].([]any), map[string]any{
+							"relativePath":  "exports/final.pdf",
+							"label":         "final.pdf",
+							"contentType":   "application/pdf",
+							"sizeBytes":     12,
+							"sha256":        "fake-sha256-final",
+							"artifactScope": artifactScope,
+							"scopeKind":     "task",
+						})
+					}
 				}
 				if strings.Contains(fake.runMessage(runID), "make pdf artifact") {
 					payload["artifacts"] = []any{
@@ -2880,6 +2903,17 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 							"artifactScope": artifactScope,
 							"scopeKind":     "task",
 						},
+					}
+					if fake.finalizeRequested.Load() {
+						payload["artifacts"] = append(payload["artifacts"].([]any), map[string]any{
+							"relativePath":  "exports/final.pdf",
+							"label":         "final.pdf",
+							"contentType":   "application/pdf",
+							"sizeBytes":     12,
+							"sha256":        "fake-sha256-final",
+							"artifactScope": artifactScope,
+							"scopeKind":     "task",
+						})
 					}
 				}
 				_ = conn.WriteJSON(map[string]any{

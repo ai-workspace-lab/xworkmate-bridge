@@ -424,6 +424,7 @@ func TestHTTPHandlerGatewayOpenClawHandlesFiveConcurrentE2ECases(t *testing.T) {
 			"SOCKET_CLOSED",
 			"ACP_HTTP_CONNECTION_CLOSED",
 			"GATEWAY_CONNECT_FAILED",
+			"openclaw returned partial artifacts without required final deliverables",
 		} {
 			if strings.Contains(item.body, unexpected) {
 				t.Fatalf("unexpected gateway stability error %q in body: %s", unexpected, item.body)
@@ -439,11 +440,12 @@ func TestHTTPHandlerGatewayOpenClawHandlesFiveConcurrentE2ECases(t *testing.T) {
 	if got := gateway.ConnectCount(); got != 1 {
 		t.Fatalf("expected bridge to reuse one established OpenClaw connection, got %d connects", got)
 	}
-	if got := gateway.ChatSendCount(); got != len(prompts) {
-		t.Fatalf("expected five chat.send calls, got %d", got)
+	expectedGatewayTurns := len(prompts) + 1
+	if got := gateway.ChatSendCount(); got != expectedGatewayTurns {
+		t.Fatalf("expected five primary chat.send calls plus one final-deliverable repair, got %d", got)
 	}
-	if got := gateway.AgentWaitCount(); got != len(prompts) {
-		t.Fatalf("expected five agent.wait calls, got %d", got)
+	if got := gateway.AgentWaitCount(); got != expectedGatewayTurns {
+		t.Fatalf("expected five primary agent.wait calls plus one final-deliverable repair, got %d", got)
 	}
 }
 
