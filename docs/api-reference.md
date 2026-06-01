@@ -54,21 +54,33 @@
 
 ## 3.1 Lightweight Distributed Task Forwarding
 
-bridge 可以把本机收到的 HTTP 任务提交转发到另一个 bridge endpoint，用于轻量分布式部署。例如：
+bridge 可以把本机收到的 HTTP 任务提交转发到另一个 bridge endpoint，用于轻量分布式部署。当前实现落地的是双节点分布式拓扑：
 
 - `cn-xworkmate-bridge.svc.plus` 负责本地入口和鉴权
 - `xworkmate-bridge.svc.plus` 负责实际 OpenClaw task runtime
-- cn bridge 配置 peer endpoint 后，`POST /gateway/openclaw` 的 `session.start` / `session.message` 会转发到 peer 的同一路径
+- cn bridge 配置 `task_forward_peer_id` 后，`POST /acp/rpc` 的 `session.start` / `session.message` 会转发到 peer 的同一路径
+- 主 bridge 不配置 `task_forward_peer_id`，因此不会把任务反向转发到 CN
 
 配置：
 
 ```yaml
 distributed:
-  task_forward_endpoint: "https://xworkmate-bridge.svc.plus"
+  topology: "dual-node"
+  local_node_id: "cn-xworkmate-bridge"
+  task_forward_peer_id: "xworkmate-bridge"
+  nodes:
+    - id: "xworkmate-bridge"
+      role: "primary"
+      public_base_url: "https://xworkmate-bridge.svc.plus"
+      bridge_endpoint: "http://172.29.10.1:8787"
+    - id: "cn-xworkmate-bridge"
+      role: "edge"
+      public_base_url: "https://cn-xworkmate-bridge.svc.plus"
+      bridge_endpoint: "http://172.29.10.2:8787"
   task_forward_token: ""
 ```
 
-等价环境变量：
+单 endpoint 覆盖仍可用于临时验证：
 
 ```text
 XWORKMATE_BRIDGE_TASK_FORWARD_ENDPOINT=https://xworkmate-bridge.svc.plus
@@ -77,10 +89,10 @@ XWORKMATE_BRIDGE_TASK_FORWARD_TOKEN=$PEER_BRIDGE_AUTH_TOKEN
 
 规则：
 
-- endpoint 是 peer bridge base URL，bridge 会按当前请求路径拼接 `/gateway/openclaw` 或 `/acp/rpc`
+- `task_forward_peer_id` 指向的节点 `bridge_endpoint` 是 peer bridge base URL，bridge 会按当前请求路径拼接 `/acp/rpc`
 - 同步消息不能走公网明文：公网 endpoint 必须使用 `https://`
 - `http://` 只允许 loopback、private、link-local 这类本机或 VPN 内网地址，用于 WireGuard 等隧道已经提供加密的场景
-- endpoint 可以是公网 HTTPS，也可以是 VPN 内网 HTTP(S)。bridge 明确支持把 `task_forward_endpoint` 配成 WireGuard、WireGuard over VLESS/TCP/TLS、WebSocket/TLS 等隧道后的本机或私网地址
+- endpoint 可以是公网 HTTPS，也可以是 VPN 内网 HTTP(S)。bridge 明确支持把 `bridge_endpoint` 配成 WireGuard、WireGuard over VLESS/TCP/TLS、WebSocket/TLS 等隧道后的本机或私网地址
 - 只要求本机网络能路由到 endpoint；bridge 不依赖 config center 或额外注册中心
 - `task_forward_token` 为空时复用本机 `BRIDGE_AUTH_TOKEN`
 - 转发请求会带 `X-XWorkmate-Bridge-Forwarded: 1`，收到该 header 后不会再次转发，避免 bridge 之间循环

@@ -29,8 +29,19 @@ type BridgeConfig struct {
 }
 
 type DistributedConfig struct {
-	TaskForwardEndpoint string `yaml:"task_forward_endpoint"`
-	TaskForwardToken    string `yaml:"task_forward_token"`
+	TaskForwardEndpoint string                  `yaml:"task_forward_endpoint"`
+	TaskForwardToken    string                  `yaml:"task_forward_token"`
+	Topology            string                  `yaml:"topology"`
+	LocalNodeID         string                  `yaml:"local_node_id"`
+	TaskForwardPeerID   string                  `yaml:"task_forward_peer_id"`
+	Nodes               []DistributedNodeConfig `yaml:"nodes"`
+}
+
+type DistributedNodeConfig struct {
+	ID             string `yaml:"id"`
+	Role           string `yaml:"role"`
+	PublicBaseURL  string `yaml:"public_base_url"`
+	BridgeEndpoint string `yaml:"bridge_endpoint"`
 }
 
 type OpenClawGatewayConfig struct {
@@ -82,7 +93,11 @@ func resolveDistributedTaskForwardEndpoint(config *BridgeConfig) string {
 	if config != nil {
 		yamlVal = config.Distributed.TaskForwardEndpoint
 	}
-	return resolveURL(yamlVal, "XWORKMATE_BRIDGE_TASK_FORWARD_ENDPOINT", "BRIDGE_TASK_FORWARD_ENDPOINT")
+	return resolveURL(
+		firstNonEmpty(yamlVal, resolveDistributedTopologyTaskForwardEndpoint(config)),
+		"XWORKMATE_BRIDGE_TASK_FORWARD_ENDPOINT",
+		"BRIDGE_TASK_FORWARD_ENDPOINT",
+	)
 }
 
 func resolveDistributedTaskForwardToken(config *BridgeConfig) string {
@@ -98,6 +113,40 @@ func resolveDistributedTaskForwardToken(config *BridgeConfig) string {
 		}
 	}
 	return bridgeSharedAuthToken()
+}
+
+func resolveDistributedTopologyTaskForwardEndpoint(config *BridgeConfig) string {
+	if config == nil {
+		return ""
+	}
+	distributed := config.Distributed
+	topology := strings.TrimSpace(distributed.Topology)
+	if topology == "" {
+		return ""
+	}
+	if !strings.EqualFold(topology, "dual-node") {
+		return ""
+	}
+	localNodeID := strings.TrimSpace(distributed.LocalNodeID)
+	peerNodeID := strings.TrimSpace(distributed.TaskForwardPeerID)
+	if localNodeID == "" || peerNodeID == "" || localNodeID == peerNodeID {
+		return ""
+	}
+	for _, node := range distributed.Nodes {
+		if strings.TrimSpace(node.ID) == peerNodeID {
+			return strings.TrimSpace(node.BridgeEndpoint)
+		}
+	}
+	return ""
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func newProductionProviderCatalog() (*BridgeConfig, map[string]syncedProvider, []string) {

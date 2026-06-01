@@ -18,14 +18,26 @@ openclaw_gateway:
   queue_timeout: "10m"
 
 # Lightweight distributed bridge forwarding.
-# cn-xworkmate-bridge.svc.plus can forward task submissions to a peer bridge,
-# including VPN-only endpoints such as WireGuard or WireGuard-over-VLESS
-# addresses that are reachable from this host.
+# A dual-node topology can keep both bridge nodes explicit while only enabling
+# task forwarding from the node that sets task_forward_peer_id.
 # Public plaintext HTTP is rejected; use HTTPS on public paths, or HTTP only on
 # loopback/private/link-local VPN addresses where the tunnel provides encryption.
-# The endpoint is the peer bridge base URL; /gateway/openclaw or /acp/rpc is
-# appended from the inbound request path.
+# bridge_endpoint is the peer bridge base URL; /gateway/openclaw or /acp/rpc is
+# appended from the inbound request path when forwarding is enabled.
 distributed:
+  topology: "dual-node"
+  local_node_id: "cn-xworkmate-bridge"
+  task_forward_peer_id: "xworkmate-bridge"
+  nodes:
+    - id: "xworkmate-bridge"
+      role: "primary"
+      public_base_url: "https://xworkmate-bridge.svc.plus"
+      bridge_endpoint: "http://172.29.10.1:8787"
+    - id: "cn-xworkmate-bridge"
+      role: "edge"
+      public_base_url: "https://cn-xworkmate-bridge.svc.plus"
+      bridge_endpoint: "http://172.29.10.2:8787"
+  # Optional direct override. Leave empty when using the topology above.
   task_forward_endpoint: ""
   # Optional. Defaults to BRIDGE_AUTH_TOKEN when omitted.
   task_forward_token: ""
