@@ -262,11 +262,16 @@ func (o *SessionOrchestrator) runGateway(
 		if rpcErr != nil {
 			return nil, rpcErr
 		}
-		defer release()
 		if rpcErr := ensureProductionGatewayConnected(o.server, gatewayProvider, notify); rpcErr != nil {
+			release()
 			return nil, rpcErr
 		}
-		return o.runOpenClawGatewayChat(ctx, params, gatewayProvider, turnID, notify)
+		result, rpcErr := o.startOpenClawGatewayTask(ctx, params, routing, gatewayProvider, turnID, release, notify)
+		if rpcErr != nil {
+			release()
+			return nil, rpcErr
+		}
+		return result, nil
 	}
 	if rpcErr := ensureProductionGatewayConnected(o.server, gatewayProvider, notify); rpcErr != nil {
 		return nil, rpcErr
@@ -299,11 +304,13 @@ func (o *SessionOrchestrator) runGateway(
 	return payload, nil
 }
 
-func (o *SessionOrchestrator) runOpenClawGatewayChat(
+func (o *SessionOrchestrator) startOpenClawGatewayTask(
 	_ context.Context,
 	params map[string]any,
+	routing RoutingResult,
 	gatewayProvider string,
 	turnID string,
+	releaseAdmission func(),
 	notify func(map[string]any),
 ) (map[string]any, *shared.RPCError) {
 	collector := newOpenClawChatCollector()
@@ -374,72 +381,65 @@ func (o *SessionOrchestrator) runOpenClawGatewayChat(
 		logOpenClawArtifactSync(gatewayProvider, sessionKey, runID, "prepare", true, false, false)
 		applyOpenClawPreparedArtifactToChatParams(chatParams, preparedArtifact, sessionKey, runID, artifactContract)
 	}
-	waitTimeout := openClawAgentWaitTimeout(params, chatParams)
-	waitStarted := time.Now()
-	waitResult := o.openClawGatewayRequestWithRetry(
-		gatewayProvider,
-		"agent.wait",
-		map[string]any{
-			"runId":     runID,
-			"timeoutMs": waitTimeout.Milliseconds(),
-		},
-		waitTimeout,
-		notifyWithCollection,
-	)
-	logOpenClawGatewayTiming(
-		gatewayProvider,
-		"agent.wait",
-		sessionKey,
-		runID,
-		time.Since(waitStarted),
-		waitResult.OK,
-	)
-	if !waitResult.OK {
-		return nil, gatewayRPCError(waitResult.Error, "openclaw agent.wait failed")
+	taskLoadClass, runtimeBudgetMinutes := openClawTaskRuntimePolicy(params, chatParams, artifactContract)
+	startedAt := time.Now()
+	record := &OpenClawTaskRecord{
+		SessionID:            sessionID,
+		ThreadID:             threadID,
+		TurnID:               turnID,
+		RunID:                runID,
+		SessionKey:           sessionKey,
+		GatewayProviderID:    gatewayProvider,
+		TaskLoadClass:        taskLoadClass,
+		ArtifactSinceUnixMs:  artifactSinceUnixMs,
+		RuntimeBudgetMinutes: runtimeBudgetMinutes,
+		StartedAt:            startedAt,
+		DeadlineAt:           startedAt.Add(time.Duration(runtimeBudgetMinutes) * time.Minute),
+		ProgressStage:        "running",
+		ProgressMessage:      "OpenClaw task accepted",
+		ChatParams:           cloneMap(chatParams),
+		PreparedArtifact:     preparedArtifact,
+		ArtifactContract:     artifactContract,
+		ResolvedModel:        routing.Model,
+		ResolvedSkills:       append([]string(nil), routing.Skills...),
+		AdmissionRelease:     releaseAdmission,
 	}
-	waitPayload := shared.AsMap(waitResult.Payload)
-	output := collector.output()
-	if output == "" {
-		output = firstNonEmptyString(waitPayload, "output", "message", "summary", "assistantText", "text")
-	}
-	noDisplayableOutput := strings.TrimSpace(output) == ""
-	if output == "" {
-		output = openClawNoDisplayableText
-	}
-	result := map[string]any{
-		"success":                   true,
-		"output":                    output,
-		"message":                   output,
-		"summary":                   output,
-		"turnId":                    turnID,
-		"runId":                     runID,
-		"mode":                      router.ExecutionTargetGatewayChat,
-		"resolvedGatewayProviderId": gatewayProvider,
-	}
-	mergeOpenClawArtifactPayload(result, waitPayload)
-	mergeOpenClawArtifactPayload(result, collector.artifactPayload())
-	applyOpenClawPreparedArtifactToResult(result, preparedArtifact)
-	artifactPayload := o.openClawArtifactExport(
-		gatewayProvider,
-		chatParams,
-		runID,
-		artifactSinceUnixMs,
-		preparedArtifact,
-		notifyWithCollection,
-	)
-	mergeOpenClawArtifactPayload(result, artifactPayload)
-	result[openClawArtifactExportAttemptedField] = true
-	exportedCount := openClawArtifactPayloadCount(result)
-	logOpenClawArtifactSync(gatewayProvider, sessionKey, runID, "export", preparedArtifact != nil, exportedCount > 0, exportedCount == 0)
-	o.server.decorateOpenClawArtifactDownloadURLs(result, shared.StringArg(chatParams, "sessionKey", ""), runID)
-	stripOpenClawArtifactInlineContent(result)
-	applyOpenClawArtifactContractResult(result, artifactContract)
-	guardOpenClawAgentFailedBeforeReplyResult(result)
-	guardOpenClawNoDisplayableResult(result, noDisplayableOutput)
+	sess := o.server.getOrCreateSession(sessionID, threadID)
+	sess.mu.Lock()
+	sess.task.RunID = runID
+	sess.task.SessionKey = sessionKey
+	sess.task.GatewayProviderID = gatewayProvider
+	sess.task.TaskLoadClass = taskLoadClass
+	sess.task.ArtifactScope = strings.TrimSpace(preparedArtifact.ArtifactScope)
+	sess.task.ArtifactDirectory = strings.TrimSpace(preparedArtifact.ArtifactDirectory)
+	sess.task.RuntimeBudgetMinutes = runtimeBudgetMinutes
+	sess.task.StartedAt = startedAt
+	sess.task.DeadlineAt = record.DeadlineAt
+	sess.task.ProgressStage = "running"
+	sess.task.ProgressMessage = "OpenClaw task accepted"
+	sess.openClaw = record
+	running := openClawRunningTaskResult(record)
+	sess.lastResult = cloneMap(running)
+	sess.mu.Unlock()
+	o.startOpenClawTaskMonitor(sess)
 	if notify != nil {
-		notify(shared.NotificationEnvelope("session.update", openClawGatewayCompletedResultUpdate(sessionID, threadID, turnID, result)))
+		notify(shared.NotificationEnvelope("session.update", map[string]any{
+			"sessionId":            sessionID,
+			"threadId":             threadID,
+			"turnId":               turnID,
+			"runId":                runID,
+			"type":                 "status",
+			"event":                "running",
+			"message":              "OpenClaw task accepted",
+			"pending":              true,
+			"error":                false,
+			"status":               string(TaskStateRunning),
+			"runtimeBudgetMinutes": runtimeBudgetMinutes,
+			"progress":             running["progress"],
+		}))
 	}
-	return result, nil
+	_ = collector
+	return running, nil
 }
 
 func openClawGatewayCompletedResultUpdate(sessionID string, threadID string, turnID string, result map[string]any) map[string]any {
@@ -1772,6 +1772,21 @@ func (o *SessionOrchestrator) formatUnavailable(res RoutingResult) map[string]an
 func (o *SessionOrchestrator) normalizeResult(sess *session, result map[string]any, routing RoutingResult, turnID string, params map[string]any) map[string]any {
 	if result == nil {
 		result = map[string]any{}
+	}
+	if routing.TargetID == "gateway" && strings.TrimSpace(shared.StringArg(result, "status", "")) == string(TaskStateRunning) {
+		result["turnId"] = turnID
+		result["success"] = true
+		result["resolvedExecutionTarget"] = routing.TargetID
+		result["resolvedProviderId"] = routing.ProviderID
+		result["resolvedGatewayProviderId"] = routing.GatewayProviderID
+		result["resolvedModel"] = routing.Model
+		result["resolvedSkills"] = append([]string(nil), routing.Skills...)
+		sess.mu.Lock()
+		sess.task.State = TaskStateRunning
+		sess.task.UpdatedAt = time.Now()
+		sess.lastResult = cloneMap(result)
+		sess.mu.Unlock()
+		return result
 	}
 	if openClawArtifactResponse(result, routing, params) {
 		o.completeOpenClawScopedArtifactExport(result, params, openClawGatewayProviderForArtifacts(result, routing, params), turnID)
