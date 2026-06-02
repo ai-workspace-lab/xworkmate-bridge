@@ -413,6 +413,7 @@ func TestHTTPHandlerGatewayOpenClawHandlesFiveConcurrentE2ECases(t *testing.T) {
 	close(results)
 
 	var finalCount int
+	var missingFinalArtifactCount int
 	for item := range results {
 		if item.err != nil {
 			t.Fatalf("concurrent e2e request failed: %v", item.err)
@@ -425,11 +426,13 @@ func TestHTTPHandlerGatewayOpenClawHandlesFiveConcurrentE2ECases(t *testing.T) {
 			"SOCKET_CLOSED",
 			"ACP_HTTP_CONNECTION_CLOSED",
 			"GATEWAY_CONNECT_FAILED",
-			"openclaw returned partial artifacts without required final deliverables",
 		} {
 			if strings.Contains(item.body, unexpected) {
 				t.Fatalf("unexpected gateway stability error %q in body: %s", unexpected, item.body)
 			}
+		}
+		if strings.Contains(item.body, "OPENCLAW_REQUIRED_ARTIFACT_MISSING") {
+			missingFinalArtifactCount += 1
 		}
 		if strings.Contains(item.body, `"result"`) && strings.Contains(item.body, `data: [DONE]`) {
 			finalCount += 1
@@ -437,6 +440,9 @@ func TestHTTPHandlerGatewayOpenClawHandlesFiveConcurrentE2ECases(t *testing.T) {
 	}
 	if finalCount != len(prompts) {
 		t.Fatalf("expected all five e2e requests to return final result, got %d", finalCount)
+	}
+	if missingFinalArtifactCount != len(prompts) {
+		t.Fatalf("expected all artifact-producing prompts to fail without real final artifacts, got %d", missingFinalArtifactCount)
 	}
 	if got := gateway.ConnectCount(); got != 1 {
 		t.Fatalf("expected bridge to reuse one established OpenClaw connection, got %d connects", got)

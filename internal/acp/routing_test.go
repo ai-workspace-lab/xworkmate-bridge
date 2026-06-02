@@ -636,42 +636,6 @@ func TestOpenClawArtifactContractInfersRemoteScenarioDeliverables(t *testing.T) 
 	}
 }
 
-func TestOpenClawArtifactFinalizerWritesCurrentScopeDeliverables(t *testing.T) {
-	workspace := t.TempDir()
-	artifactDirectory := filepath.Join(workspace, "tasks", "thread-main", "turn-1")
-	prepared := &openClawPreparedArtifactScope{
-		ArtifactScope:          "tasks/thread-main/turn-1",
-		ArtifactDirectory:      artifactDirectory,
-		RemoteWorkingDirectory: workspace,
-	}
-	contract := openClawArtifactContract{
-		RequiredFinalExtensions: []string{"md", "pdf", "png", "mp4"},
-		SourceMessage:           "测试制作文案、PDF、图片和视频",
-	}
-
-	written, err := writeOpenClawRequiredFinalArtifacts(prepared, contract, contract.RequiredFinalExtensions)
-	if err != nil {
-		t.Fatalf("write final artifacts: %v", err)
-	}
-	if !slices.Equal(written, []string{
-		"reports/final.md",
-		"exports/final.pdf",
-		"assets/images/final.png",
-		"renders/final.mp4",
-	}) {
-		t.Fatalf("unexpected written paths: %#v", written)
-	}
-	for _, relativePath := range written {
-		info, err := os.Stat(filepath.Join(artifactDirectory, filepath.FromSlash(relativePath)))
-		if err != nil {
-			t.Fatalf("expected %s to exist: %v", relativePath, err)
-		}
-		if info.Size() == 0 {
-			t.Fatalf("expected %s to be non-empty", relativePath)
-		}
-	}
-}
-
 func TestGatewayRequestForwardsOpenClawSkillsStatus(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
@@ -825,7 +789,7 @@ func TestExecuteSessionTaskGatewayComplexArtifactContractAcceptsRequiredFinalArt
 	}
 }
 
-func TestExecuteSessionTaskGatewayComplexArtifactContractRecoversPartialArtifacts(t *testing.T) {
+func TestExecuteSessionTaskGatewayComplexArtifactContractRejectsPartialArtifacts(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
 	gateway.artifactWorkspaceRoot = t.TempDir()
@@ -855,31 +819,24 @@ func TestExecuteSessionTaskGatewayComplexArtifactContractRecoversPartialArtifact
 		},
 	})
 	if rpcErr != nil {
-		t.Fatalf("expected finalized partial-artifact response, got rpc error: %#v", rpcErr)
+		t.Fatalf("expected bridge response, got rpc error: %#v", rpcErr)
 	}
-	if got := response["success"]; got != true {
-		t.Fatalf("expected partial artifact response to be finalized, got %#v", response)
+	if got := response["success"]; got != false {
+		t.Fatalf("expected partial artifact response to fail without final PDF, got %#v", response)
 	}
 	if got := gateway.ChatSendCount(); got != 1 {
-		t.Fatalf("expected Bridge to recover partial artifacts without another model turn, got %d", got)
+		t.Fatalf("expected no automatic repair model turn, got %d", got)
 	}
 	artifacts := responseArtifactMaps(t, response)
-	if len(artifacts) != 3 {
-		t.Fatalf("expected initial partial artifact plus finalized export artifacts, got %#v", artifacts)
+	if len(artifacts) != 1 || artifacts[0]["relativePath"] != "chapters/intro.md" {
+		t.Fatalf("expected only real partial artifact, got %#v", artifacts)
 	}
-	seen := map[string]bool{}
-	for _, artifact := range artifacts {
-		seen[fmt.Sprint(artifact["relativePath"])] = true
-	}
-	if !seen["chapters/intro.md"] || !seen["exports/final.pdf"] {
-		t.Fatalf("expected partial markdown and final PDF artifacts, got %#v", artifacts)
-	}
-	if _, ok := response["missingArtifactExtensions"]; ok {
-		t.Fatalf("expected finalize turn to clear missing artifact diagnostics, got %#v", response)
+	if got := response["code"]; got != "OPENCLAW_REQUIRED_ARTIFACT_MISSING" {
+		t.Fatalf("expected missing final artifact code, got %#v", response)
 	}
 }
 
-func TestExecuteSessionTaskGatewayRecoversArtifactContractAfterWaitFailure(t *testing.T) {
+func TestExecuteSessionTaskGatewayFailsArtifactContractAfterWaitFailure(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
 	gateway.artifactWorkspaceRoot = t.TempDir()
@@ -908,21 +865,17 @@ func TestExecuteSessionTaskGatewayRecoversArtifactContractAfterWaitFailure(t *te
 			},
 		},
 	})
-	if rpcErr != nil {
-		t.Fatalf("expected recovered wait-timeout response, got rpc error: %#v", rpcErr)
+	if rpcErr == nil {
+		t.Fatalf("expected wait-timeout rpc error, got response: %#v", response)
 	}
-	if got := response["success"]; got != true {
-		t.Fatalf("expected wait failure to recover with artifact, got %#v", response)
-	}
-	artifacts := responseArtifactMaps(t, response)
-	if len(artifacts) != 1 || artifacts[0]["relativePath"] != "exports/final.pdf" {
-		t.Fatalf("expected recovered final PDF artifact, got %#v", artifacts)
+	if rpcErr.Code != -32002 || !strings.Contains(rpcErr.Message, "openclaw wait timeout") {
+		t.Fatalf("expected surfaced wait timeout, got %#v", rpcErr)
 	}
 	if got := gateway.ChatSendCount(); got != 1 {
-		t.Fatalf("expected no second model turn after wait failure, got %d", got)
+		t.Fatalf("expected no automatic repair model turn, got %d", got)
 	}
 	if got := gateway.AgentWaitCount(); got != 1 {
-		t.Fatalf("expected one failed wait before recovery, got %d", got)
+		t.Fatalf("expected one failed wait, got %d", got)
 	}
 }
 
@@ -2766,7 +2719,6 @@ type acpFakeOpenClawGateway struct {
 	agentWaitDelayMs          atomic.Int64
 	largeGatewayPayloadBytes  atomic.Int64
 	emitAgentDelta            atomic.Bool
-	finalizeRequested         atomic.Bool
 	lastConnectClient         atomic.Value
 	lastChatSendParams        atomic.Value
 	lastArtifactPrepareParams atomic.Value
@@ -2897,9 +2849,6 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 					runID = strings.TrimSpace(fake.alternateRunID)
 				}
 				message := strings.TrimSpace(shared.StringArg(params, "message", ""))
-				if strings.Contains(message, "XWorkmate final deliverable repair:") {
-					fake.finalizeRequested.Store(true)
-				}
 				fake.recordRunMessage(runID, message)
 				_ = conn.WriteJSON(map[string]any{
 					"type": "res",
@@ -3097,17 +3046,6 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 							"content":       "ZmluYWwgcmVwb3J0",
 						},
 					}
-					if fake.finalizeRequested.Load() {
-						payload["artifacts"] = append(payload["artifacts"].([]any), map[string]any{
-							"relativePath":  "exports/final.pdf",
-							"label":         "final.pdf",
-							"contentType":   "application/pdf",
-							"sizeBytes":     12,
-							"sha256":        "fake-sha256-final",
-							"artifactScope": artifactScope,
-							"scopeKind":     "task",
-						})
-					}
 				}
 				if strings.Contains(fake.runMessage(runID), "make pdf artifact") {
 					payload["artifacts"] = []any{
@@ -3133,17 +3071,6 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 							"artifactScope": artifactScope,
 							"scopeKind":     "task",
 						},
-					}
-					if fake.finalizeRequested.Load() {
-						payload["artifacts"] = append(payload["artifacts"].([]any), map[string]any{
-							"relativePath":  "exports/final.pdf",
-							"label":         "final.pdf",
-							"contentType":   "application/pdf",
-							"sizeBytes":     12,
-							"sha256":        "fake-sha256-final",
-							"artifactScope": artifactScope,
-							"scopeKind":     "task",
-						})
 					}
 				}
 				if len(filesystemArtifacts) > 0 {
