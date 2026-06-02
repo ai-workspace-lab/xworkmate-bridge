@@ -213,20 +213,22 @@ func (s *Server) handleRPCWithTransform(
 		if !stream {
 			return
 		}
-		if openClawGatewayTask {
-			if reason := openClawGatewayNotificationDropReason(message); reason != "" {
-				log.Printf(
-					"level=warn component=acp_sse event=notification_dropped path=%q rpcMethod=%q requestId=%q sessionId=%q threadId=%q reason=%q notificationMethod=%q",
-					r.URL.Path,
-					request.Method,
-					fmt.Sprint(request.ID),
-					shared.StringArg(request.Params, "sessionId", ""),
-					shared.StringArg(request.Params, "threadId", ""),
-					reason,
-					shared.StringArg(message, "method", ""),
-				)
-				return
-			}
+		if reason := gatewaySSEBridgeNotificationDropReason(
+			request.Method,
+			openClawGatewayTask,
+			message,
+		); reason != "" {
+			log.Printf(
+				"level=warn component=acp_sse event=notification_dropped path=%q rpcMethod=%q requestId=%q sessionId=%q threadId=%q reason=%q notificationMethod=%q",
+				r.URL.Path,
+				request.Method,
+				fmt.Sprint(request.ID),
+				shared.StringArg(request.Params, "sessionId", ""),
+				shared.StringArg(request.Params, "threadId", ""),
+				reason,
+				shared.StringArg(message, "method", ""),
+			)
+			return
 		}
 		streamWriter.write(message)
 	}
@@ -281,9 +283,14 @@ func (s *Server) handleRPCWithTransform(
 	_ = json.NewEncoder(w).Encode(shared.ResultEnvelope(request.ID, response))
 }
 
-func openClawGatewayNotificationDropReason(message map[string]any) string {
+func gatewaySSEBridgeNotificationDropReason(
+	rpcMethod string,
+	openClawGatewayTask bool,
+	message map[string]any,
+) string {
 	method := strings.TrimSpace(shared.StringArg(message, "method", ""))
-	if strings.HasPrefix(method, "xworkmate.gateway.") {
+	if strings.HasPrefix(method, "xworkmate.gateway.") &&
+		(openClawGatewayTask || strings.TrimSpace(rpcMethod) == "xworkmate.gateway.request") {
 		return "raw_gateway_event"
 	}
 	if !openClawGatewayNotificationWithinLimit(message) {

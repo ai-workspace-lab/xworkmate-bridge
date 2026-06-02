@@ -834,6 +834,54 @@ func TestHTTPHandlerTasksGetReturnsCompletedOpenClawResult(t *testing.T) {
 	}
 }
 
+func TestGatewayRequestSSEFiltersRawGatewayEvents(t *testing.T) {
+	tests := []struct {
+		name                string
+		rpcMethod           string
+		openClawGatewayTask bool
+		notificationMethod  string
+		wantDropReason      string
+	}{
+		{
+			name:               "direct gateway request raw push",
+			rpcMethod:          "xworkmate.gateway.request",
+			notificationMethod: "xworkmate.gateway.push",
+			wantDropReason:     "raw_gateway_event",
+		},
+		{
+			name:                "openclaw task raw push",
+			rpcMethod:           "session.message",
+			openClawGatewayTask: true,
+			notificationMethod:  "xworkmate.gateway.snapshot",
+			wantDropReason:      "raw_gateway_event",
+		},
+		{
+			name:               "ordinary session notification",
+			rpcMethod:          "session.message",
+			notificationMethod: "session.update",
+			wantDropReason:     "",
+		},
+		{
+			name:               "non openclaw gateway raw push remains scoped out",
+			rpcMethod:          "session.message",
+			notificationMethod: "xworkmate.gateway.push",
+			wantDropReason:     "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := gatewaySSEBridgeNotificationDropReason(
+				tt.rpcMethod,
+				tt.openClawGatewayTask,
+				map[string]any{"method": tt.notificationMethod},
+			)
+			if got != tt.wantDropReason {
+				t.Fatalf("expected drop reason %q, got %q", tt.wantDropReason, got)
+			}
+		})
+	}
+}
+
 func TestSafeSSEStreamDropsLateNotificationsAfterClose(t *testing.T) {
 	writer := &panicSSEWriter{header: http.Header{}}
 	stream := newSafeSSEStream(context.Background(), writer, safeSSEStreamMeta{})
