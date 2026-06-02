@@ -18,8 +18,107 @@ import (
 	"xworkmate-bridge/internal/shared"
 )
 
+func sseResultEnvelope(t *testing.T, body string, id string) map[string]any {
+	t.Helper()
+	for _, rawLine := range strings.Split(body, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if !strings.HasPrefix(line, "data: ") || line == "data: [DONE]" {
+			continue
+		}
+		var envelope map[string]any
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &envelope); err != nil {
+			t.Fatalf("decode SSE envelope %q: %v", line, err)
+		}
+		if strings.TrimSpace(shared.StringArg(envelope, "id", "")) == id {
+			return envelope
+		}
+	}
+	t.Fatalf("missing SSE result envelope %q in body: %s", id, body)
+	return nil
+}
+
+func sseFirstResultEnvelope(t *testing.T, body string) map[string]any {
+	t.Helper()
+	for _, rawLine := range strings.Split(body, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if !strings.HasPrefix(line, "data: ") || line == "data: [DONE]" {
+			continue
+		}
+		var envelope map[string]any
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &envelope); err != nil {
+			t.Fatalf("decode SSE envelope %q: %v", line, err)
+		}
+		if _, ok := envelope["result"]; ok {
+			return envelope
+		}
+	}
+	t.Fatalf("missing SSE result envelope in body: %s", body)
+	return nil
+}
+
+func taskGetHTTPResult(t *testing.T, handler http.Handler, handle map[string]any) map[string]any {
+	t.Helper()
+	body := fmt.Sprintf(
+		`{"jsonrpc":"2.0","id":"task-get","method":"xworkmate.tasks.get","params":{"sessionId":%q,"threadId":%q,"turnId":%q,"runId":%q,"sessionKey":%q,"artifactScope":%q,"artifactDirectory":%q,"gatewayProviderId":%q,"runtimeBudgetMinutes":%q,"taskLoadClass":%q,"expectedArtifactExtensions":%s,"requiredArtifactExtensions":%s}}`,
+		shared.StringArg(handle, "sessionId", ""),
+		shared.StringArg(handle, "threadId", ""),
+		shared.StringArg(handle, "turnId", ""),
+		shared.StringArg(handle, "runId", ""),
+		shared.StringArg(handle, "sessionKey", ""),
+		shared.StringArg(handle, "artifactScope", ""),
+		shared.StringArg(handle, "artifactDirectory", ""),
+		shared.StringArg(handle, "resolvedGatewayProviderId", "openclaw"),
+		shared.StringArg(handle, "runtimeBudgetMinutes", ""),
+		shared.StringArg(handle, "taskLoadClass", ""),
+		jsonArrayString(t, shared.ListArg(handle, "expectedArtifactExtensions")),
+		jsonArrayString(t, shared.ListArg(handle, "requiredArtifactExtensions")),
+	)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/acp/rpc", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer bridge-test-token")
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected task get 200, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode task get response: %v", err)
+	}
+	return shared.AsMap(decoded["result"])
+}
+
+func taskGetHTTPTerminalResult(t *testing.T, handler http.Handler, handle map[string]any) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		result := taskGetHTTPResult(t, handler, handle)
+		switch result["status"] {
+		case "completed", "failed", "cancelled":
+			return result
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("task did not reach terminal state: %#v", result)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+func jsonArrayString(t *testing.T, values []any) string {
+	t.Helper()
+	if values == nil {
+		return "[]"
+	}
+	encoded, err := json.Marshal(values)
+	if err != nil {
+		t.Fatalf("encode array: %v", err)
+	}
+	return string(encoded)
+}
+
 func TestHTTPHandlerRootAndPingExposeRuntimeVersionInfo(t *testing.T) {
 	t.Setenv("BRIDGE_AUTH_TOKEN", "")
+	t.Setenv("BRIDGE_REVIEW_AUTH_TOKEN", "")
 	SetRuntimeVersionInfo(RuntimeVersionInfo{
 		Commit:    "0123456",
 		Version:   "v1.1.4-protocol4",
@@ -156,19 +255,13 @@ func TestHTTPHandlerRPCSSEWritesFinalEnvelopeAndDone(t *testing.T) {
 	}
 }
 
-func TestHTTPHandlerGatewayOpenClawSSEKeepaliveBeforeFinalEnvelopeAndDone(t *testing.T) {
+func TestHTTPHandlerGatewayOpenClawReturnsRunningEnvelopeAndDone(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
-	gateway.agentWaitDelayMs.Store(50)
 
 	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
 	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
 	t.Setenv("BRIDGE_CONFIG_PATH", filepath.Join(t.TempDir(), "missing-config.yaml"))
-	previousInterval := httpSSEKeepaliveInterval
-	httpSSEKeepaliveInterval = 10 * time.Millisecond
-	t.Cleanup(func() {
-		httpSSEKeepaliveInterval = previousInterval
-	})
 
 	server := NewServer()
 	httpServer := httptest.NewServer(server.Handler())
@@ -202,15 +295,15 @@ func TestHTTPHandlerGatewayOpenClawSSEKeepaliveBeforeFinalEnvelopeAndDone(t *tes
 		t.Fatalf("expected event-stream content type, got %q", contentType)
 	}
 
-	events := strings.Split(strings.TrimSpace(string(body)), "\n\n")
-	if len(events) < 4 {
-		t.Fatalf("expected accepted, keepalive, final envelope, and done events, got %q", string(body))
+	bodyText := string(body)
+	events := strings.Split(strings.TrimSpace(bodyText), "\n\n")
+	if len(events) < 3 {
+		t.Fatalf("expected accepted, running envelope, and done events, got %q", bodyText)
 	}
 	if events[len(events)-1] != "data: [DONE]" {
 		t.Fatalf("expected done event, got %q", events[len(events)-1])
 	}
-	var sawAcceptedBeforeKeepalive bool
-	var sawKeepaliveBeforeFinal bool
+	var sawAcceptedBeforeFinal bool
 	var sawFinal bool
 	for _, event := range events[:len(events)-1] {
 		if !strings.HasPrefix(event, "data: ") {
@@ -220,27 +313,25 @@ func TestHTTPHandlerGatewayOpenClawSSEKeepaliveBeforeFinalEnvelopeAndDone(t *tes
 		if err := json.Unmarshal([]byte(strings.TrimPrefix(event, "data: ")), &envelope); err != nil {
 			t.Fatalf("decode event %q: %v", event, err)
 		}
-		if envelope["method"] == "xworkmate.bridge.accepted" && !sawKeepaliveBeforeFinal && !sawFinal {
-			sawAcceptedBeforeKeepalive = true
-		}
-		if envelope["method"] == "xworkmate.bridge.keepalive" && !sawFinal {
-			sawKeepaliveBeforeFinal = true
+		if envelope["method"] == "xworkmate.bridge.accepted" && !sawFinal {
+			sawAcceptedBeforeFinal = true
 		}
 		if envelope["id"] == "task-keepalive" {
 			sawFinal = true
-			if _, ok := envelope["result"].(map[string]any); !ok {
-				t.Fatalf("expected result envelope, got %#v", envelope)
+			result := shared.AsMap(envelope["result"])
+			if got := result["status"]; got != "running" {
+				t.Fatalf("expected running task handle, got %#v", result)
+			}
+			if got := result["runtimeBudgetMinutes"]; got != float64(openClawShortTaskMinutes) {
+				t.Fatalf("expected short task budget in running handle, got %#v", result)
 			}
 		}
 	}
-	if !sawAcceptedBeforeKeepalive {
-		t.Fatalf("expected accepted event before keepalive/final envelope, got %q", string(body))
-	}
-	if !sawKeepaliveBeforeFinal {
-		t.Fatalf("expected keepalive event before final envelope, got %q", string(body))
+	if !sawAcceptedBeforeFinal {
+		t.Fatalf("expected accepted event before final envelope, got %q", bodyText)
 	}
 	if !sawFinal {
-		t.Fatalf("expected final task envelope, got %q", string(body))
+		t.Fatalf("expected running task envelope, got %q", bodyText)
 	}
 }
 
@@ -311,7 +402,7 @@ func TestHTTPHandlerGatewayOpenClawAdmissionQueuesExcessConcurrentSSE(t *testing
 	close(results)
 
 	var sawQueued bool
-	var finalCount int
+	var runningHandleCount int
 	for item := range results {
 		if item.err != nil {
 			t.Fatalf("concurrent request failed: %v", item.err)
@@ -319,15 +410,17 @@ func TestHTTPHandlerGatewayOpenClawAdmissionQueuesExcessConcurrentSSE(t *testing
 		if strings.Contains(item.body, `"event":"queued"`) {
 			sawQueued = true
 		}
-		if strings.Contains(item.body, `"result"`) && strings.Contains(item.body, `data: [DONE]`) {
-			finalCount += 1
+		envelope := sseFirstResultEnvelope(t, item.body)
+		result := shared.AsMap(envelope["result"])
+		if result["status"] == "running" && strings.TrimSpace(shared.StringArg(result, "runId", "")) != "" {
+			runningHandleCount += 1
 		}
 	}
 	if !sawQueued {
 		t.Fatalf("expected one queued session.update event")
 	}
-	if finalCount != 2 {
-		t.Fatalf("expected both requests to return final result, got %d", finalCount)
+	if runningHandleCount != 2 {
+		t.Fatalf("expected both requests to return running handles, got %d", runningHandleCount)
 	}
 	if got := gateway.ChatSendCount(); got != 2 {
 		t.Fatalf("expected queued request to run after a slot releases, got %d chat.send calls", got)
@@ -412,7 +505,7 @@ func TestHTTPHandlerGatewayOpenClawHandlesFiveConcurrentE2ECases(t *testing.T) {
 	wg.Wait()
 	close(results)
 
-	var finalCount int
+	var runningHandleCount int
 	var missingFinalArtifactCount int
 	for item := range results {
 		if item.err != nil {
@@ -431,15 +524,19 @@ func TestHTTPHandlerGatewayOpenClawHandlesFiveConcurrentE2ECases(t *testing.T) {
 				t.Fatalf("unexpected gateway stability error %q in body: %s", unexpected, item.body)
 			}
 		}
-		if strings.Contains(item.body, "OPENCLAW_REQUIRED_ARTIFACT_MISSING") {
+		envelope := sseFirstResultEnvelope(t, item.body)
+		handle := shared.AsMap(envelope["result"])
+		if got := handle["status"]; got != "running" {
+			t.Fatalf("expected running task handle, got %#v", handle)
+		}
+		runningHandleCount += 1
+		result := taskGetHTTPTerminalResult(t, httpServer.Config.Handler, handle)
+		if result["code"] == "OPENCLAW_REQUIRED_ARTIFACT_MISSING" {
 			missingFinalArtifactCount += 1
 		}
-		if strings.Contains(item.body, `"result"`) && strings.Contains(item.body, `data: [DONE]`) {
-			finalCount += 1
-		}
 	}
-	if finalCount != len(prompts) {
-		t.Fatalf("expected all five e2e requests to return final result, got %d", finalCount)
+	if runningHandleCount != len(prompts) {
+		t.Fatalf("expected all five e2e requests to return running handles, got %d", runningHandleCount)
 	}
 	if missingFinalArtifactCount != len(prompts) {
 		t.Fatalf("expected all artifact-producing prompts to fail without real final artifacts, got %d", missingFinalArtifactCount)
@@ -584,15 +681,14 @@ func TestHTTPHandlerGatewayOpenClawFiltersRawGatewayEventsAndKeepsFinalResult(t 
 
 	events := strings.Split(strings.TrimSpace(bodyText), "\n\n")
 	if len(events) < 4 {
-		t.Fatalf("expected accepted, session.update, final envelope, and done events, got %q", bodyText)
+		t.Fatalf("expected accepted, session.update, running envelope, and done events, got %q", bodyText)
 	}
 	if events[len(events)-1] != "data: [DONE]" {
 		t.Fatalf("expected done event, got %q", events[len(events)-1])
 	}
 	var sawAccepted bool
-	var sawDelta bool
-	var sawCompletedSnapshot bool
 	var sawFinal bool
+	var handle map[string]any
 	for _, event := range events[:len(events)-1] {
 		if !strings.HasPrefix(event, "data: ") {
 			t.Fatalf("expected data event, got %q", event)
@@ -606,8 +702,7 @@ func TestHTTPHandlerGatewayOpenClawFiltersRawGatewayEventsAndKeepsFinalResult(t 
 			sawAccepted = true
 		case "session.update":
 			params := shared.AsMap(envelope["params"])
-			if params["type"] == "delta" && params["delta"] == "streamed delta" {
-				sawDelta = true
+			if params["type"] == "status" && params["event"] == "running" {
 				if got := params["sessionId"]; got != "session-filter" {
 					t.Fatalf("expected session-filter session update, got %#v", params)
 				}
@@ -615,39 +710,33 @@ func TestHTTPHandlerGatewayOpenClawFiltersRawGatewayEventsAndKeepsFinalResult(t 
 					t.Fatalf("expected thread-filter session update, got %#v", params)
 				}
 			}
-			result := shared.AsMap(params["result"])
-			if params["type"] == "status" && params["event"] == "completed" && len(result) > 0 {
-				sawCompletedSnapshot = true
-				if got := result["resolvedGatewayProviderId"]; got != "openclaw" {
-					t.Fatalf("expected completed snapshot to carry openclaw final result, got %#v", result)
-				}
-				if !strings.Contains(bodyText, openClawArtifactDownloadPath) {
-					t.Fatalf("expected completed snapshot to include normalized artifact download URL, got %s", bodyText)
-				}
-			}
 		}
 		if envelope["id"] == "task-filter" {
 			sawFinal = true
-			result := shared.AsMap(envelope["result"])
-			if got := result["resolvedGatewayProviderId"]; got != "openclaw" {
-				t.Fatalf("expected openclaw final result, got %#v", result)
+			handle = shared.AsMap(envelope["result"])
+			if got := handle["status"]; got != "running" {
+				t.Fatalf("expected running task handle, got %#v", handle)
 			}
-			if !strings.Contains(bodyText, openClawArtifactDownloadPath) {
-				t.Fatalf("expected normalized artifact download URL in final result, got %s", bodyText)
+			if got := handle["resolvedGatewayProviderId"]; got != "openclaw" {
+				t.Fatalf("expected openclaw running result, got %#v", handle)
 			}
 		}
 	}
 	if !sawAccepted {
 		t.Fatalf("expected accepted event, got %q", bodyText)
 	}
-	if !sawDelta {
-		t.Fatalf("expected compact session.update delta, got %q", bodyText)
-	}
-	if !sawCompletedSnapshot {
-		t.Fatalf("expected completed session.update result snapshot, got %q", bodyText)
-	}
 	if !sawFinal {
-		t.Fatalf("expected final result envelope, got %q", bodyText)
+		t.Fatalf("expected running result envelope, got %q", bodyText)
+	}
+	result := taskGetHTTPTerminalResult(t, httpServer.Config.Handler, handle)
+	if got := result["resolvedGatewayProviderId"]; got != "openclaw" {
+		t.Fatalf("expected openclaw final result, got %#v", result)
+	}
+	if got := result["status"]; got != "completed" {
+		t.Fatalf("expected completed task result, got %#v", result)
+	}
+	if !strings.Contains(fmt.Sprint(result), openClawArtifactDownloadPath) {
+		t.Fatalf("expected normalized artifact download URL in task result, got %#v", result)
 	}
 	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "agent.wait", "xworkmate.artifacts.export"}) {
 		t.Fatalf("expected artifact workflow methods to prepare before chat.send, got %#v", got)
@@ -680,15 +769,27 @@ func TestHTTPHandlerGatewayOpenClawForcesGatewayRouting(t *testing.T) {
 	if !strings.Contains(recorder.Body.String(), `"resolvedGatewayProviderId":"openclaw"`) {
 		t.Fatalf("expected forced OpenClaw gateway result, got %q", recorder.Body.String())
 	}
+	var decoded map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode start response: %v", err)
+	}
+	handle := shared.AsMap(decoded["result"])
+	if got := handle["status"]; got != "running" {
+		t.Fatalf("expected running task handle, got %#v", handle)
+	}
 	if gateway.ChatSendCount() != 1 {
 		t.Fatalf("expected one OpenClaw chat.send, got %d", gateway.ChatSendCount())
+	}
+	result := taskGetHTTPTerminalResult(t, handler, handle)
+	if got := result["status"]; got != "completed" {
+		t.Fatalf("expected completed task result, got %#v", result)
 	}
 	if gateway.AgentWaitCount() != 1 {
 		t.Fatalf("expected one OpenClaw agent.wait, got %d", gateway.AgentWaitCount())
 	}
 }
 
-func TestHTTPHandlerSessionGetReturnsCompletedOpenClawResult(t *testing.T) {
+func TestHTTPHandlerTasksGetReturnsCompletedOpenClawResult(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
 
@@ -710,38 +811,26 @@ func TestHTTPHandlerSessionGetReturnsCompletedOpenClawResult(t *testing.T) {
 	if startRecorder.Code != http.StatusOK {
 		t.Fatalf("expected start 200, got %d: %s", startRecorder.Code, startRecorder.Body.String())
 	}
-
-	getRecorder := httptest.NewRecorder()
-	getRequest := httptest.NewRequest(
-		http.MethodPost,
-		"http://127.0.0.1/acp/rpc",
-		strings.NewReader(`{"jsonrpc":"2.0","id":"get-1","method":"xworkmate.sessions.get","params":{"sessionId":"s1","threadId":"t1"}}`),
-	)
-	getRequest.Header.Set("Content-Type", "application/json")
-	getRequest.Header.Set("Authorization", "Bearer bridge-test-token")
-	handler.ServeHTTP(getRecorder, getRequest)
-
-	if getRecorder.Code != http.StatusOK {
-		t.Fatalf("expected get 200, got %d: %s", getRecorder.Code, getRecorder.Body.String())
-	}
 	var decoded map[string]any
-	if err := json.Unmarshal(getRecorder.Body.Bytes(), &decoded); err != nil {
-		t.Fatalf("decode session get response: %v", err)
+	if err := json.Unmarshal(startRecorder.Body.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode start response: %v", err)
 	}
-	result := shared.AsMap(decoded["result"])
+	handle := shared.AsMap(decoded["result"])
+	if got := handle["status"]; got != "running" {
+		t.Fatalf("expected running task handle, got %#v", handle)
+	}
+	result := taskGetHTTPTerminalResult(t, handler, handle)
 	if got := result["status"]; got != "completed" {
 		t.Fatalf("expected completed status, got %#v from %#v", got, result)
 	}
-	task := shared.AsMap(result["task"])
-	if got := task["turnId"]; got == "" {
-		t.Fatalf("expected retained task turn id, got %#v", task)
+	if got := result["turnId"]; got == "" {
+		t.Fatalf("expected retained task turn id, got %#v", result)
 	}
-	snapshot := shared.AsMap(result["result"])
-	if got := snapshot["resolvedGatewayProviderId"]; got != "openclaw" {
-		t.Fatalf("expected OpenClaw snapshot, got %#v", snapshot)
+	if got := result["resolvedGatewayProviderId"]; got != "openclaw" {
+		t.Fatalf("expected OpenClaw snapshot, got %#v", result)
 	}
-	if got := snapshot["output"]; got == "" {
-		t.Fatalf("expected output in session snapshot, got %#v", snapshot)
+	if got := result["output"]; got == "" {
+		t.Fatalf("expected output in task result, got %#v", result)
 	}
 }
 
@@ -822,6 +911,7 @@ func TestHTTPHandlerPingAllowsReviewBearerAuthorizationWhenConfigured(t *testing
 func TestHandleWebSocketRejectsUnknownOrigin(t *testing.T) {
 	t.Setenv("ACP_ALLOWED_ORIGINS", "https://xworkmate.svc.plus")
 	t.Setenv("BRIDGE_AUTH_TOKEN", "")
+	t.Setenv("BRIDGE_REVIEW_AUTH_TOKEN", "")
 
 	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
@@ -842,6 +932,7 @@ func TestHandleWebSocketRejectsUnknownOrigin(t *testing.T) {
 func TestHandleRPCAllowsPreflightForConfiguredOrigin(t *testing.T) {
 	t.Setenv("ACP_ALLOWED_ORIGINS", "https://xworkmate.svc.plus,http://localhost:*")
 	t.Setenv("BRIDGE_AUTH_TOKEN", "")
+	t.Setenv("BRIDGE_REVIEW_AUTH_TOKEN", "")
 
 	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
@@ -862,6 +953,7 @@ func TestHandleRPCAllowsPreflightForConfiguredOrigin(t *testing.T) {
 
 func TestHandleRPCAllowsUnauthenticatedRequestsWhenBridgeAuthTokenUnset(t *testing.T) {
 	t.Setenv("BRIDGE_AUTH_TOKEN", "")
+	t.Setenv("BRIDGE_REVIEW_AUTH_TOKEN", "")
 	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
 	recorder := httptest.NewRecorder()
@@ -942,6 +1034,7 @@ func TestHandleRPCAllowsReviewBearerAuthorizationWhenConfigured(t *testing.T) {
 func TestHandleRPCRejectsUnknownOrigin(t *testing.T) {
 	t.Setenv("ACP_ALLOWED_ORIGINS", "https://xworkmate.svc.plus")
 	t.Setenv("BRIDGE_AUTH_TOKEN", "")
+	t.Setenv("BRIDGE_REVIEW_AUTH_TOKEN", "")
 
 	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
@@ -971,6 +1064,7 @@ func TestHandleRPCRejectsUnknownOrigin(t *testing.T) {
 
 func TestHandleRPCMethodErrorUsesJSONEnvelope(t *testing.T) {
 	t.Setenv("BRIDGE_AUTH_TOKEN", "")
+	t.Setenv("BRIDGE_REVIEW_AUTH_TOKEN", "")
 	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
 	recorder := httptest.NewRecorder()
@@ -989,6 +1083,7 @@ func TestHandleRPCMethodErrorUsesJSONEnvelope(t *testing.T) {
 
 func TestHandleRPCCapabilitiesStillReturnsJSONResult(t *testing.T) {
 	t.Setenv("BRIDGE_AUTH_TOKEN", "")
+	t.Setenv("BRIDGE_REVIEW_AUTH_TOKEN", "")
 	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
 	recorder := httptest.NewRecorder()
@@ -1015,6 +1110,7 @@ func TestHandleRPCCapabilitiesStillReturnsJSONResult(t *testing.T) {
 
 func TestAuthorizedAllowsUnauthenticatedRequestsWhenBridgeAuthTokenUnset(t *testing.T) {
 	t.Setenv("BRIDGE_AUTH_TOKEN", "")
+	t.Setenv("BRIDGE_REVIEW_AUTH_TOKEN", "")
 	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
 	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/acp", nil)
@@ -1025,6 +1121,7 @@ func TestAuthorizedAllowsUnauthenticatedRequestsWhenBridgeAuthTokenUnset(t *test
 
 func TestHandleRPCCapabilitiesReturnsCanonicalProviderContract(t *testing.T) {
 	t.Setenv("BRIDGE_AUTH_TOKEN", "")
+	t.Setenv("BRIDGE_REVIEW_AUTH_TOKEN", "")
 	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
 	recorder := httptest.NewRecorder()

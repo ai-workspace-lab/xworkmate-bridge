@@ -55,7 +55,27 @@ func (s *Server) executeSessionTask(t task) (map[string]any, *shared.RPCError) {
 	if t.req.Method == "" {
 		t.req.Method = "session.start"
 	}
-	return s.handleRequest(t.req, t.notify)
+	response, rpcErr := s.handleRequest(t.req, t.notify)
+	if rpcErr != nil || strings.TrimSpace(shared.StringArg(response, "status", "")) != string(TaskStateRunning) {
+		return response, rpcErr
+	}
+	return s.handleRequest(shared.RPCRequest{
+		Method: "xworkmate.tasks.get",
+		Params: map[string]any{
+			"sessionId":                  shared.StringArg(response, "sessionId", ""),
+			"threadId":                   shared.StringArg(response, "threadId", ""),
+			"turnId":                     shared.StringArg(response, "turnId", ""),
+			"runId":                      shared.StringArg(response, "runId", ""),
+			"sessionKey":                 shared.StringArg(response, "sessionKey", ""),
+			"artifactScope":              shared.StringArg(response, "artifactScope", ""),
+			"artifactDirectory":          shared.StringArg(response, "artifactDirectory", ""),
+			"gatewayProviderId":          shared.StringArg(response, "resolvedGatewayProviderId", ""),
+			"runtimeBudgetMinutes":       shared.StringArg(response, "runtimeBudgetMinutes", ""),
+			"taskLoadClass":              shared.StringArg(response, "taskLoadClass", ""),
+			"expectedArtifactExtensions": shared.ListArg(response, "expectedArtifactExtensions"),
+			"requiredArtifactExtensions": shared.ListArg(response, "requiredArtifactExtensions"),
+		},
+	}, t.notify)
 }
 
 func newExternalSingleAgentProvider(
@@ -532,11 +552,8 @@ func TestExecuteSessionTaskGatewayAutoConnectsLocalOpenClaw(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected numeric OpenClaw agent.wait timeoutMs, got %#v", waitParams)
 	}
-	if got := int64(timeoutMs); got != openClawAgentWaitDefaultTimeout.Milliseconds() {
-		t.Fatalf("expected default OpenClaw agent.wait timeoutMs %d, got %#v", openClawAgentWaitDefaultTimeout.Milliseconds(), waitParams)
-	}
-	if got := int64(timeoutMs); got <= 120000 {
-		t.Fatalf("expected OpenClaw agent.wait timeout to exceed the previous 120s cap, got %#v", waitParams)
+	if got := int64(timeoutMs); got != openClawTaskProbeTimeoutMs {
+		t.Fatalf("expected OpenClaw probe timeoutMs %d, got %#v", openClawTaskProbeTimeoutMs, waitParams)
 	}
 	if gateway.ArtifactExportCount() != 1 {
 		t.Fatalf("expected one OpenClaw artifact export sync after run, got %d", gateway.ArtifactExportCount())
@@ -865,17 +882,20 @@ func TestExecuteSessionTaskGatewayFailsArtifactContractAfterWaitFailure(t *testi
 			},
 		},
 	})
-	if rpcErr == nil {
-		t.Fatalf("expected wait-timeout rpc error, got response: %#v", response)
+	if rpcErr != nil {
+		t.Fatalf("expected wait-timeout probe to keep task running, got rpc error: %#v", rpcErr)
 	}
-	if rpcErr.Code != -32002 || !strings.Contains(rpcErr.Message, "openclaw wait timeout") {
-		t.Fatalf("expected surfaced wait timeout, got %#v", rpcErr)
+	if got := response["status"]; got != string(TaskStateRunning) {
+		t.Fatalf("expected wait-timeout probe to keep running status, got %#v", response)
 	}
 	if got := gateway.ChatSendCount(); got != 1 {
 		t.Fatalf("expected no automatic repair model turn, got %d", got)
 	}
 	if got := gateway.AgentWaitCount(); got != 1 {
-		t.Fatalf("expected one failed wait, got %d", got)
+		t.Fatalf("expected one status probe, got %d", got)
+	}
+	if got := gateway.ArtifactExportCount(); got != 0 {
+		t.Fatalf("expected no artifact export before terminal state, got %d", got)
 	}
 }
 
@@ -1551,19 +1571,25 @@ func TestExecuteSessionTaskGatewaySurfacesOpenClawAgentWaitError(t *testing.T) {
 			},
 		},
 	})
-	if rpcErr == nil {
-		t.Fatalf("expected OpenClaw agent.wait error, got response: %#v", response)
+	if rpcErr != nil {
+		t.Fatalf("expected OpenClaw agent.wait error as task result, got rpc error: %#v", rpcErr)
 	}
-	if rpcErr.Code != -32002 || !strings.Contains(rpcErr.Message, "openclaw wait failed") {
-		t.Fatalf("expected surfaced agent.wait failure, got %#v", rpcErr)
+	if got := response["status"]; got != string(TaskStateFailed) {
+		t.Fatalf("expected failed task result, got %#v", response)
+	}
+	if got := response["code"]; got != "OPENCLAW_WAIT_FAILED" {
+		t.Fatalf("expected OpenClaw wait failure code, got %#v", response)
+	}
+	if got := shared.StringArg(response, "message", ""); !strings.Contains(got, "openclaw wait failed") {
+		t.Fatalf("expected surfaced agent.wait failure, got %#v", response)
 	}
 	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "agent.wait"}) {
 		t.Fatalf("expected connect, artifact prepare, chat.send, then agent.wait, got %#v", got)
 	}
-	snapshot := server.handleSessionGet(map[string]any{
+	snapshot := server.handleTaskGet(context.Background(), map[string]any{
 		"sessionId": "session-openclaw-wait-fail",
 		"threadId":  "thread-openclaw-wait-fail",
-	})
+	}, nil)
 	if got := snapshot["status"]; got != string(TaskStateFailed) {
 		t.Fatalf("expected failed session snapshot, got %#v from %#v", got, snapshot)
 	}

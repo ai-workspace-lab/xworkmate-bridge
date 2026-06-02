@@ -36,14 +36,27 @@ type ControlPlaneSession struct {
 }
 
 type QueuedTask struct {
-	SessionID string
-	ThreadID  string
-	TurnID    string
-	Provider  string
-	Target    string
-	State     TaskState
-	Kind      TaskKind
-	UpdatedAt time.Time
+	SessionID            string
+	ThreadID             string
+	TurnID               string
+	RunID                string
+	SessionKey           string
+	Provider             string
+	Target               string
+	GatewayProviderID    string
+	State                TaskState
+	Kind                 TaskKind
+	TaskLoadClass        string
+	ArtifactScope        string
+	ArtifactDirectory    string
+	RuntimeBudgetMinutes int
+	StartedAt            time.Time
+	UpdatedAt            time.Time
+	DeadlineAt           time.Time
+	LastProbeAt          time.Time
+	ProgressStage        string
+	ProgressMessage      string
+	ProgressTerminal     bool
 }
 
 type ArtifactRecord struct {
@@ -69,6 +82,7 @@ type session struct {
 	task       QueuedTask
 	artifacts  ArtifactRecord
 	lastResult map[string]any
+	openClaw   *OpenClawTaskRecord
 }
 
 type Server struct {
