@@ -733,7 +733,7 @@ func TestExecuteSessionTaskGatewayNoDisplayableOutputFails(t *testing.T) {
 			Params: map[string]any{
 				"sessionId":        "session-openclaw-no-output",
 				"threadId":         "thread-openclaw-no-output",
-				"taskPrompt":       "silent-turn",
+				"taskPrompt":       "completed-empty",
 				"workingDirectory": t.TempDir(),
 				"routing": map[string]any{
 					"routingMode":                "explicit",
@@ -899,6 +899,55 @@ func TestExecuteSessionTaskGatewayFailsArtifactContractAfterWaitFailure(t *testi
 	}
 }
 
+func TestExecuteSessionTaskGatewayKeepsRunningOnNonTerminalWaitPayload(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+	gateway.artifactWorkspaceRoot = t.TempDir()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	response, rpcErr := server.executeSessionTask(task{
+		req: shared.RPCRequest{
+			Method: "session.start",
+			Params: map[string]any{
+				"sessionId":        "session-openclaw-running-wait",
+				"threadId":         "thread-openclaw-running-wait",
+				"taskPrompt":       "wait-running",
+				"workingDirectory": t.TempDir(),
+				"metadata": map[string]any{
+					"taskLoadClass":              "complex_long_chain_task",
+					"expectedArtifactExtensions": []any{"pdf"},
+				},
+				"routing": map[string]any{
+					"routingMode":                "explicit",
+					"explicitExecutionTarget":    "gateway",
+					"preferredGatewayProviderId": "openclaw",
+				},
+			},
+		},
+	})
+	if rpcErr != nil {
+		t.Fatalf("expected running wait payload to keep task running, got rpc error: %#v", rpcErr)
+	}
+	if got := response["status"]; got != string(TaskStateRunning) {
+		t.Fatalf("expected running status from non-terminal wait payload, got %#v", response)
+	}
+	if got := gateway.ChatSendCount(); got != 1 {
+		t.Fatalf("expected no repair turn, got %d", got)
+	}
+	if got := gateway.AgentWaitCount(); got != 1 {
+		t.Fatalf("expected one status probe, got %d", got)
+	}
+	if got := gateway.ArtifactExportCount(); got != 0 {
+		t.Fatalf("expected no artifact export before terminal wait payload, got %d", got)
+	}
+	if _, ok := response["code"]; ok {
+		t.Fatalf("expected no terminal failure code, got %#v", response)
+	}
+}
+
 func TestExecuteSessionTaskGatewayArtifactContractNoFilesRequiresFinalArtifact(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
@@ -913,7 +962,7 @@ func TestExecuteSessionTaskGatewayArtifactContractNoFilesRequiresFinalArtifact(t
 			Params: map[string]any{
 				"sessionId":        "session-openclaw-no-complex-output",
 				"threadId":         "thread-openclaw-no-complex-output",
-				"taskPrompt":       "silent-turn",
+				"taskPrompt":       "completed-empty",
 				"workingDirectory": t.TempDir(),
 				"metadata": map[string]any{
 					"taskLoadClass":              "complex_long_chain_task",
@@ -964,7 +1013,7 @@ func TestExecuteSessionTaskGatewaySimpleArtifactContractNoFilesRequiresFinalArti
 			Params: map[string]any{
 				"sessionId":        "session-openclaw-simple-md",
 				"threadId":         "thread-openclaw-simple-md",
-				"taskPrompt":       "silent-turn",
+				"taskPrompt":       "completed-empty",
 				"workingDirectory": t.TempDir(),
 				"metadata": map[string]any{
 					"expectedArtifactExtensions": []any{"md"},
@@ -2940,6 +2989,29 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 						"error": map[string]any{
 							"code":    "TIMEOUT",
 							"message": "openclaw wait timeout",
+						},
+					})
+					continue
+				case "wait-running":
+					_ = conn.WriteJSON(map[string]any{
+						"type": "res",
+						"id":   id,
+						"ok":   true,
+						"payload": map[string]any{
+							"runId":    runID,
+							"status":   "running",
+							"terminal": false,
+						},
+					})
+					continue
+				case "completed-empty":
+					_ = conn.WriteJSON(map[string]any{
+						"type": "res",
+						"id":   id,
+						"ok":   true,
+						"payload": map[string]any{
+							"runId":  runID,
+							"status": "completed",
 						},
 					})
 					continue

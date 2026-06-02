@@ -1606,6 +1606,7 @@ func firstNonEmptyString(values map[string]any, keys ...string) string {
 type openClawChatCollector struct {
 	parts            []string
 	final            string
+	terminal         bool
 	artifactPayloads []map[string]any
 }
 
@@ -1628,6 +1629,9 @@ func (c *openClawChatCollector) observe(notification map[string]any) {
 	if strings.TrimSpace(shared.StringArg(event, "event", "")) != "chat.run" {
 		return
 	}
+	if isTerminalGatewayPayload(payload) {
+		c.terminal = true
+	}
 	text := firstNonEmptyString(payload, "assistantText", "text", "message", "output", "summary")
 	if text == "" {
 		return
@@ -1647,6 +1651,10 @@ func (c *openClawChatCollector) output() string {
 		return strings.TrimSpace(c.final)
 	}
 	return strings.TrimSpace(strings.Join(c.parts, ""))
+}
+
+func (c *openClawChatCollector) isTerminal() bool {
+	return c != nil && c.terminal
 }
 
 func (c *openClawChatCollector) artifactPayload() map[string]any {
@@ -1714,7 +1722,7 @@ func isTerminalGatewayPayload(payload map[string]any) bool {
 		return true
 	}
 	switch strings.TrimSpace(strings.ToLower(shared.StringArg(payload, "state", ""))) {
-	case "complete", "completed", "done", "ok", "success", "failed", "error", "timeout", "timed_out", "cancelled", "canceled":
+	case "complete", "completed", "done", "final", "ok", "success", "failed", "error", "timeout", "timed_out", "cancelled", "canceled":
 		return true
 	default:
 		return false
