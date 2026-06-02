@@ -1,6 +1,6 @@
 # ACP Forwarding Topology
 
-Last Updated: 2026-05-03
+Last Updated: 2026-06-02
 
 本文档只描述当前保留的 canonical topology。
 
@@ -77,6 +77,35 @@ flowchart LR
 - provider catalog 与 gatewayProviders 由 bridge 独占生成
 - bridge 只暴露 canonical ACP contract
 - provider / gateway 实际地址属于 bridge internal truth
+- bridge-to-bridge task forward 只使用 WireGuard over VLESS 私网 endpoint，公网域名只作为 ingress
+
+## Distributed Task Router
+
+分布式转发是 bridge 内部能力，不改变 app-facing canonical surface。每个 bridge 从静态 peer catalog、forwarding rules 和 routes 得出下一跳：
+
+```mermaid
+flowchart LR
+    CN["cn-xworkmate-bridge<br/>edge ingress"]
+    MAIN["xworkmate-bridge<br/>primary / hub"]
+    WA["worker-a<br/>executor"]
+    WB["worker-b<br/>executor"]
+    EU["worker-eu<br/>executor"]
+
+    CN -- "task_forward_peer_id or rule<br/>http://172.29.10.1:8787" --> MAIN
+    MAIN -- "selector role=executor<br/>round_robin" --> WA
+    MAIN -- "selector role=executor<br/>round_robin" --> WB
+    CN -- "route target=worker-eu<br/>next_hop=xworkmate-bridge" --> MAIN
+    MAIN -- "private next hop" --> EU
+```
+
+Router contract:
+
+- `nodes` 保存节点身份、角色、能力、zone 和私网 `bridge_endpoint`
+- `forwarding.rules` 选择最终 target node
+- `forwarding.routes` 选择 next-hop，用于星状或显式 mesh
+- `session.start` 选中 target 后，`session.message` 使用本机 session route store 粘到同一个 target
+- `X-XWorkmate-Forward-Hop` 受 `forwarding.hop_limit` 限制，避免循环
+- `https://*.svc.plus` 这类公网域名不能作为 bridge-to-bridge endpoint
 
 ## Non-Contract Facts
 

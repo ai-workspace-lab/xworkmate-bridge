@@ -54,53 +54,100 @@
 
 ## 3.1 Lightweight Distributed Task Forwarding
 
-bridge 可以把本机收到的 HTTP 任务提交转发到另一个 bridge endpoint，用于轻量分布式部署。当前实现落地的是双节点分布式拓扑：
+bridge 可以把本机收到的 HTTP 任务提交转发到另一个 bridge endpoint，用于轻量分布式部署。当前实现是一个静态 task router，不做自动发现，不依赖 config center：
 
-- `cn-xworkmate-bridge.svc.plus` 负责本地入口和鉴权
-- `xworkmate-bridge.svc.plus` 负责实际 OpenClaw task runtime
-- cn bridge 配置 `task_forward_peer_id` 后，`POST /acp/rpc` 的 `session.start` / `session.message` 会转发到 peer 的同一路径
-- 主 bridge 不配置 `task_forward_peer_id`，因此不会把任务反向转发到 CN
+- `nodes` 是静态 peer catalog，记录 bridge 节点身份、角色、能力和私网 endpoint
+- `forwarding.rules` 决定哪些 JSON-RPC method 转发到哪个节点或哪类节点
+- `forwarding.routes` 决定显式 next-hop，用于星状或网状拓扑
+- `session.start` 选中目标后，`session.message` 通过本机 session route store 粘到同一个目标节点
+- 公网域名只作为 ingress；bridge 之间的 task forward 只走 WireGuard over VLESS 私网 endpoint
 
-配置：
+双节点简写配置：
 
 ```yaml
 distributed:
   topology: "dual-node"
   local_node_id: "cn-xworkmate-bridge"
   task_forward_peer_id: "xworkmate-bridge"
-  nodes:
-    - id: "xworkmate-bridge"
-      role: "primary"
-      public_base_url: "https://xworkmate-bridge.svc.plus"
-      bridge_endpoint: "http://172.29.10.1:8787"
-    - id: "cn-xworkmate-bridge"
-      role: "edge"
-      public_base_url: "https://cn-xworkmate-bridge.svc.plus"
-      bridge_endpoint: "http://172.29.10.2:8787"
   task_forward_token: ""
 ```
 
-单 endpoint 覆盖仍可用于临时验证：
+`task_forward_peer_id: "xworkmate-bridge"` 等价于把 `session.start` / `session.message` 转发到 peer `xworkmate-bridge`。内置 peer catalog 会把它解析为 `http://172.29.10.1:8787`。主 bridge 不配置 `task_forward_peer_id`，因此不会反向转发。
 
-```text
-XWORKMATE_BRIDGE_TASK_FORWARD_ENDPOINT=https://xworkmate-bridge.svc.plus
-XWORKMATE_BRIDGE_TASK_FORWARD_TOKEN=$PEER_BRIDGE_AUTH_TOKEN
+通用多节点配置：
+
+```yaml
+distributed:
+  local_node_id: "edge-cn"
+  nodes:
+    - id: "edge-cn"
+      role: "edge"
+      zone: "cn"
+      bridge_endpoint: "http://172.29.10.2:8787"
+      capabilities: ["ingress"]
+    - id: "worker-a"
+      role: "executor"
+      zone: "global"
+      bridge_endpoint: "http://172.29.10.11:8787"
+      capabilities: ["openclaw"]
+    - id: "worker-b"
+      role: "executor"
+      zone: "global"
+      bridge_endpoint: "http://172.29.10.12:8787"
+      capabilities: ["openclaw"]
+  forwarding:
+    hop_limit: 3
+    default_action: "execute_local"
+    rules:
+      - methods: ["session.start", "session.message"]
+        target:
+          selector:
+            role: "executor"
+            capability: "openclaw"
+          strategy: "round_robin"
+```
+
+星状或显式 next-hop 网状配置：
+
+```yaml
+distributed:
+  local_node_id: "edge-cn"
+  nodes:
+    - id: "edge-cn"
+      role: "edge"
+      bridge_endpoint: "http://172.29.10.2:8787"
+    - id: "hub-main"
+      role: "hub"
+      bridge_endpoint: "http://172.29.10.1:8787"
+    - id: "worker-eu"
+      role: "executor"
+      bridge_endpoint: "http://172.29.10.30:8787"
+  forwarding:
+    hop_limit: 3
+    rules:
+      - methods: ["session.start"]
+        target:
+          node_id: "worker-eu"
+    routes:
+      - target_node_id: "worker-eu"
+        next_hop_node_id: "hub-main"
 ```
 
 规则：
 
-- `task_forward_peer_id` 指向的节点 `bridge_endpoint` 是 peer bridge base URL，bridge 会按当前请求路径拼接 `/acp/rpc`
-- 同步消息不能走公网明文：公网 endpoint 必须使用 `https://`
-- `http://` 只允许 loopback、private、link-local 这类本机或 VPN 内网地址，用于 WireGuard 等隧道已经提供加密的场景
-- endpoint 可以是公网 HTTPS，也可以是 VPN 内网 HTTP(S)。bridge 明确支持把 `bridge_endpoint` 配成 WireGuard、WireGuard over VLESS/TCP/TLS、WebSocket/TLS 等隧道后的本机或私网地址
+- `bridge_endpoint` 是 peer bridge base URL，bridge 会按当前请求路径拼接 `/acp/rpc` 或 `/gateway/openclaw`
+- 同步消息不能走公网；`bridge_endpoint` 必须是 loopback、private、link-local 这类本机或 VPN 内网地址，用于 WireGuard over VLESS 等隧道已经提供加密的场景
 - 只要求本机网络能路由到 endpoint；bridge 不依赖 config center 或额外注册中心
 - `task_forward_token` 为空时复用本机 `BRIDGE_AUTH_TOKEN`
-- 转发请求会带 `X-XWorkmate-Bridge-Forwarded: 1`，收到该 header 后不会再次转发，避免 bridge 之间循环
+- 转发请求会带 `X-XWorkmate-Bridge-Forwarded: 1`
+- `X-XWorkmate-Forward-Source` 是源节点，`X-XWorkmate-Forward-Target` 是最终目标节点
+- `X-XWorkmate-Forward-Hop` 逐跳递增，超过 `forwarding.hop_limit` 时拒绝转发，避免循环
+- 收到已转发请求时，如果 target 是本机则本机执行；如果 target 不是本机，则按 `forwarding.routes` 查 next-hop
 
 抗干扰建议：
 
-- 跨境或 GFW 环境可以直接把 `task_forward_endpoint` 指向 WireGuard over VLESS/TCP/TLS 后的 `http://10.x/172.16-31.x/192.168.x` 私网 bridge endpoint
-- 运营商 UDP 阻断时，支持把裸 WireGuard UDP 替换为 WireGuard over VLESS/TCP/TLS、WebSocket/TLS 或等价可靠加密通道，bridge 继续使用同一个 peer endpoint 配置
+- 跨境或 GFW 环境下，`bridge_endpoint` 应指向 WireGuard over VLESS/TCP/TLS 后的 `http://10.x/172.16-31.x/192.168.x` 私网 bridge endpoint
+- 运营商 UDP 阻断时，支持把裸 WireGuard UDP 替换为 WireGuard over VLESS/TCP/TLS、WebSocket/TLS 或等价可靠加密通道，bridge 继续使用同一个 peer catalog 和 forwarding rules
 - bridge 层继续使用 bearer token 鉴权；隧道层负责链路加密和抗干扰，应用层负责 peer 身份和任务权限
 
 推荐 APP 配置：

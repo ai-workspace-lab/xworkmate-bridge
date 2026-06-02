@@ -46,6 +46,8 @@ func (s *Server) Handler() http.Handler {
 			s.HandleRPC(w, r)
 		case "/acp":
 			s.HandleWebSocket(w, r)
+		case "/gateway/openclaw":
+			s.HandleOpenClawGatewayRPC(w, r)
 		case openClawArtifactDownloadPath:
 			s.HandleOpenClawArtifactDownload(w, r)
 		default:
@@ -110,6 +112,10 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
 	s.handleRPCWithTransform(w, r, nil)
+}
+
+func (s *Server) HandleOpenClawGatewayRPC(w http.ResponseWriter, r *http.Request) {
+	s.handleRPCWithTransform(w, r, forceOpenClawGatewayRequest)
 }
 
 func (s *Server) HandleDisabledProviderDirectPath(w http.ResponseWriter, r *http.Request) {
@@ -180,7 +186,7 @@ func (s *Server) handleRPCWithTransform(
 		}
 		request = transformed
 	}
-	if s.taskForwarder.forward(r.Context(), w, r, request) {
+	if s.taskRouter.forward(r.Context(), w, r, request) {
 		return
 	}
 
@@ -438,6 +444,62 @@ func sseEventType(payload map[string]any) string {
 		return "error"
 	}
 	return "unknown"
+}
+
+func forceOpenClawGatewayRequest(request shared.RPCRequest) (shared.RPCRequest, *shared.RPCError) {
+	method := strings.TrimSpace(request.Method)
+	switch method {
+	case "session.start", "session.message":
+	default:
+		return request, &shared.RPCError{Code: -32601, Message: "OPENCLAW_GATEWAY_METHOD_NOT_ALLOWED: " + method}
+	}
+	params := shared.AsMap(request.Params)
+	if params == nil {
+		params = map[string]any{}
+	}
+	if parseBool(params["multiAgent"]) || strings.EqualFold(strings.TrimSpace(shared.StringArg(params, "mode", "")), "multi-agent") {
+		return request, &shared.RPCError{Code: -32602, Message: "OPENCLAW_GATEWAY_CONFLICT: multiAgent is not supported on /gateway/openclaw"}
+	}
+	if provider := strings.TrimSpace(shared.StringArg(params, "provider", "")); provider != "" {
+		return request, &shared.RPCError{Code: -32602, Message: "OPENCLAW_GATEWAY_CONFLICT: provider must not be set on /gateway/openclaw"}
+	}
+	for _, key := range []string{"executionTarget", "requestedExecutionTarget"} {
+		if target := strings.TrimSpace(shared.StringArg(params, key, "")); target != "" && !strings.EqualFold(target, "gateway") {
+			return request, &shared.RPCError{Code: -32602, Message: "OPENCLAW_GATEWAY_CONFLICT: " + key + " must be gateway"}
+		}
+	}
+	for _, key := range []string{"preferredGatewayProviderId", "gatewayProviderId", "gatewayProvider"} {
+		if provider := strings.TrimSpace(shared.StringArg(params, key, "")); provider != "" && !strings.EqualFold(provider, "openclaw") {
+			return request, &shared.RPCError{Code: -32602, Message: "OPENCLAW_GATEWAY_CONFLICT: gateway provider must be openclaw"}
+		}
+	}
+	routing := shared.AsMap(params["routing"])
+	if routing == nil {
+		routing = map[string]any{}
+	}
+	if strings.TrimSpace(shared.StringArg(routing, "orchestrationMode", "")) != "" {
+		return request, &shared.RPCError{Code: -32602, Message: "OPENCLAW_GATEWAY_CONFLICT: multiAgent is not supported on /gateway/openclaw"}
+	}
+	if provider := strings.TrimSpace(shared.StringArg(routing, "explicitProviderId", "")); provider != "" {
+		return request, &shared.RPCError{Code: -32602, Message: "OPENCLAW_GATEWAY_CONFLICT: explicitProviderId must not be set on /gateway/openclaw"}
+	}
+	if target := strings.TrimSpace(shared.StringArg(routing, "explicitExecutionTarget", "")); target != "" && !strings.EqualFold(target, "gateway") {
+		return request, &shared.RPCError{Code: -32602, Message: "OPENCLAW_GATEWAY_CONFLICT: explicitExecutionTarget must be gateway"}
+	}
+	for _, key := range []string{"preferredGatewayProviderId", "gatewayProviderId", "gatewayProvider"} {
+		if provider := strings.TrimSpace(shared.StringArg(routing, key, "")); provider != "" && !strings.EqualFold(provider, "openclaw") {
+			return request, &shared.RPCError{Code: -32602, Message: "OPENCLAW_GATEWAY_CONFLICT: gateway provider must be openclaw"}
+		}
+	}
+	routing["routingMode"] = "explicit"
+	routing["explicitExecutionTarget"] = "gateway"
+	routing["preferredGatewayProviderId"] = "openclaw"
+	delete(routing, "explicitProviderId")
+	params["routing"] = routing
+	params["requestedExecutionTarget"] = "gateway"
+	params["executionTarget"] = "gateway"
+	request.Params = params
+	return request, nil
 }
 
 func requestUsesOpenClawGatewaySubmit(params map[string]any) bool {

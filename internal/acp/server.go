@@ -52,9 +52,9 @@ func NewServer() *Server {
 			shared.EnvOrDefault("BRIDGE_REVIEW_AUTH_TOKEN", ""),
 		),
 		openClawGate: newOpenClawGatewayAdmissionGate(config),
-		taskForwarder: newDistributedTaskForwarder(distributedTaskForwarderConfig{
-			Endpoint: resolveDistributedTaskForwardEndpoint(config),
-			Token:    resolveDistributedTaskForwardToken(config),
+		taskRouter: newDistributedTaskRouter(distributedTaskRouterConfig{
+			Config: config,
+			Token:  resolveDistributedTaskForwardToken(config),
 		}),
 	}
 	s.Bootstrap()
