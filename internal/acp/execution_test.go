@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/websocket"
+	"xworkmate-bridge/internal/shared"
 )
 
 func TestResolveSingleAgentForwardEndpointFromExampleConfig(t *testing.T) {
@@ -555,5 +559,118 @@ func TestExternalACPNotificationCollectorIgnoresCodexCommentaryMessages(t *testi
 	result := collector.apply(map[string]any{})
 	if got := result["output"]; got != "hello" {
 		t.Fatalf("expected commentary to be hidden and duplicate final line collapsed, got %#v", result)
+	}
+}
+
+func TestProbeOpenClawTaskFailsAfterMaxAllowedSilentDuration(t *testing.T) {
+	t.Setenv("XWORKMATE_BRIDGE_OPENCLAW_GATEWAY_MAX_SILENT_DURATION", "2s")
+	t.Setenv("BRIDGE_CONFIG_PATH", filepath.Join(t.TempDir(), "missing-config.yaml"))
+
+	server := NewServer()
+	orchestrator := server.orchestrator
+	sess := server.getOrCreateSession("silent-session", "silent-thread")
+	startedAt := time.Now().Add(-time.Minute)
+	sess.mu.Lock()
+	sess.task = QueuedTask{
+		SessionID:            "silent-session",
+		ThreadID:             "silent-thread",
+		TurnID:               "silent-turn",
+		RunID:                "silent-run",
+		SessionKey:           "silent-session",
+		GatewayProviderID:    "openclaw",
+		State:                TaskStateRunning,
+		Kind:                 TaskKindGateway,
+		RuntimeBudgetMinutes: openClawLongTaskMinutes,
+		StartedAt:            startedAt,
+		DeadlineAt:           time.Now().Add(time.Minute),
+	}
+	sess.openClaw = &OpenClawTaskRecord{
+		SessionID:            "silent-session",
+		ThreadID:             "silent-thread",
+		TurnID:               "silent-turn",
+		RunID:                "silent-run",
+		SessionKey:           "silent-session",
+		GatewayProviderID:    "openclaw",
+		TaskLoadClass:        "long_task",
+		RuntimeBudgetMinutes: openClawLongTaskMinutes,
+		StartedAt:            startedAt,
+		DeadlineAt:           time.Now().Add(time.Minute),
+		FirstSilentFailureAt: time.Now().Add(-3 * time.Second),
+	}
+	sess.mu.Unlock()
+
+	result := orchestrator.probeOpenClawTask(context.Background(), sess, nil)
+
+	if got := result["status"]; got != string(TaskStateFailed) {
+		t.Fatalf("expected failed status after silent duration, got %#v", result)
+	}
+	if got := result["code"]; got != "OPENCLAW_GATEWAY_LOST" {
+		t.Fatalf("expected OPENCLAW_GATEWAY_LOST, got %#v", result)
+	}
+	sess.mu.Lock()
+	state := sess.task.State
+	sess.mu.Unlock()
+	if state != TaskStateFailed {
+		t.Fatalf("task state = %s, want %s", state, TaskStateFailed)
+	}
+}
+
+func TestTerminalOpenClawTaskRemovesInlineAttachmentDirectory(t *testing.T) {
+	workspace := t.TempDir()
+	turnID := "turn-inline-gc"
+	chatParams, rpcErr := openClawChatSendParams(map[string]any{
+		"threadId":         "thread-inline-gc",
+		"taskPrompt":       "inspect uploaded file",
+		"workingDirectory": workspace,
+		"inlineAttachments": []any{
+			map[string]any{
+				"name":     "note.txt",
+				"mimeType": "text/plain",
+				"content":  "bm90ZQ==",
+			},
+		},
+	}, turnID)
+	if rpcErr != nil {
+		t.Fatalf("expected chat params, got rpc error: %#v", rpcErr)
+	}
+	attachments := shared.ListArg(chatParams, "attachments")
+	if len(attachments) != 1 {
+		t.Fatalf("expected materialized attachment, got %#v", attachments)
+	}
+	attachmentPath := shared.StringArg(shared.AsMap(attachments[0]), "path", "")
+	attachmentDirectory := filepath.Dir(attachmentPath)
+	if _, err := os.Stat(attachmentDirectory); err != nil {
+		t.Fatalf("expected attachment directory before terminal task state: %v", err)
+	}
+
+	server := NewServer()
+	sess := server.getOrCreateSession("gc-session", "gc-thread")
+	now := time.Now()
+	sess.mu.Lock()
+	sess.task = QueuedTask{
+		SessionID: "gc-session",
+		ThreadID:  "gc-thread",
+		TurnID:    turnID,
+		RunID:     "gc-run",
+		State:     TaskStateRunning,
+		Kind:      TaskKindGateway,
+		StartedAt: now,
+	}
+	sess.openClaw = &OpenClawTaskRecord{
+		SessionID: "gc-session",
+		ThreadID:  "gc-thread",
+		TurnID:    turnID,
+		RunID:     "gc-run",
+		StartedAt: now,
+		ChatParams: map[string]any{
+			"workingDirectory": workspace,
+		},
+	}
+	sess.mu.Unlock()
+
+	server.orchestrator.failOpenClawTask(sess, "TEST_FAILED", "terminal")
+
+	if _, err := os.Stat(attachmentDirectory); !os.IsNotExist(err) {
+		t.Fatalf("expected terminal task to remove attachment directory, stat err=%v", err)
 	}
 }

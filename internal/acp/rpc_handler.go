@@ -2,10 +2,14 @@ package acp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
+	"xworkmate-bridge/internal/desktop"
 	"xworkmate-bridge/internal/shared"
+
+	"github.com/pion/webrtc/v4"
 )
 
 func (s *Server) handleRequest(request shared.RPCRequest, notify func(map[string]any)) (map[string]any, *shared.RPCError) {
@@ -55,6 +59,9 @@ func (s *Server) handleRequest(request shared.RPCRequest, notify func(map[string
 	case "xworkmate.gateway.connect", "xworkmate.gateway.request", "xworkmate.gateway.disconnect":
 		// Gateway 语义由专门的 Gateway 组件通过 Adapter 处理
 		return s.handleGatewayMethod(ctx, method, request.Params, notify)
+
+	case "xworkmate.desktop.offer", "xworkmate.desktop.ice", "xworkmate.desktop.close":
+		return s.handleDesktopMethod(ctx, method, request.Params, notify)
 
 	case "xworkmate.jobs.submit", "xworkmate.jobs.get", "xworkmate.jobs.list", "xworkmate.jobs.stats":
 		return s.handleJobMethod(ctx, method, request.Params, notify)
@@ -175,7 +182,6 @@ func (s *Server) reassociateOpenClawTask(params map[string]any) *session {
 	turnID := strings.TrimSpace(shared.StringArg(params, "turnId", runID))
 	sessionKey := strings.TrimSpace(shared.StringArg(params, "sessionKey", threadID))
 	gatewayProvider := strings.TrimSpace(shared.StringArg(params, "gatewayProviderId", "openclaw"))
-	budget := shared.IntArg(shared.StringArg(params, "runtimeBudgetMinutes", ""), openClawComplexTaskMinutes)
 	now := time.Now()
 	prepared := &openClawPreparedArtifactScope{
 		ArtifactScope:             artifactScope,
@@ -189,6 +195,10 @@ func (s *Server) reassociateOpenClawTask(params map[string]any) *session {
 		TaskLoadClass:              strings.TrimSpace(shared.StringArg(params, "taskLoadClass", "")),
 		ExpectedArtifactExtensions: normalizeOpenClawExtensionList(shared.ListArg(params, "expectedArtifactExtensions")),
 		RequiredFinalExtensions:    normalizeOpenClawExtensionList(shared.ListArg(params, "requiredArtifactExtensions")),
+	}
+	taskLoadClass, budget := openClawTaskRuntimePolicy(params, map[string]any{"sessionKey": sessionKey}, contract)
+	if explicitBudget := shared.IntArg(shared.StringArg(params, "runtimeBudgetMinutes", ""), 0); explicitBudget > 0 {
+		budget = explicitBudget
 	}
 	sess := s.getOrCreateSession(sessionID, threadID)
 	sess.mu.Lock()
@@ -206,7 +216,7 @@ func (s *Server) reassociateOpenClawTask(params map[string]any) *session {
 		GatewayProviderID:    gatewayProvider,
 		State:                TaskStateRunning,
 		Kind:                 TaskKindGateway,
-		TaskLoadClass:        contract.TaskLoadClass,
+		TaskLoadClass:        taskLoadClass,
 		ArtifactScope:        artifactScope,
 		ArtifactDirectory:    prepared.ArtifactDirectory,
 		RuntimeBudgetMinutes: budget,
@@ -223,7 +233,7 @@ func (s *Server) reassociateOpenClawTask(params map[string]any) *session {
 		RunID:                runID,
 		SessionKey:           sessionKey,
 		GatewayProviderID:    gatewayProvider,
-		TaskLoadClass:        contract.TaskLoadClass,
+		TaskLoadClass:        taskLoadClass,
 		ArtifactSinceUnixMs:  0,
 		RuntimeBudgetMinutes: budget,
 		StartedAt:            now,
@@ -254,15 +264,99 @@ func (s *Server) cancelSession(ctx context.Context, sessionID string) {
 
 func (s *Server) closeSession(ctx context.Context, sessionID string) bool {
 	s.mu.Lock()
-	sess, ok := s.sessions[sessionID]
-	delete(s.sessions, sessionID)
-	s.mu.Unlock()
-	if ok && sess != nil && sess.compat != nil {
-		sess.mu.Lock()
-		sess.task.State = TaskStateCancelled
-		sess.task.UpdatedAt = time.Now()
-		sess.mu.Unlock()
-		_ = sess.compat.CloseSession(ctx, sessionID)
+	_, existed := s.sessions[sessionID]
+	if existed {
+		delete(s.sessions, sessionID)
 	}
-	return ok
+	s.mu.Unlock()
+	return existed
 }
+
+func (s *Server) handleDesktopMethod(ctx context.Context, method string, params map[string]any, notify func(map[string]any)) (map[string]any, *shared.RPCError) {
+	sessionID := strings.TrimSpace(shared.StringArg(params, "sessionId", ""))
+	if sessionID == "" {
+		sessionID = "default"
+	}
+
+	srv := desktop.GetService()
+
+	switch method {
+	case "xworkmate.desktop.offer":
+		sdpOffer := strings.TrimSpace(shared.StringArg(params, "sdpOffer", ""))
+		if sdpOffer == "" {
+			return nil, &shared.RPCError{Code: -32602, Message: "sdpOffer is required"}
+		}
+
+		display := strings.TrimSpace(shared.StringArg(params, "display", ""))
+		width := shared.IntArg(shared.StringArg(params, "width", ""), 1280)
+		height := shared.IntArg(shared.StringArg(params, "height", ""), 720)
+		fps := shared.IntArg(shared.StringArg(params, "fps", ""), 30)
+		bitrate := shared.IntArg(shared.StringArg(params, "bitrate", ""), 2000)
+		useGPU := shared.BoolArg(shared.StringArg(params, "useGpu", ""), false)
+
+		var iceServers []string
+		if rawIce, ok := params["iceServers"].([]any); ok {
+			for _, ice := range rawIce {
+				if s, ok := ice.(string); ok {
+					iceServers = append(iceServers, s)
+				}
+			}
+		}
+
+		cfg := desktop.PipelineConfig{
+			Display:  display,
+			Port:     5004,
+			Width:    width,
+			Height:   height,
+			FPS:      fps,
+			Bitrate:  bitrate,
+			UseGPU:   useGPU,
+			ToolType: "auto",
+		}
+
+		sess, err := srv.StartSession(sessionID, cfg, iceServers)
+		if err != nil {
+			return nil, &shared.RPCError{Code: -32001, Message: fmt.Sprintf("failed to start desktop session: %v", err)}
+		}
+
+		sdpAnswer, err := sess.WebRTC.ProcessOffer(sdpOffer)
+		if err != nil {
+			srv.StopSession(sessionID)
+			return nil, &shared.RPCError{Code: -32002, Message: fmt.Sprintf("failed to process SDP offer: %v", err)}
+		}
+
+		return map[string]any{
+			"sessionId": sessionID,
+			"sdpAnswer": sdpAnswer,
+		}, nil
+
+	case "xworkmate.desktop.ice":
+		candidateData, ok := params["candidate"].(map[string]any)
+		if !ok {
+			return nil, &shared.RPCError{Code: -32602, Message: "candidate object is required"}
+		}
+
+		var candidate webrtc.ICECandidateInit
+		bytes, err := json.Marshal(candidateData)
+		if err != nil {
+			return nil, &shared.RPCError{Code: -32602, Message: fmt.Sprintf("failed to marshal candidate: %v", err)}
+		}
+		if err := json.Unmarshal(bytes, &candidate); err != nil {
+			return nil, &shared.RPCError{Code: -32602, Message: fmt.Sprintf("failed to unmarshal candidate: %v", err)}
+		}
+
+		if err := srv.AddICECandidate(sessionID, candidate); err != nil {
+			return nil, &shared.RPCError{Code: -32003, Message: fmt.Sprintf("failed to add ICE candidate: %v", err)}
+		}
+
+		return map[string]any{"status": "ok"}, nil
+
+	case "xworkmate.desktop.close":
+		srv.StopSession(sessionID)
+		return map[string]any{"status": "closed"}, nil
+
+	default:
+		return nil, &shared.RPCError{Code: -32601, Message: fmt.Sprintf("unknown desktop method: %s", method)}
+	}
+}
+

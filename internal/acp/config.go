@@ -76,9 +76,10 @@ type DistributedRouteConfig struct {
 }
 
 type OpenClawGatewayConfig struct {
-	MaxActive    *int   `yaml:"max_active"`
-	MaxQueued    *int   `yaml:"max_queued"`
-	QueueTimeout string `yaml:"queue_timeout"`
+	MaxActive                *int   `yaml:"max_active"`
+	MaxQueued                *int   `yaml:"max_queued"`
+	QueueTimeout             string `yaml:"queue_timeout"`
+	MaxAllowedSilentDuration string `yaml:"max_allowed_silent_duration"`
 }
 
 func loadBridgeConfig() *BridgeConfig {

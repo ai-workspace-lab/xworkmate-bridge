@@ -2,6 +2,8 @@ package acp
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -10,12 +12,13 @@ import (
 )
 
 const (
-	openClawTaskProbeTimeout    = 2 * time.Second
-	openClawTaskProbeTimeoutMs  = 1000
-	openClawTaskMonitorInterval = time.Second
-	openClawShortTaskMinutes    = 10
-	openClawLongTaskMinutes     = 30
-	openClawComplexTaskMinutes  = 60
+	openClawTaskProbeTimeout                = 2 * time.Second
+	openClawTaskProbeTimeoutMs              = 1000
+	openClawTaskMonitorInterval             = time.Second
+	openClawShortTaskMinutes                = 10
+	openClawLongTaskMinutes                 = 30
+	openClawComplexTaskMinutes              = 60
+	openClawDefaultMaxAllowedSilentDuration = 10 * time.Minute
 )
 
 type OpenClawTaskRecord struct {
@@ -34,6 +37,7 @@ type OpenClawTaskRecord struct {
 	ProgressStage        string
 	ProgressMessage      string
 	ProgressTerminal     bool
+	FirstSilentFailureAt time.Time
 	ChatParams           map[string]any
 	PreparedArtifact     *openClawPreparedArtifactScope
 	ArtifactContract     openClawArtifactContract
@@ -50,7 +54,22 @@ func openClawTaskRuntimePolicy(params map[string]any, chatParams map[string]any,
 		message = openClawCurrentTurnMessage(params)
 	}
 	lower := strings.ToLower(message)
+	taskLoadClass := strings.TrimSpace(contract.TaskLoadClass)
+	if taskLoadClass == "" {
+		taskLoadClass = strings.TrimSpace(shared.StringArg(params, "taskLoadClass", ""))
+	}
 	metadataClass := strings.TrimSpace(shared.StringArg(shared.AsMap(params["metadata"]), "taskLoadClass", ""))
+	if taskLoadClass == "" {
+		taskLoadClass = metadataClass
+	}
+	switch taskLoadClass {
+	case "short_task":
+		return "short_task", openClawShortTaskMinutes
+	case "long_task":
+		return "long_task", openClawLongTaskMinutes
+	case "complex_chain_task", "complex_long_chain_task":
+		return "complex_chain_task", openClawComplexTaskMinutes
+	}
 	if metadataClass == "complex_long_chain_task" || contract.ComplexLongChain || openClawMessageContainsAny(lower, []string{
 		"复杂链路", "多章节", "每章", "拆章节", "汇总排版", "gpt images", "images2", "image generation", "视频", "渲染", "hyperframes", "remotion", "ffmpeg",
 	}) {
@@ -194,6 +213,7 @@ func (o *SessionOrchestrator) failOpenClawTask(sess *session, code string, messa
 	turnID := sess.task.TurnID
 	runID := sess.task.RunID
 	gatewayProviderID := sess.task.GatewayProviderID
+	record := sess.openClaw
 	sess.task.State = TaskStateFailed
 	sess.task.UpdatedAt = time.Now()
 	sess.task.ProgressStage = "failed"
@@ -221,6 +241,7 @@ func (o *SessionOrchestrator) failOpenClawTask(sess *session, code string, messa
 	sess.lastResult = cloneMap(result)
 	sess.mu.Unlock()
 	o.releaseOpenClawAdmission(sess)
+	cleanupOpenClawTurnAttachments(record)
 	return result
 }
 
@@ -295,8 +316,17 @@ func (o *SessionOrchestrator) probeOpenClawTask(ctx context.Context, sess *sessi
 	)
 	if !waitResult.OK {
 		if openClawProbeStillRunning(waitResult.Error) {
+			now := time.Now()
 			sess.mu.Lock()
 			if sess.openClaw != nil {
+				if sess.openClaw.FirstSilentFailureAt.IsZero() {
+					sess.openClaw.FirstSilentFailureAt = now
+				}
+				if openClawSilentFailureExceeded(o.server.config, sess.openClaw.FirstSilentFailureAt, now) {
+					sess.openClaw.ProbeInFlight = false
+					sess.mu.Unlock()
+					return o.failOpenClawTask(sess, "OPENCLAW_GATEWAY_LOST", "OpenClaw gateway stayed unreachable beyond the allowed silent duration")
+				}
 				sess.openClaw.ProgressStage = "running"
 				sess.openClaw.ProgressMessage = "OpenClaw task is still running"
 				sess.openClaw.ProbeInFlight = false
@@ -313,7 +343,32 @@ func (o *SessionOrchestrator) probeOpenClawTask(ctx context.Context, sess *sessi
 		message := strings.TrimSpace(shared.StringArg(waitResult.Error, "message", "openclaw wait failed"))
 		return o.failOpenClawTask(sess, code, message)
 	}
+	sess.mu.Lock()
+	if sess.openClaw != nil {
+		sess.openClaw.FirstSilentFailureAt = time.Time{}
+	}
+	sess.mu.Unlock()
 	return o.completeOpenClawTask(sess, shared.AsMap(waitResult.Payload), collector, notify)
+}
+
+func openClawSilentFailureExceeded(config *BridgeConfig, firstFailureAt time.Time, now time.Time) bool {
+	if firstFailureAt.IsZero() {
+		return false
+	}
+	return now.Sub(firstFailureAt) >= openClawMaxAllowedSilentDuration(config)
+}
+
+func openClawMaxAllowedSilentDuration(config *BridgeConfig) time.Duration {
+	raw := strings.TrimSpace(shared.EnvOrDefault("XWORKMATE_BRIDGE_OPENCLAW_GATEWAY_MAX_SILENT_DURATION", ""))
+	if raw == "" && config != nil {
+		raw = strings.TrimSpace(config.OpenClawGateway.MaxAllowedSilentDuration)
+	}
+	if raw != "" {
+		if parsed, err := time.ParseDuration(raw); err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return openClawDefaultMaxAllowedSilentDuration
 }
 
 func openClawProbeStillRunning(errorPayload map[string]any) bool {
@@ -445,10 +500,48 @@ func (o *SessionOrchestrator) completeOpenClawTask(
 	sess.lastResult = cloneMap(result)
 	sess.mu.Unlock()
 	o.releaseOpenClawAdmission(sess)
+	cleanupOpenClawTurnAttachments(record)
 	if notify != nil {
 		notify(shared.NotificationEnvelope("session.update", openClawGatewayCompletedResultUpdate(record.SessionID, record.ThreadID, record.TurnID, result)))
 	}
 	return result
+}
+
+func cleanupOpenClawTurnAttachments(record *OpenClawTaskRecord) {
+	if record == nil {
+		return
+	}
+	workingDirectory := strings.TrimSpace(shared.StringArg(record.ChatParams, "workingDirectory", ""))
+	if workingDirectory == "" {
+		return
+	}
+	attachmentDirectory := filepath.Join(
+		workingDirectory,
+		".xworkmate",
+		"attachments",
+		safeOpenClawAttachmentPathSegment(record.TurnID, "turn"),
+	)
+	if !openClawSafeAttachmentCleanupPath(workingDirectory, attachmentDirectory) {
+		return
+	}
+	_ = os.RemoveAll(attachmentDirectory)
+}
+
+func openClawSafeAttachmentCleanupPath(workingDirectory string, attachmentDirectory string) bool {
+	workingRoot, err := filepath.Abs(strings.TrimSpace(workingDirectory))
+	if err != nil || workingRoot == "" {
+		return false
+	}
+	attachmentRoot := filepath.Join(workingRoot, ".xworkmate", "attachments")
+	target, err := filepath.Abs(strings.TrimSpace(attachmentDirectory))
+	if err != nil || target == "" {
+		return false
+	}
+	rel, err := filepath.Rel(attachmentRoot, target)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return false
+	}
+	return true
 }
 
 func openClawSessionSnapshotLocked(sess *session) map[string]any {

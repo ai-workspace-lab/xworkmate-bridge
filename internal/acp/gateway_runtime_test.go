@@ -64,3 +64,56 @@ func TestResolveGatewayReportedRemoteAddressNormalizesExplicitPublicRemoteHost(
 		t.Fatalf("resolveGatewayReportedRemoteAddress() = %q, want %q", got, want)
 	}
 }
+
+func TestReassociateOpenClawTaskDerivesRuntimeBudgetWithoutExplicitBudget(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		params map[string]any
+		want   int
+	}{
+		{
+			name: "short task load class",
+			params: map[string]any{
+				"runId":         "run-short",
+				"artifactScope": "tasks/main/run-short",
+				"taskLoadClass": "short_task",
+			},
+			want: openClawShortTaskMinutes,
+		},
+		{
+			name: "required final artifact",
+			params: map[string]any{
+				"runId":                      "run-pdf",
+				"artifactScope":              "tasks/main/run-pdf",
+				"requiredArtifactExtensions": []any{"pdf"},
+			},
+			want: openClawLongTaskMinutes,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			server := NewServer()
+			sess := server.reassociateOpenClawTask(tc.params)
+			if sess == nil {
+				t.Fatal("expected reassociated session")
+			}
+			sess.mu.Lock()
+			gotTaskBudget := sess.task.RuntimeBudgetMinutes
+			gotRecordBudget := sess.openClaw.RuntimeBudgetMinutes
+			sess.mu.Unlock()
+
+			if gotTaskBudget != tc.want {
+				t.Fatalf("task RuntimeBudgetMinutes = %d, want %d", gotTaskBudget, tc.want)
+			}
+			if gotRecordBudget != tc.want {
+				t.Fatalf("record RuntimeBudgetMinutes = %d, want %d", gotRecordBudget, tc.want)
+			}
+		})
+	}
+}
