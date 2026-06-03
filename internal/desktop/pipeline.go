@@ -190,11 +190,10 @@ func (pm *PipelineManager) buildGStreamer(cfg PipelineConfig) (string, []string,
 	args := []string{"-v"}
 	args = append(args, strings.Split(pipelineStr, " ")...)
 	
-	// Clean up empty parameters in parsed string split
 	var cleanArgs []string
 	for _, arg := range args {
 		trimmed := strings.TrimSpace(arg)
-		if trimmed != "" && trimmed != "!" {
+		if trimmed != "" {
 			cleanArgs = append(cleanArgs, trimmed)
 		}
 	}

@@ -286,6 +286,10 @@ func (s *Server) handleDesktopMethod(ctx context.Context, method string, params 
 		if sdpOffer == "" {
 			return nil, &shared.RPCError{Code: -32602, Message: "sdpOffer is required"}
 		}
+		// Pion WebRTC strict parser requires SDP strings to end with \r\n
+		if !strings.HasSuffix(sdpOffer, "\r\n") {
+			sdpOffer += "\r\n"
+		}
 
 		display := strings.TrimSpace(shared.StringArg(params, "display", ""))
 		width := shared.IntArg(shared.StringArg(params, "width", ""), 1280)
