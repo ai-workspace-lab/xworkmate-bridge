@@ -3,12 +3,15 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"os"
 
 	"xworkmate-bridge/internal/acp"
 	"xworkmate-bridge/internal/geminiadapter"
 	"xworkmate-bridge/internal/hermesadapter"
 	"xworkmate-bridge/internal/opencodeadapter"
+	"xworkmate-bridge/internal/shared"
 )
 
 var (
@@ -18,6 +21,9 @@ var (
 )
 
 func main() {
+	// Intercept standard logs
+	log.SetOutput(io.MultiWriter(os.Stdout, shared.GlobalLogBuffer))
+
 	acp.SetRuntimeVersionInfo(acp.RuntimeVersionInfo{
 		Commit:    buildCommit,
 		Version:   buildVersion,

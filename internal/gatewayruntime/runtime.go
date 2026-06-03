@@ -219,6 +219,23 @@ func (m *Manager) lookupConnectedByMode(mode string) *session {
 	return nil
 }
 
+func (m *Manager) HasConnectedSession() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, current := range m.sessions {
+		if current == nil {
+			continue
+		}
+		current.mu.Lock()
+		connected := current.snapshot.Status == "connected"
+		current.mu.Unlock()
+		if connected {
+			return true
+		}
+	}
+	return false
+}
+
 type session struct {
 	manager   *Manager
 	runtimeID string

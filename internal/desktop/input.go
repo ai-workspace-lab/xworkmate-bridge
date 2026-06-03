@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -62,7 +63,7 @@ func (xi *XdotoolInjector) Start() error {
 
 	// 2. Launch persistent xdotool process
 	cmd := exec.Command("xdotool", "-")
-	cmd.Env = append(cmd.Env, "DISPLAY="+xi.display)
+	cmd.Env = desktopCommandEnv(xi.display)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -165,7 +166,7 @@ func (xi *XdotoolInjector) Close() error {
 
 func (xi *XdotoolInjector) queryDisplayGeometry() (int, int, error) {
 	cmd := exec.Command("xdotool", "getdisplaygeometry")
-	cmd.Env = append(cmd.Env, "DISPLAY="+xi.display)
+	cmd.Env = desktopCommandEnv(xi.display)
 	out, err := cmd.Output()
 	if err != nil {
 		return 0, 0, err
@@ -183,6 +184,21 @@ func (xi *XdotoolInjector) queryDisplayGeometry() (int, int, error) {
 	}
 
 	return w, h, nil
+}
+
+func desktopCommandEnv(display string) []string {
+	env := os.Environ()
+	if strings.TrimSpace(display) == "" {
+		return env
+	}
+	filtered := make([]string, 0, len(env)+1)
+	for _, item := range env {
+		if strings.HasPrefix(item, "DISPLAY=") {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return append(filtered, "DISPLAY="+display)
 }
 
 func (xi *XdotoolInjector) mapButton(btn int) int {

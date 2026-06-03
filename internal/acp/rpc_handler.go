@@ -20,6 +20,20 @@ func (s *Server) handleRequest(request shared.RPCRequest, notify func(map[string
 	case "health":
 		return map[string]any{"status": "ok", "version": "0.7.0", "role": "acp-control-plane"}, nil
 
+	case "system.logs":
+		gatewayStatus := "disconnected"
+		if s.gateway != nil {
+			if s.gateway.HasConnectedSession() {
+				gatewayStatus = "connected"
+			}
+		}
+
+		return map[string]any{
+			"bridgeStatus":  "ok",
+			"gatewayStatus": gatewayStatus,
+			"bridgeLogs":    shared.GlobalLogBuffer.GetLines(),
+		}, nil
+
 	case "acp.capabilities":
 		return s.catalog.Get(), nil
 
@@ -363,4 +377,3 @@ func (s *Server) handleDesktopMethod(ctx context.Context, method string, params 
 		return nil, &shared.RPCError{Code: -32601, Message: fmt.Sprintf("unknown desktop method: %s", method)}
 	}
 }
-

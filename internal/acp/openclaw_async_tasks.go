@@ -348,7 +348,43 @@ func (o *SessionOrchestrator) probeOpenClawTask(ctx context.Context, sess *sessi
 		sess.openClaw.FirstSilentFailureAt = time.Time{}
 	}
 	sess.mu.Unlock()
-	return o.completeOpenClawTask(sess, shared.AsMap(waitResult.Payload), collector, notify)
+	waitPayload := shared.AsMap(waitResult.Payload)
+	if !openClawWaitPayloadTerminal(waitPayload) && !collector.isTerminal() {
+		return openClawMarkProbeRunning(sess)
+	}
+	return o.completeOpenClawTask(sess, waitPayload, collector, notify)
+}
+
+func openClawMarkProbeRunning(sess *session) map[string]any {
+	sess.mu.Lock()
+	if sess.openClaw != nil {
+		sess.openClaw.ProgressStage = "running"
+		sess.openClaw.ProgressMessage = "OpenClaw task is still running"
+		sess.openClaw.ProbeInFlight = false
+	}
+	sess.task.ProgressStage = "running"
+	sess.task.ProgressMessage = "OpenClaw task is still running"
+	sess.task.UpdatedAt = time.Now()
+	result := openClawRunningTaskResult(sess.openClaw)
+	sess.lastResult = cloneMap(result)
+	sess.mu.Unlock()
+	return result
+}
+
+func openClawWaitPayloadTerminal(payload map[string]any) bool {
+	if payload == nil {
+		return false
+	}
+	if value, ok := payload["terminal"].(bool); ok {
+		return value
+	}
+	for _, key := range []string{"status", "state", "phase"} {
+		switch strings.TrimSpace(strings.ToLower(shared.StringArg(payload, key, ""))) {
+		case "complete", "completed", "done", "final", "success", "succeeded", "failed", "failure", "error", "timeout", "timed_out", "cancelled", "canceled":
+			return true
+		}
+	}
+	return false
 }
 
 func openClawSilentFailureExceeded(config *BridgeConfig, firstFailureAt time.Time, now time.Time) bool {
