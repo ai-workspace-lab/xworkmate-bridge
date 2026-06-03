@@ -18,24 +18,6 @@ import (
 	"xworkmate-bridge/internal/shared"
 )
 
-func sseResultEnvelope(t *testing.T, body string, id string) map[string]any {
-	t.Helper()
-	for _, rawLine := range strings.Split(body, "\n") {
-		line := strings.TrimSpace(rawLine)
-		if !strings.HasPrefix(line, "data: ") || line == "data: [DONE]" {
-			continue
-		}
-		var envelope map[string]any
-		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &envelope); err != nil {
-			t.Fatalf("decode SSE envelope %q: %v", line, err)
-		}
-		if strings.TrimSpace(shared.StringArg(envelope, "id", "")) == id {
-			return envelope
-		}
-	}
-	t.Fatalf("missing SSE result envelope %q in body: %s", id, body)
-	return nil
-}
 
 func sseFirstResultEnvelope(t *testing.T, body string) map[string]any {
 	t.Helper()
