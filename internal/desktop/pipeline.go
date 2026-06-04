@@ -84,7 +84,8 @@ func (pm *PipelineManager) Start(cfg PipelineConfig) error {
 	cmd.Env = desktopCommandEnv(cfg.Display)
 
 	// Capture stdout/stderr for logging
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = log.Writer()
+	cmd.Stderr = log.Writer()
 
 	log.Printf("Starting capture pipeline: %s %s", tool, strings.Join(args, " "))
 	if err := cmd.Start(); err != nil {
