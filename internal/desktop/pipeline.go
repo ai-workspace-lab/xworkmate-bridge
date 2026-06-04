@@ -229,7 +229,6 @@ func (pm *PipelineManager) buildFFmpeg(cfg PipelineConfig) (string, []string, er
 			"-c:v", "libx264",
 			"-preset", "ultrafast",
 			"-tune", "zerolatency",
-			"-threads", "0",
 			"-g", "30",
 		)
 	}

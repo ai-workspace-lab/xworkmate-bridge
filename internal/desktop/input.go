@@ -33,8 +33,9 @@ type XdotoolInjector struct {
 	height    int
 	isStarted bool
 
-	moveChan chan InputEvent
-	stopChan chan struct{}
+	moveMu      sync.Mutex
+	pendingMove *InputEvent
+	stopChan    chan struct{}
 }
 
 func NewXdotoolInjector(display string) *XdotoolInjector {
@@ -45,7 +46,6 @@ func NewXdotoolInjector(display string) *XdotoolInjector {
 		display:  display,
 		width:    1280, // Default fallbacks
 		height:   720,
-		moveChan: make(chan InputEvent, 1),
 	}
 }
 
@@ -107,14 +107,9 @@ func (xi *XdotoolInjector) Inject(event InputEvent) error {
 
 	switch event.Type {
 	case "mouse_move":
-		select {
-		case <-xi.moveChan:
-		default:
-		}
-		select {
-		case xi.moveChan <- event:
-		default:
-		}
+		xi.moveMu.Lock()
+		xi.pendingMove = &event
+		xi.moveMu.Unlock()
 		return nil
 
 	case "mouse_down":
@@ -191,27 +186,27 @@ func (xi *XdotoolInjector) mouseMoveWorker() {
 	ticker := time.NewTicker(16 * time.Millisecond) // ~60fps
 	defer ticker.Stop()
 
-	var lastEvent *InputEvent
-
 	for {
 		select {
 		case <-xi.stopChan:
 			return
-		case event := <-xi.moveChan:
-			lastEvent = &event
 		case <-ticker.C:
-			if lastEvent != nil {
+			xi.moveMu.Lock()
+			event := xi.pendingMove
+			xi.pendingMove = nil
+			xi.moveMu.Unlock()
+
+			if event != nil {
 				xi.mu.Lock()
 				if xi.isStarted && xi.stdin != nil {
-					absX := int(lastEvent.X * float64(xi.width))
-					absY := int(lastEvent.Y * float64(xi.height))
+					absX := int(event.X * float64(xi.width))
+					absY := int(event.Y * float64(xi.height))
 					cmdStr := fmt.Sprintf("mousemove %d %d\n", absX, absY)
 					if _, err := xi.stdin.Write([]byte(cmdStr)); err != nil {
 						log.Printf("xdotool mousemove write error: %v", err)
 					}
 				}
 				xi.mu.Unlock()
-				lastEvent = nil
 			}
 		}
 	}
