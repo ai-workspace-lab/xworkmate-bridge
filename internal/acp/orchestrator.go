@@ -42,10 +42,6 @@ func NewSessionOrchestrator(server *Server) *SessionOrchestrator {
 }
 
 func (o *SessionOrchestrator) Process(ctx context.Context, method string, params map[string]any, notify func(map[string]any)) (map[string]any, *shared.RPCError) {
-	if isMultiAgentSessionRequest(params) {
-		return o.ProcessMultiAgent(ctx, method, params, notify)
-	}
-
 	res, err := o.server.routingEngine.Resolve(ctx, params)
 	if err != nil {
 		if err.Error() == "ROUTING_REQUIRED" {
@@ -1305,6 +1301,7 @@ func (o *SessionOrchestrator) openClawArtifactExport(
 	runID string,
 	sinceUnixMs int64,
 	preparedArtifact *openClawPreparedArtifactScope,
+	outputText string,
 	notify func(map[string]any),
 ) map[string]any {
 	sessionKey := strings.TrimSpace(shared.StringArg(chatParams, "sessionKey", ""))
@@ -1322,6 +1319,36 @@ func (o *SessionOrchestrator) openClawArtifactExport(
 	if preparedArtifact != nil && strings.TrimSpace(preparedArtifact.ArtifactScope) != "" {
 		exportParams["artifactScope"] = strings.TrimSpace(preparedArtifact.ArtifactScope)
 	}
+	payload := o.openClawArtifactExportRequest(gatewayProvider, exportParams, notify)
+	if openClawArtifactPayloadCount(payload) > 0 {
+		return payload
+	}
+
+	fallbackScope := openClawArtifactScopeFromOutput(outputText, runID)
+	if fallbackScope != "" && fallbackScope != strings.TrimSpace(shared.StringArg(exportParams, "artifactScope", "")) {
+		fallbackParams := cloneMap(exportParams)
+		applyOpenClawArtifactScopeFallbackParams(fallbackParams, fallbackScope)
+		fallbackPayload := o.openClawArtifactExportRequest(gatewayProvider, fallbackParams, notify)
+		if openClawArtifactPayloadCount(fallbackPayload) > 0 {
+			return fallbackPayload
+		}
+	}
+	for _, fallbackScope := range openClawArtifactScopeVariants(strings.TrimSpace(shared.StringArg(exportParams, "artifactScope", ""))) {
+		fallbackParams := cloneMap(exportParams)
+		applyOpenClawArtifactScopeFallbackParams(fallbackParams, fallbackScope)
+		fallbackPayload := o.openClawArtifactExportRequest(gatewayProvider, fallbackParams, notify)
+		if openClawArtifactPayloadCount(fallbackPayload) > 0 {
+			return fallbackPayload
+		}
+	}
+	return payload
+}
+
+func (o *SessionOrchestrator) openClawArtifactExportRequest(
+	gatewayProvider string,
+	exportParams map[string]any,
+	notify func(map[string]any),
+) map[string]any {
 	exportResult := o.openClawGatewayRequestWithRetry(
 		gatewayProvider,
 		"xworkmate.artifacts.export",
@@ -1339,6 +1366,80 @@ func (o *SessionOrchestrator) openClawArtifactExport(
 	return map[string]any{
 		"artifactWarnings": []any{message},
 	}
+}
+
+func openClawArtifactScopeFromOutput(outputText string, runID string) string {
+	runID = strings.TrimSpace(runID)
+	if strings.TrimSpace(outputText) == "" || runID == "" {
+		return ""
+	}
+	for _, token := range strings.Fields(outputText) {
+		scope := openClawArtifactScopeFromOutputToken(token, runID)
+		if scope != "" {
+			return scope
+		}
+	}
+	return ""
+}
+
+func openClawArtifactScopeFromOutputToken(token string, runID string) string {
+	token = strings.Trim(token, " \t\r\n`'\".,;:()[]{}<>")
+	token = strings.ReplaceAll(token, "\\", "/")
+	index := strings.Index(token, "/tasks/")
+	if index < 0 {
+		return ""
+	}
+	segments := strings.Split(token[index+1:], "/")
+	if len(segments) < 4 || segments[0] != "tasks" {
+		return ""
+	}
+	sessionSegment := strings.TrimSpace(segments[1])
+	runSegment := strings.TrimSpace(segments[2])
+	relativeFile := safeOpenClawArtifactDownloadRelativePath(strings.Join(segments[3:], "/"))
+	if sessionSegment == "" || runSegment != runID || relativeFile == "" {
+		return ""
+	}
+	return "tasks/" + sessionSegment + "/" + runSegment
+}
+
+func openClawArtifactScopeVariants(scope string) []string {
+	scope = strings.TrimSpace(scope)
+	parts := strings.Split(scope, "/")
+	if len(parts) != 3 || parts[0] != "tasks" {
+		return nil
+	}
+	sessionSegment := strings.TrimSpace(parts[1])
+	runSegment := strings.TrimSpace(parts[2])
+	if sessionSegment == "" || runSegment == "" {
+		return nil
+	}
+	var variants []string
+	if strings.HasPrefix(sessionSegment, "draft-") {
+		variants = append(variants, "tasks/"+strings.Replace(sessionSegment, "draft-", "draft_", 1)+"/"+runSegment)
+	}
+	if strings.HasPrefix(sessionSegment, "draft_") {
+		variants = append(variants, "tasks/"+strings.Replace(sessionSegment, "draft_", "draft-", 1)+"/"+runSegment)
+	}
+	return variants
+}
+
+func applyOpenClawArtifactScopeFallbackParams(params map[string]any, scope string) {
+	if params == nil {
+		return
+	}
+	scope = strings.TrimSpace(scope)
+	params["artifactScope"] = scope
+	if sessionKey := openClawSessionKeyFromArtifactScope(scope); sessionKey != "" {
+		params["sessionKey"] = sessionKey
+	}
+}
+
+func openClawSessionKeyFromArtifactScope(scope string) string {
+	parts := strings.Split(strings.TrimSpace(scope), "/")
+	if len(parts) != 3 || parts[0] != "tasks" {
+		return ""
+	}
+	return strings.TrimSpace(parts[1])
 }
 
 func guardOpenClawNoDisplayableResult(result map[string]any, noDisplayableOutput bool) {
@@ -1922,6 +2023,7 @@ func (o *SessionOrchestrator) completeOpenClawScopedArtifactExport(
 		runID,
 		0,
 		preparedArtifact,
+		firstNonEmptyString(result, "output", "message", "summary", "assistantText", "text"),
 		nil,
 	))
 	o.server.decorateOpenClawArtifactDownloadURLs(result, sessionKey, runID)
@@ -2011,9 +2113,6 @@ func openClawArtifactHasBridgeDownloadRef(artifact map[string]any) bool {
 }
 
 func taskKindFromParams(params map[string]any, routing RoutingResult) TaskKind {
-	if parseBool(params["multiAgent"]) {
-		return TaskKindMultiAgent
-	}
 	if routing.TargetID == "gateway" {
 		return TaskKindGateway
 	}

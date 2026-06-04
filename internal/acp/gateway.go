@@ -192,13 +192,38 @@ func handleGatewayRequest(
 	params map[string]any,
 	notify func(map[string]any),
 ) map[string]any {
+	method := strings.TrimSpace(shared.StringArg(params, "method", ""))
 	if server.gateway == nil {
-		return map[string]any{"ok": false, "error": map[string]any{"message": "gateway not initialized"}}
+		server.gateway = gatewayruntime.NewManager()
+	}
+	if method == "skills.status" {
+		if rpcErr := ensureProductionGatewayConnected(server, "openclaw", notify); rpcErr != nil {
+			return map[string]any{
+				"ok": false,
+				"error": map[string]any{
+					"message": rpcErr.Message,
+					"code":    "OFFLINE",
+				},
+			}
+		}
+		timeout := time.Duration(parsePositiveInt(params["timeoutMs"])) * time.Millisecond
+		result := server.gateway.RequestByMode(
+			"openclaw",
+			method,
+			shared.AsMap(params["params"]),
+			timeout,
+			notify,
+		)
+		return map[string]any{
+			"ok":      result.OK,
+			"payload": result.Payload,
+			"error":   result.Error,
+		}
 	}
 	timeout := time.Duration(parsePositiveInt(params["timeoutMs"])) * time.Millisecond
 	result := server.gateway.Request(
 		strings.TrimSpace(shared.StringArg(params, "runtimeId", "")),
-		strings.TrimSpace(shared.StringArg(params, "method", "")),
+		method,
 		shared.AsMap(params["params"]),
 		timeout,
 		notify,

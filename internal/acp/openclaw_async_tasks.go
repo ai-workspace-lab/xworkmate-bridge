@@ -483,6 +483,7 @@ func (o *SessionOrchestrator) completeOpenClawTask(
 		record.RunID,
 		record.ArtifactSinceUnixMs,
 		record.PreparedArtifact,
+		output,
 		notify,
 	)
 	mergeOpenClawArtifactPayload(result, artifactPayload)

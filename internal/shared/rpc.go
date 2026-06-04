@@ -93,10 +93,6 @@ func NotificationEnvelope(method string, params map[string]any) map[string]any {
 	}
 }
 
-func ErrorResponse(id any, code int, message string) map[string]any {
-	return ErrorEnvelope(id, code, message)
-}
-
 func ToolTextResult(id any, content string) map[string]any {
 	result := map[string]any{
 		"content": []map[string]any{

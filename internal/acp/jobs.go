@@ -116,7 +116,7 @@ func (m *jobManager) run(parent context.Context, job *bridgeJob, notify func(map
 	params["threadId"] = job.ThreadID
 	params["taskPrompt"] = job.Prompt
 	params["workingDirectory"] = job.WorkingDir
-	if job.ProviderID != "" && !isMultiAgentSessionRequest(params) {
+	if job.ProviderID != "" {
 		params["routing"] = map[string]any{
 			"routingMode":             "explicit",
 			"explicitExecutionTarget": "singleAgent",

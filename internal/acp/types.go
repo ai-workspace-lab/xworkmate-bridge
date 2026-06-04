@@ -23,7 +23,6 @@ type TaskKind string
 const (
 	TaskKindSingleAgent TaskKind = "single-agent"
 	TaskKindGateway     TaskKind = "gateway"
-	TaskKindMultiAgent  TaskKind = "multi-agent"
 )
 
 type ControlPlaneSession struct {

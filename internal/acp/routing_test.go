@@ -719,6 +719,48 @@ func TestGatewayRequestForwardsOpenClawSkillsStatus(t *testing.T) {
 	}
 }
 
+func TestGatewayRequestSkillsStatusAutoConnectsOpenClaw(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+	t.Setenv("BRIDGE_CONFIG_PATH", filepath.Join(t.TempDir(), "missing-config.yaml"))
+	t.Setenv("XWORKMATE_BRIDGE_OPENCLAW_IDENTITY_PATH", filepath.Join(t.TempDir(), "openclaw-device.json"))
+	resetBridgeGatewayIdentityForTest()
+	t.Cleanup(resetBridgeGatewayIdentityForTest)
+
+	server := NewServer()
+	response, rpcErr := server.handleRequest(shared.RPCRequest{
+		Method: "xworkmate.gateway.request",
+		Params: map[string]any{
+			"runtimeId": "app-runtime",
+			"method":    "skills.status",
+			"params": map[string]any{
+				"agentId": "main",
+			},
+			"timeoutMs": float64(15000),
+		},
+	}, nil)
+	if rpcErr != nil {
+		t.Fatalf("expected skills.status gateway response, got rpc error: %#v", rpcErr)
+	}
+	if response["ok"] != true {
+		t.Fatalf("expected skills.status ok, got %#v", response)
+	}
+	payload := shared.AsMap(response["payload"])
+	skills := shared.ListArg(payload, "skills")
+	if len(skills) != 2 {
+		t.Fatalf("expected two OpenClaw skill records, got %#v", payload["skills"])
+	}
+	if got := gateway.ConnectCount(); got != 1 {
+		t.Fatalf("expected skills.status to auto-connect OpenClaw once, got %d", got)
+	}
+	if !slices.Contains(gateway.Methods(), "skills.status") {
+		t.Fatalf("expected fake OpenClaw gateway to receive skills.status, got %#v", gateway.Methods())
+	}
+}
+
 func TestExecuteSessionTaskGatewayNoDisplayableOutputFails(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
@@ -1898,6 +1940,129 @@ func TestExecuteSessionTaskGatewayExportsWithActualOpenClawRunID(t *testing.T) {
 	}
 }
 
+func TestExecuteSessionTaskGatewayExportsArtifactScopeDeclaredInOutput(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	gateway.artifactWorkspaceRoot = t.TempDir()
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	const sessionKey = "draft-1780110089528457-2"
+	const actualRunID = "turn-1780353431540965793"
+	actualScope := "tasks/draft_1780110089528457-2/" + actualRunID
+	actualFile := filepath.Join(
+		gateway.artifactWorkspaceRoot,
+		filepath.FromSlash(actualScope),
+		"AI_Agent_News_June_2_2026.md",
+	)
+	if err := os.MkdirAll(filepath.Dir(actualFile), 0o755); err != nil {
+		t.Fatalf("create actual artifact dir: %v", err)
+	}
+	if err := os.WriteFile(actualFile, []byte("news artifact"), 0o644); err != nil {
+		t.Fatalf("write actual artifact: %v", err)
+	}
+	gateway.alternateRunID = actualRunID
+
+	server := NewServer()
+	response, rpcErr := server.executeSessionTask(task{
+		req: shared.RPCRequest{
+			Method: "session.start",
+			Params: map[string]any{
+				"sessionId":        sessionKey,
+				"threadId":         sessionKey,
+				"taskPrompt":       "declare output artifact path",
+				"workingDirectory": t.TempDir(),
+				"routing": map[string]any{
+					"routingMode":                "explicit",
+					"explicitExecutionTarget":    "gateway",
+					"preferredGatewayProviderId": "openclaw",
+				},
+			},
+		},
+	})
+	if rpcErr != nil {
+		t.Fatalf("expected gateway response, got rpc error: %#v", rpcErr)
+	}
+	if got := response["success"]; got != true {
+		t.Fatalf("expected output-declared artifact to satisfy export, got %#v", response)
+	}
+	if got := gateway.ArtifactExportCount(); got != 2 {
+		t.Fatalf("expected prepared scope export then output scope fallback export, got %d", got)
+	}
+	artifacts := responseArtifactMaps(t, response)
+	if len(artifacts) != 1 {
+		t.Fatalf("expected one output-declared artifact, got %#v", artifacts)
+	}
+	if got := artifacts[0]["relativePath"]; got != "AI_Agent_News_June_2_2026.md" {
+		t.Fatalf("expected artifact relative path from fallback scope, got %#v", artifacts[0])
+	}
+	downloadURL := strings.TrimSpace(shared.StringArg(artifacts[0], "downloadUrl", ""))
+	parsedDownloadURL, err := url.Parse(downloadURL)
+	if err != nil {
+		t.Fatalf("parse downloadUrl: %v", err)
+	}
+	if got := parsedDownloadURL.Query().Get("artifactScope"); got != actualScope {
+		t.Fatalf("expected fallback artifact scope in downloadUrl, got %q", got)
+	}
+}
+
+func TestExecuteSessionTaskGatewayExportsDraftScopeVariant(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	gateway.artifactWorkspaceRoot = t.TempDir()
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	const sessionKey = "draft-1780110089528457-2"
+	const actualRunID = "turn-1780353431540965793"
+	actualScope := "tasks/draft_1780110089528457-2/" + actualRunID
+	actualFile := filepath.Join(
+		gateway.artifactWorkspaceRoot,
+		filepath.FromSlash(actualScope),
+		"AI_Agent_News_June_2_2026.md",
+	)
+	if err := os.MkdirAll(filepath.Dir(actualFile), 0o755); err != nil {
+		t.Fatalf("create actual artifact dir: %v", err)
+	}
+	if err := os.WriteFile(actualFile, []byte("news artifact"), 0o644); err != nil {
+		t.Fatalf("write actual artifact: %v", err)
+	}
+	gateway.alternateRunID = actualRunID
+
+	server := NewServer()
+	response, rpcErr := server.executeSessionTask(task{
+		req: shared.RPCRequest{
+			Method: "session.start",
+			Params: map[string]any{
+				"sessionId":        sessionKey,
+				"threadId":         sessionKey,
+				"taskPrompt":       "plain done",
+				"workingDirectory": t.TempDir(),
+				"routing": map[string]any{
+					"routingMode":                "explicit",
+					"explicitExecutionTarget":    "gateway",
+					"preferredGatewayProviderId": "openclaw",
+				},
+			},
+		},
+	})
+	if rpcErr != nil {
+		t.Fatalf("expected gateway response, got rpc error: %#v", rpcErr)
+	}
+	if got := response["success"]; got != true {
+		t.Fatalf("expected draft scope variant artifact to satisfy export, got %#v", response)
+	}
+	if got := gateway.ArtifactExportCount(); got != 2 {
+		t.Fatalf("expected prepared scope export then draft variant export, got %d", got)
+	}
+	artifacts := responseArtifactMaps(t, response)
+	if len(artifacts) != 1 || artifacts[0]["relativePath"] != "AI_Agent_News_June_2_2026.md" {
+		t.Fatalf("expected artifact from draft scope variant, got %#v", artifacts)
+	}
+}
+
 func TestExecuteSessionMessageGatewayDoesNotRewriteClaimedArtifactsWithoutGatewayFiles(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
@@ -3020,6 +3185,9 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 				if strings.Contains(fake.runMessage(runID), "hallucinate-files") {
 					message = "文件已就绪，点击直接下载👇 三个格式一键收取："
 				}
+				if strings.Contains(fake.runMessage(runID), "declare output artifact path") {
+					message = "I've saved the requested file at `/remote/openclaw/workspace/tasks/draft_1780110089528457-2/" + runID + "/AI_Agent_News_June_2_2026.md`"
+				}
 				if strings.Contains(fake.runMessage(runID), "agent failed before reply") {
 					message = "Agent failed before reply: No available auth profile for nvidia"
 				}
@@ -3111,10 +3279,11 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 				params := shared.AsMap(frame["params"])
 				fake.lastArtifactExportParams.Store(params)
 				runID := strings.TrimSpace(shared.StringArg(params, "runId", "fake-run"))
+				sessionKey := strings.TrimSpace(shared.StringArg(params, "sessionKey", ""))
 				artifactScope := strings.TrimSpace(shared.StringArg(params, "artifactScope", ""))
 				payload := map[string]any{
 					"runId":                  runID,
-					"sessionKey":             strings.TrimSpace(shared.StringArg(params, "sessionKey", "")),
+					"sessionKey":             sessionKey,
 					"remoteWorkingDirectory": "/remote/openclaw/workspace",
 					"remoteWorkspaceRefKind": "remotePath",
 					"scopeKind":              "workspace",
@@ -3128,7 +3297,9 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 				filesystemArtifacts := []any{}
 				if strings.TrimSpace(fake.artifactWorkspaceRoot) != "" && artifactScope != "" {
 					payload["remoteWorkingDirectory"] = strings.TrimSpace(fake.artifactWorkspaceRoot)
-					filesystemArtifacts = fake.exportFilesystemArtifacts(artifactScope)
+					if sessionKey == "" || openClawSessionKeyFromArtifactScope(artifactScope) == sessionKey {
+						filesystemArtifacts = fake.exportFilesystemArtifacts(artifactScope)
+					}
 				}
 				if strings.Contains(fake.runMessage(runID), "make artifact") {
 					payload["artifacts"] = []any{

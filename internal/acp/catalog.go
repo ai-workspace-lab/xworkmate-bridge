@@ -26,7 +26,7 @@ func (c *CapabilityCatalog) Get() map[string]any {
 
 	result := map[string]any{
 		"singleAgent":               true,
-		"multiAgent":                true,
+		"multiAgent":                false,
 		"providerCatalog":           append([]any(nil), c.ProviderCatalog...),
 		"gatewayProviders":          append([]any(nil), c.GatewayProviders...),
 		"availableExecutionTargets": append([]any(nil), c.AvailableExecutionTargets...),
@@ -34,7 +34,7 @@ func (c *CapabilityCatalog) Get() map[string]any {
 	}
 	result["capabilities"] = map[string]any{
 		"single_agent":              true,
-		"multi_agent":               true,
+		"multi_agent":               false,
 		"providerCatalog":           append([]any(nil), c.ProviderCatalog...),
 		"gatewayProviders":          append([]any(nil), c.GatewayProviders...),
 		"availableExecutionTargets": append([]any(nil), c.AvailableExecutionTargets...),
