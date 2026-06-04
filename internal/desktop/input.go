@@ -6,9 +6,12 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // InputEvent represents a client mouse or keyboard action
@@ -29,6 +32,9 @@ type XdotoolInjector struct {
 	width     int
 	height    int
 	isStarted bool
+
+	moveChan chan InputEvent
+	stopChan chan struct{}
 }
 
 func NewXdotoolInjector(display string) *XdotoolInjector {
@@ -36,9 +42,10 @@ func NewXdotoolInjector(display string) *XdotoolInjector {
 		display = ":0.0"
 	}
 	return &XdotoolInjector{
-		display: display,
-		width:   1280, // Default fallbacks
-		height:  720,
+		display:  display,
+		width:    1280, // Default fallbacks
+		height:   720,
+		moveChan: make(chan InputEvent, 1),
 	}
 }
 
@@ -79,6 +86,11 @@ func (xi *XdotoolInjector) Start() error {
 	xi.stdin = stdin
 	xi.isStarted = true
 
+	if xi.stopChan == nil {
+		xi.stopChan = make(chan struct{})
+		go xi.mouseMoveWorker()
+	}
+
 	return nil
 }
 
@@ -95,9 +107,15 @@ func (xi *XdotoolInjector) Inject(event InputEvent) error {
 
 	switch event.Type {
 	case "mouse_move":
-		absX := int(event.X * float64(xi.width))
-		absY := int(event.Y * float64(xi.height))
-		cmdStr = fmt.Sprintf("mousemove %d %d\n", absX, absY)
+		select {
+		case <-xi.moveChan:
+		default:
+		}
+		select {
+		case xi.moveChan <- event:
+		default:
+		}
+		return nil
 
 	case "mouse_down":
 		btn := xi.mapButton(event.Button)
@@ -161,12 +179,51 @@ func (xi *XdotoolInjector) Close() error {
 
 	xi.stdin = nil
 	xi.cmd = nil
+
+	if xi.stopChan != nil {
+		close(xi.stopChan)
+		xi.stopChan = nil
+	}
 	return nil
 }
 
+func (xi *XdotoolInjector) mouseMoveWorker() {
+	ticker := time.NewTicker(16 * time.Millisecond) // ~60fps
+	defer ticker.Stop()
+
+	var lastEvent *InputEvent
+
+	for {
+		select {
+		case <-xi.stopChan:
+			return
+		case event := <-xi.moveChan:
+			lastEvent = &event
+		case <-ticker.C:
+			if lastEvent != nil {
+				xi.mu.Lock()
+				if xi.isStarted && xi.stdin != nil {
+					absX := int(lastEvent.X * float64(xi.width))
+					absY := int(lastEvent.Y * float64(xi.height))
+					cmdStr := fmt.Sprintf("mousemove %d %d\n", absX, absY)
+					if _, err := xi.stdin.Write([]byte(cmdStr)); err != nil {
+						log.Printf("xdotool mousemove write error: %v", err)
+					}
+				}
+				xi.mu.Unlock()
+				lastEvent = nil
+			}
+		}
+	}
+}
+
 func (xi *XdotoolInjector) queryDisplayGeometry() (int, int, error) {
+	return queryDisplayGeometry(xi.display)
+}
+
+func queryDisplayGeometry(display string) (int, int, error) {
 	cmd := exec.Command("xdotool", "getdisplaygeometry")
-	cmd.Env = desktopCommandEnv(xi.display)
+	cmd.Env = desktopCommandEnv(display)
 	out, err := cmd.Output()
 	if err != nil {
 		return 0, 0, err
@@ -186,19 +243,142 @@ func (xi *XdotoolInjector) queryDisplayGeometry() (int, int, error) {
 	return w, h, nil
 }
 
+func ResolveDesktopDisplay(requested string) string {
+	resolved, ok := resolveDesktopDisplayWithProber(
+		requested,
+		os.Getenv("DISPLAY"),
+		x11SocketDisplays("/tmp/.X11-unix"),
+		func(display string) bool {
+			_, _, err := queryDisplayGeometry(display)
+			return err == nil
+		},
+	)
+	if ok {
+		if strings.TrimSpace(requested) != "" && strings.TrimSpace(requested) != resolved {
+			log.Printf("Resolved remote desktop display %q to active X11 display %s", requested, resolved)
+		}
+		return resolved
+	}
+
+	requested = strings.TrimSpace(requested)
+	if requested != "" {
+		return requested
+	}
+	if envDisplay := strings.TrimSpace(os.Getenv("DISPLAY")); envDisplay != "" {
+		return envDisplay
+	}
+	return ":0.0"
+}
+
+func resolveDesktopDisplayWithProber(
+	requested string,
+	envDisplay string,
+	socketDisplays []string,
+	probe func(string) bool,
+) (string, bool) {
+	requested = strings.TrimSpace(requested)
+	envDisplay = strings.TrimSpace(envDisplay)
+
+	if requested != "" && !isAutoDesktopDisplay(requested) {
+		return requested, true
+	}
+
+	candidates := make([]string, 0, len(socketDisplays)+3)
+	if envDisplay != "" {
+		candidates = append(candidates, envDisplay)
+	}
+	candidates = append(candidates, socketDisplays...)
+	if requested != "" {
+		candidates = append(candidates, requested)
+	}
+	candidates = append(candidates, ":0.0", ":0")
+
+	for _, candidate := range uniqueDisplayCandidates(candidates) {
+		if probe(candidate) {
+			return candidate, true
+		}
+	}
+	return "", false
+}
+
+func isAutoDesktopDisplay(display string) bool {
+	switch strings.TrimSpace(display) {
+	case "", ":0", ":0.0":
+		return true
+	default:
+		return false
+	}
+}
+
+func x11SocketDisplays(dir string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	displays := make([]int, 0, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasPrefix(name, "X") {
+			continue
+		}
+		value, err := strconv.Atoi(strings.TrimPrefix(name, "X"))
+		if err != nil {
+			continue
+		}
+		displays = append(displays, value)
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(displays)))
+
+	result := make([]string, 0, len(displays))
+	for _, display := range displays {
+		result = append(result, fmt.Sprintf(":%d", display))
+	}
+	return result
+}
+
+func uniqueDisplayCandidates(candidates []string) []string {
+	seen := make(map[string]struct{}, len(candidates))
+	result := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if _, exists := seen[candidate]; exists {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		result = append(result, candidate)
+	}
+	return result
+}
+
 func desktopCommandEnv(display string) []string {
 	env := os.Environ()
 	if strings.TrimSpace(display) == "" {
 		return env
 	}
 	filtered := make([]string, 0, len(env)+1)
+	hasXauthority := false
 	for _, item := range env {
 		if strings.HasPrefix(item, "DISPLAY=") {
 			continue
 		}
+		if strings.HasPrefix(item, "XAUTHORITY=") {
+			hasXauthority = true
+		}
 		filtered = append(filtered, item)
 	}
-	return append(filtered, "DISPLAY="+display)
+	filtered = append(filtered, "DISPLAY="+display)
+	if !hasXauthority {
+		if home := strings.TrimSpace(os.Getenv("HOME")); home != "" {
+			xauthority := filepath.Join(home, ".Xauthority")
+			if _, err := os.Stat(xauthority); err == nil {
+				filtered = append(filtered, "XAUTHORITY="+xauthority)
+			}
+		}
+	}
+	return filtered
 }
 
 func (xi *XdotoolInjector) mapButton(btn int) int {

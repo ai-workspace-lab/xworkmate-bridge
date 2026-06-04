@@ -10,6 +10,7 @@ import (
 
 type DesktopSession struct {
 	SessionID string
+	Port      int
 	Pipeline  *PipelineManager
 	Injector  *XdotoolInjector
 	WebRTC    *WebRTCServer
@@ -38,10 +39,11 @@ func (s *Service) StartSession(sessionID string, cfg PipelineConfig, iceServers 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Stop old session if exists
-	if old, exists := s.sessions[sessionID]; exists {
-		s.stopSessionLocked(old)
-	}
+	cfg.Port = normalizeRTPPort(cfg.Port)
+	cfg.Display = ResolveDesktopDisplay(cfg.Display)
+
+	s.stopSessionByIDLocked(sessionID)
+	s.stopSessionsOnPortLocked(cfg.Port)
 
 	log.Printf("Starting Remote Desktop session: %s", sessionID)
 
@@ -80,6 +82,7 @@ func (s *Service) StartSession(sessionID string, cfg PipelineConfig, iceServers 
 
 	sess := &DesktopSession{
 		SessionID: sessionID,
+		Port:      cfg.Port,
 		Pipeline:  pipeline,
 		Injector:  injector,
 		WebRTC:    webrtcSrv,
@@ -104,7 +107,25 @@ func (s *Service) StopSession(sessionID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.stopSessionByIDLocked(sessionID)
+}
+
+func (s *Service) stopSessionByIDLocked(sessionID string) {
 	if sess, exists := s.sessions[sessionID]; exists {
+		s.stopSessionLocked(sess)
+		delete(s.sessions, sessionID)
+	}
+}
+
+func (s *Service) stopSessionsOnPortLocked(port int) {
+	if port <= 0 {
+		return
+	}
+	for sessionID, sess := range s.sessions {
+		if sess.Port != port {
+			continue
+		}
+		log.Printf("Stopping Remote Desktop session on RTP port %d: %s", port, sessionID)
 		s.stopSessionLocked(sess)
 		delete(s.sessions, sessionID)
 	}

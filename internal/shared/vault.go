@@ -203,7 +203,7 @@ func doVaultRequest(
 	if payload != nil {
 		httpRequest.Header.Set("Content-Type", "application/json")
 	}
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := NewHTTPClient(30 * time.Second)
 	response, err := client.Do(httpRequest)
 	if err != nil {
 		return nil, err

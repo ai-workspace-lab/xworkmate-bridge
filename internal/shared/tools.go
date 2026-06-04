@@ -276,7 +276,7 @@ func CallOpenAICompatibleCtx(
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer "+apiKey)
 
-	client := &http.Client{Timeout: 120 * time.Second}
+	client := NewHTTPClient(120 * time.Second)
 	response, err := client.Do(request)
 	if err != nil {
 		return "", err

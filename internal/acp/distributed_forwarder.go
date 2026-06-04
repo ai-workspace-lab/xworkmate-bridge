@@ -94,9 +94,7 @@ func newDistributedTaskRouter(config distributedTaskRouterConfig) *distributedTa
 		routes:      distributedRouteMap(distributed.Forwarding.Routes),
 		routeStore:  newDistributedSessionRouteStore(defaultSessionRouteTTL),
 		roundRobin:  make(map[string]int),
-		httpClient: &http.Client{
-			Timeout: openClawAgentWaitMaxTimeout + openClawAgentWaitHTTPMargin,
-		},
+		httpClient: shared.NewHTTPClient(openClawAgentWaitMaxTimeout + openClawAgentWaitHTTPMargin),
 	}
 }
 

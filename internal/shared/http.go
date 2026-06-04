@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -73,4 +74,19 @@ func ParseAllowedOrigins(raw string) []string {
 		result = append(result, part)
 	}
 	return result
+}
+
+// NewHTTPClient returns an http.Client with a customized high-performance transport.
+// It uses a significantly larger connection pool to prevent socket exhaustion and
+// performance degradation when hitting the same backend hosts heavily.
+func NewHTTPClient(timeout time.Duration) *http.Client {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.MaxIdleConns = 1000
+	t.MaxIdleConnsPerHost = 100
+	t.IdleConnTimeout = 90 * time.Second
+
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: t,
+	}
 }

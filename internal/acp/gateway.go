@@ -115,12 +115,12 @@ func applyProductionGatewayRouting(
 
 	gatewayURL := resolveURL(server.config.Upstream.GatewayURL, "GATEWAY_RPC_URL")
 	if gatewayURL == "" {
-		return request
+		return withDefaultOpenClawGatewayEndpoint(request)
 	}
 
 	parsed, err := url.Parse(gatewayURL)
 	if err != nil || parsed.Hostname() == "" {
-		return request
+		return withDefaultOpenClawGatewayEndpoint(request)
 	}
 
 	tls := strings.ToLower(parsed.Scheme) == "https" || strings.ToLower(parsed.Scheme) == "wss"
@@ -145,6 +145,45 @@ func applyProductionGatewayRouting(
 	request.ConnectAuthFields = []string{"token"}
 	request.ConnectAuthSources = []string{"bridge"}
 	request.HasSharedAuth = request.Auth.Token != ""
+	return withDefaultOpenClawGatewayEndpoint(request)
+}
+
+func gatewayStatusForManager(manager *gatewayruntime.Manager) string {
+	if manager != nil && manager.HasConnectedSession() {
+		return "connected"
+	}
+	return "disconnected"
+}
+
+func (s *Server) gatewayStatusForSystemLogs() string {
+	if gatewayStatusForManager(s.gateway) == "connected" {
+		return "connected"
+	}
+	if rpcErr := ensureProductionGatewayConnected(s, "openclaw", nil); rpcErr != nil {
+		return "disconnected"
+	}
+	return gatewayStatusForManager(s.gateway)
+}
+
+func withDefaultOpenClawGatewayEndpoint(
+	request gatewayruntime.ConnectRequest,
+) gatewayruntime.ConnectRequest {
+	if !isOpenClawMode(request.Mode) {
+		return request
+	}
+	if strings.TrimSpace(request.Endpoint.Host) == "" {
+		request.Endpoint.Host = "127.0.0.1"
+	}
+	if request.Endpoint.Port <= 0 {
+		if strings.TrimSpace(request.Endpoint.Host) == "127.0.0.1" ||
+			strings.TrimSpace(request.Endpoint.Host) == "localhost" {
+			request.Endpoint.Port = 18789
+		} else if request.Endpoint.TLS {
+			request.Endpoint.Port = 443
+		} else {
+			request.Endpoint.Port = 80
+		}
+	}
 	return request
 }
 

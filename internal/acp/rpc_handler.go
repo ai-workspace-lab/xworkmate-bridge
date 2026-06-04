@@ -21,16 +21,9 @@ func (s *Server) handleRequest(request shared.RPCRequest, notify func(map[string
 		return map[string]any{"status": "ok", "version": "0.7.0", "role": "acp-control-plane"}, nil
 
 	case "system.logs":
-		gatewayStatus := "disconnected"
-		if s.gateway != nil {
-			if s.gateway.HasConnectedSession() {
-				gatewayStatus = "connected"
-			}
-		}
-
 		return map[string]any{
 			"bridgeStatus":  "ok",
-			"gatewayStatus": gatewayStatus,
+			"gatewayStatus": s.gatewayStatusForSystemLogs(),
 			"bridgeLogs":    shared.GlobalLogBuffer.GetLines(),
 		}, nil
 
@@ -323,7 +316,7 @@ func (s *Server) handleDesktopMethod(ctx context.Context, method string, params 
 
 		cfg := desktop.PipelineConfig{
 			Display:  display,
-			Port:     5004,
+			Port:     desktop.DefaultRTPPort,
 			Width:    width,
 			Height:   height,
 			FPS:      fps,

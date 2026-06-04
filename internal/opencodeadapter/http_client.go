@@ -29,7 +29,7 @@ func newOpenCodeHTTPClient(command string, args []string) *opencodeHTTPClient {
 		command: strings.TrimSpace(command),
 		args:    append([]string(nil), args...),
 		baseURL: "http://127.0.0.1:38993",
-		client:  &http.Client{Timeout: 5 * time.Minute},
+		client:  shared.NewHTTPClient(5 * time.Minute),
 	}
 }
 

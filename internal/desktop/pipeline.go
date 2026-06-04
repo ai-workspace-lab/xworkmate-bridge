@@ -11,6 +11,15 @@ import (
 	"time"
 )
 
+const DefaultRTPPort = 5004
+
+func normalizeRTPPort(port int) int {
+	if port <= 0 {
+		return DefaultRTPPort
+	}
+	return port
+}
+
 // PipelineManager manages the screen capture process lifecycle
 type PipelineManager struct {
 	cmd       *exec.Cmd
@@ -49,9 +58,7 @@ func (pm *PipelineManager) Start(cfg PipelineConfig) error {
 			cfg.Display = ":0.0"
 		}
 	}
-	if cfg.Port <= 0 {
-		cfg.Port = 5004
-	}
+	cfg.Port = normalizeRTPPort(cfg.Port)
 	if cfg.Width <= 0 {
 		cfg.Width = 1280
 	}
@@ -74,8 +81,7 @@ func (pm *PipelineManager) Start(cfg PipelineConfig) error {
 	pm.cancel = cancel
 
 	cmd := exec.CommandContext(ctx, tool, args...)
-	// Set X11 display environment variable
-	cmd.Env = append(os.Environ(), "DISPLAY="+cfg.Display)
+	cmd.Env = desktopCommandEnv(cfg.Display)
 
 	// Capture stdout/stderr for logging
 	cmd.Stderr = os.Stderr
@@ -189,7 +195,7 @@ func (pm *PipelineManager) buildGStreamer(cfg PipelineConfig) (string, []string,
 	pipelineStr := strings.Join(pipelineParts, " ! ")
 	args := []string{"-v"}
 	args = append(args, strings.Split(pipelineStr, " ")...)
-	
+
 	var cleanArgs []string
 	for _, arg := range args {
 		trimmed := strings.TrimSpace(arg)
@@ -223,6 +229,7 @@ func (pm *PipelineManager) buildFFmpeg(cfg PipelineConfig) (string, []string, er
 			"-c:v", "libx264",
 			"-preset", "ultrafast",
 			"-tune", "zerolatency",
+			"-threads", "0",
 			"-g", "30",
 		)
 	}
