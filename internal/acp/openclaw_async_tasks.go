@@ -484,6 +484,7 @@ func (o *SessionOrchestrator) completeOpenClawTask(
 	artifactPayload := o.openClawArtifactExport(
 		record.GatewayProviderID,
 		record.ChatParams,
+		record.ArtifactContract,
 		record.RunID,
 		record.ArtifactSinceUnixMs,
 		record.PreparedArtifact,
@@ -493,6 +494,7 @@ func (o *SessionOrchestrator) completeOpenClawTask(
 	snapshotPayload := o.openClawArtifactCollectAndSnapshot(
 		record.GatewayProviderID,
 		record.ChatParams,
+		record.ArtifactContract,
 		record.RunID,
 		record.ArtifactSinceUnixMs,
 		record.PreparedArtifact,

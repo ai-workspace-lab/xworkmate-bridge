@@ -707,7 +707,8 @@ func openClawArtifactContractForParams(params map[string]any, chatParams map[str
 		message = openClawCurrentTurnMessage(params)
 	}
 	lowerMessage := strings.ToLower(message)
-	expectedDirs := normalizeOpenClawDirList(shared.ListArg(metadata, "expectedArtifactDirs"))
+	contract := shared.AsMap(metadata["xworkmateTaskArtifactContract"])
+	expectedDirs := normalizeOpenClawDirList(shared.ListArg(contract, "expectedArtifactDirs"))
 	complex := taskLoadClass == "complex_long_chain_task" || isOpenClawLongArtifactTask(lowerMessage)
 	return openClawArtifactContract{
 		TaskLoadClass:        taskLoadClass,
@@ -754,17 +755,6 @@ func openClawChatSendParamsWithSessionKey(
 		"sessionKey":     sessionKey,
 		"message":        message,
 		"idempotencyKey": turnID,
-	}
-	if expectedDirs, ok := params["expectedArtifactDirs"]; ok {
-		chatParams["expectedArtifactDirs"] = expectedDirs
-	} else if metadata := shared.AsMap(params["metadata"]); len(metadata) > 0 {
-		if expectedDirs, ok := metadata["expectedArtifactDirs"]; ok {
-			chatParams["expectedArtifactDirs"] = expectedDirs
-		} else if contract := shared.AsMap(metadata["xworkmateTaskArtifactContract"]); len(contract) > 0 {
-			if expectedDirs, ok := contract["expectedArtifactDirs"]; ok {
-				chatParams["expectedArtifactDirs"] = expectedDirs
-			}
-		}
 	}
 	attachments := openClawNonEmptyPathAttachments(params)
 	inlineAttachments, rpcErr := materializeOpenClawInlineAttachments(params, turnID)
@@ -1194,6 +1184,7 @@ func fallbackOpenClawSessionKey(params map[string]any, turnID string) string {
 func (o *SessionOrchestrator) openClawArtifactExport(
 	gatewayProvider string,
 	chatParams map[string]any,
+	artifactContract openClawArtifactContract,
 	runID string,
 	sinceUnixMs int64,
 	preparedArtifact *openClawPreparedArtifactScope,
@@ -1214,8 +1205,8 @@ func (o *SessionOrchestrator) openClawArtifactExport(
 	if preparedArtifact != nil && strings.TrimSpace(preparedArtifact.ArtifactScope) != "" {
 		exportParams["artifactScope"] = strings.TrimSpace(preparedArtifact.ArtifactScope)
 	}
-	if expectedDirs, ok := chatParams["expectedArtifactDirs"]; ok {
-		exportParams["expectedArtifactDirs"] = expectedDirs
+	if len(artifactContract.ExpectedArtifactDirs) > 0 {
+		exportParams["expectedArtifactDirs"] = append([]string(nil), artifactContract.ExpectedArtifactDirs...)
 	}
 	payload := o.openClawArtifactExportRequest(gatewayProvider, exportParams, notify)
 	return payload
@@ -1224,6 +1215,7 @@ func (o *SessionOrchestrator) openClawArtifactExport(
 func (o *SessionOrchestrator) openClawArtifactCollectAndSnapshot(
 	gatewayProvider string,
 	chatParams map[string]any,
+	artifactContract openClawArtifactContract,
 	runID string,
 	sinceUnixMs int64,
 	preparedArtifact *openClawPreparedArtifactScope,
@@ -1242,8 +1234,8 @@ func (o *SessionOrchestrator) openClawArtifactCollectAndSnapshot(
 	if strings.TrimSpace(preparedArtifact.ArtifactScope) != "" {
 		snapshotParams["artifactScope"] = strings.TrimSpace(preparedArtifact.ArtifactScope)
 	}
-	if expectedDirs, ok := chatParams["expectedArtifactDirs"]; ok {
-		snapshotParams["expectedArtifactDirs"] = expectedDirs
+	if len(artifactContract.ExpectedArtifactDirs) > 0 {
+		snapshotParams["expectedArtifactDirs"] = append([]string(nil), artifactContract.ExpectedArtifactDirs...)
 	}
 	snapshotResult := o.openClawGatewayRequestWithRetry(
 		gatewayProvider,
@@ -1802,9 +1794,11 @@ func (o *SessionOrchestrator) completeOpenClawScopedArtifactExport(
 	sessionKey := o.openClawSessionKey(params, turnID)
 	runID := strings.TrimSpace(shared.StringArg(result, "runId", turnID))
 	chatParams := map[string]any{"sessionKey": sessionKey}
+	artifactContract := openClawArtifactContractForParams(params, chatParams)
 	mergeOpenClawArtifactPayload(result, o.openClawArtifactExport(
 		gatewayProvider,
 		chatParams,
+		artifactContract,
 		runID,
 		0,
 		preparedArtifact,
