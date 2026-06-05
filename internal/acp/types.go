@@ -52,7 +52,6 @@ type QueuedTask struct {
 	StartedAt            time.Time
 	UpdatedAt            time.Time
 	DeadlineAt           time.Time
-	LastProbeAt          time.Time
 	ProgressStage        string
 	ProgressMessage      string
 	ProgressTerminal     bool
@@ -96,11 +95,11 @@ type Server struct {
 	orchestrator  *SessionOrchestrator
 	memoryService memory.Service
 
-	providerOrder    []string
-	gateway          *gatewayruntime.Manager
-	openClawGate     *openClawGatewayAdmissionGate
-	jobs             *jobManager
-	taskRouter       *distributedTaskRouter
+	providerOrder []string
+	gateway       *gatewayruntime.Manager
+	openClawGate  *openClawGatewayAdmissionGate
+	jobs          *jobManager
+	taskRouter    *distributedTaskRouter
 
 	// Legacy / Common
 	authService    interface{} // Minimal auth dependency

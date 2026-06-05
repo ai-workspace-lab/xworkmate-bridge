@@ -91,45 +91,71 @@ func (s *Server) handleRequest(request shared.RPCRequest, notify func(map[string
 }
 
 func (s *Server) handleTaskGet(ctx context.Context, params map[string]any, notify func(map[string]any)) map[string]any {
-	sess := s.findTaskSession(params)
-	if sess == nil {
-		sess = s.reassociateOpenClawTask(params)
+	gatewayProvider := strings.TrimSpace(shared.StringArg(params, "gatewayProviderId", ""))
+	if gatewayProvider == "" {
+		gatewayProvider = strings.TrimSpace(shared.StringArg(params, "resolvedGatewayProviderId", ""))
 	}
-	if sess == nil {
-		return map[string]any{"status": "not_found"}
+	if gatewayProvider == "" {
+		gatewayProvider = "openclaw"
 	}
-	waitForArtifacts := shared.BoolArg(shared.StringArg(params, "waitForArtifacts", ""), false)
-	if val, ok := params["waitForArtifacts"].(bool); ok {
-		waitForArtifacts = val
+	if rpcErr := ensureProductionGatewayConnected(s, gatewayProvider, notify); rpcErr != nil {
+		return map[string]any{
+			"ok":      false,
+			"status":  "not_found",
+			"code":    "GATEWAY_UNAVAILABLE",
+			"message": rpcErr.Message,
+		}
 	}
-	return s.orchestrator.probeOpenClawTask(ctx, sess, notify, waitForArtifacts)
+	result := s.gateway.RequestByMode(
+		gatewayProvider,
+		"xworkmate.tasks.get",
+		openClawTaskLookupParams(params),
+		30*time.Second,
+		notify,
+	)
+	if result.OK {
+		return shared.AsMap(result.Payload)
+	}
+	message := strings.TrimSpace(shared.StringArg(result.Error, "message", "openclaw native task lookup failed"))
+	code := strings.TrimSpace(shared.StringArg(result.Error, "code", "TASK_LOOKUP_FAILED"))
+	return map[string]any{
+		"ok":      false,
+		"status":  "not_found",
+		"code":    code,
+		"message": message,
+	}
 }
 
 func (s *Server) handleTaskCancel(ctx context.Context, params map[string]any, notify func(map[string]any)) map[string]any {
 	sess := s.findTaskSession(params)
-	if sess == nil {
-		sess = s.reassociateOpenClawTask(params)
+	runID := strings.TrimSpace(shared.StringArg(params, "runId", ""))
+	gatewayProvider := strings.TrimSpace(shared.StringArg(params, "gatewayProviderId", ""))
+	if gatewayProvider == "" {
+		gatewayProvider = strings.TrimSpace(shared.StringArg(params, "resolvedGatewayProviderId", ""))
 	}
-	if sess == nil {
-		return map[string]any{"accepted": false, "status": "not_found"}
+	if sess != nil {
+		sess.mu.Lock()
+		if runID == "" {
+			runID = sess.task.RunID
+		}
+		if gatewayProvider == "" {
+			gatewayProvider = sess.task.GatewayProviderID
+		}
+		sess.task.State = TaskStateCancelled
+		sess.task.UpdatedAt = time.Now()
+		sess.task.ProgressStage = "cancelled"
+		sess.task.ProgressMessage = "OpenClaw task cancelled"
+		sess.task.ProgressTerminal = true
+		if sess.openClaw != nil {
+			sess.openClaw.ProgressStage = "cancelled"
+			sess.openClaw.ProgressMessage = "OpenClaw task cancelled"
+		}
+		sess.mu.Unlock()
 	}
-	sess.mu.Lock()
-	gatewayProvider := sess.task.GatewayProviderID
-	runID := sess.task.RunID
-	sess.task.State = TaskStateCancelled
-	sess.task.UpdatedAt = time.Now()
-	sess.task.ProgressStage = "cancelled"
-	sess.task.ProgressMessage = "OpenClaw task cancelled"
-	sess.task.ProgressTerminal = true
-	if sess.openClaw != nil {
-		sess.openClaw.ProgressStage = "cancelled"
-		sess.openClaw.ProgressMessage = "OpenClaw task cancelled"
-		sess.openClaw.ProgressTerminal = true
+	if gatewayProvider == "" {
+		gatewayProvider = "openclaw"
 	}
-	snapshot := openClawSessionSnapshotLocked(sess)
-	sess.mu.Unlock()
-	s.orchestrator.releaseOpenClawAdmission(sess)
-	if strings.TrimSpace(gatewayProvider) != "" && strings.TrimSpace(runID) != "" && s.gateway != nil {
+	if strings.TrimSpace(runID) != "" && s.gateway != nil {
 		_ = s.gateway.RequestByMode(
 			gatewayProvider,
 			"agent.cancel",
@@ -138,8 +164,7 @@ func (s *Server) handleTaskCancel(ctx context.Context, params map[string]any, no
 			notify,
 		)
 	}
-	snapshot["accepted"] = true
-	return snapshot
+	return map[string]any{"accepted": strings.TrimSpace(runID) != "", "runId": runID}
 }
 
 func (s *Server) findTaskSession(params map[string]any) *session {
@@ -147,7 +172,6 @@ func (s *Server) findTaskSession(params map[string]any) *session {
 	threadID := strings.TrimSpace(shared.StringArg(params, "threadId", ""))
 	turnID := strings.TrimSpace(shared.StringArg(params, "turnId", ""))
 	runID := strings.TrimSpace(shared.StringArg(params, "runId", ""))
-	artifactScope := strings.TrimSpace(shared.StringArg(params, "artifactScope", ""))
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if sessionID != "" && s.sessions[sessionID] != nil {
@@ -160,8 +184,7 @@ func (s *Server) findTaskSession(params map[string]any) *session {
 		candidate.mu.Lock()
 		matches := (threadID != "" && candidate.threadID == threadID) ||
 			(turnID != "" && candidate.task.TurnID == turnID) ||
-			(runID != "" && candidate.task.RunID == runID) ||
-			(artifactScope != "" && candidate.task.ArtifactScope == artifactScope)
+			(runID != "" && candidate.task.RunID == runID)
 		candidate.mu.Unlock()
 		if matches {
 			return candidate
@@ -170,93 +193,22 @@ func (s *Server) findTaskSession(params map[string]any) *session {
 	return nil
 }
 
-func (s *Server) reassociateOpenClawTask(params map[string]any) *session {
-	runID := strings.TrimSpace(shared.StringArg(params, "runId", ""))
-	artifactScope := strings.TrimSpace(shared.StringArg(params, "artifactScope", ""))
-	if runID == "" || artifactScope == "" {
-		return nil
+func openClawTaskLookupParams(params map[string]any) map[string]any {
+	result := map[string]any{}
+	for _, key := range []string{
+		"appThreadKey",
+		"openclawSessionKey",
+		"runId",
+		"taskId",
+		"includeArtifacts",
+		"includeContent",
+		"expectedArtifactDirs",
+	} {
+		if value, ok := params[key]; ok {
+			result[key] = value
+		}
 	}
-	sessionID := strings.TrimSpace(shared.StringArg(params, "sessionId", ""))
-	threadID := strings.TrimSpace(shared.StringArg(params, "threadId", sessionID))
-	if sessionID == "" {
-		sessionID = threadID
-	}
-	if sessionID == "" {
-		sessionID = "openclaw:" + runID
-	}
-	if threadID == "" {
-		threadID = sessionID
-	}
-	turnID := strings.TrimSpace(shared.StringArg(params, "turnId", runID))
-	sessionKey := strings.TrimSpace(shared.StringArg(params, "openclawSessionKey", ""))
-	if sessionKey == "" {
-		sessionKey = openClawAgentMainSessionKey(strings.TrimSpace(shared.StringArg(params, "appThreadKey", threadID)))
-	}
-	gatewayProvider := strings.TrimSpace(shared.StringArg(params, "gatewayProviderId", "openclaw"))
-	now := time.Now()
-	prepared := &openClawPreparedArtifactScope{
-		ArtifactScope:             artifactScope,
-		ArtifactDirectory:         strings.TrimSpace(shared.StringArg(params, "artifactDirectory", "")),
-		RelativeArtifactDirectory: artifactScope,
-		ScopeKind:                 "task",
-		RemoteWorkingDirectory:    strings.TrimSpace(shared.StringArg(params, "remoteWorkingDirectory", "")),
-		RemoteWorkspaceRefKind:    strings.TrimSpace(shared.StringArg(params, "remoteWorkspaceRefKind", "")),
-	}
-	contract := openClawArtifactContract{
-		TaskLoadClass:    strings.TrimSpace(shared.StringArg(params, "taskLoadClass", "")),
-		ComplexLongChain: shared.BoolArg(shared.StringArg(params, "complexLongChain", ""), false),
-	}
-	taskLoadClass, budget := openClawTaskRuntimePolicy(params, map[string]any{"sessionKey": sessionKey}, contract)
-	if explicitBudget := shared.IntArg(shared.StringArg(params, "runtimeBudgetMinutes", ""), 0); explicitBudget > 0 {
-		budget = explicitBudget
-	}
-	sess := s.getOrCreateSession(sessionID, threadID)
-	sess.mu.Lock()
-	sess.provider = gatewayProvider
-	sess.target = "gateway"
-	sess.mode = "gateway"
-	sess.task = QueuedTask{
-		SessionID:            sessionID,
-		ThreadID:             threadID,
-		TurnID:               turnID,
-		RunID:                runID,
-		SessionKey:           sessionKey,
-		Provider:             gatewayProvider,
-		Target:               "gateway",
-		GatewayProviderID:    gatewayProvider,
-		State:                TaskStateRunning,
-		Kind:                 TaskKindGateway,
-		TaskLoadClass:        taskLoadClass,
-		ArtifactScope:        artifactScope,
-		ArtifactDirectory:    prepared.ArtifactDirectory,
-		RuntimeBudgetMinutes: budget,
-		StartedAt:            now,
-		DeadlineAt:           now.Add(time.Duration(budget) * time.Minute),
-		UpdatedAt:            now,
-		ProgressStage:        "reassociated",
-		ProgressMessage:      "OpenClaw task reassociated from task handle",
-	}
-	sess.openClaw = &OpenClawTaskRecord{
-		SessionID:            sessionID,
-		ThreadID:             threadID,
-		TurnID:               turnID,
-		RunID:                runID,
-		SessionKey:           sessionKey,
-		GatewayProviderID:    gatewayProvider,
-		TaskLoadClass:        taskLoadClass,
-		ArtifactSinceUnixMs:  0,
-		RuntimeBudgetMinutes: budget,
-		StartedAt:            now,
-		DeadlineAt:           now.Add(time.Duration(budget) * time.Minute),
-		ProgressStage:        "reassociated",
-		ProgressMessage:      "OpenClaw task reassociated from task handle",
-		ChatParams:           map[string]any{"sessionKey": sessionKey},
-		PreparedArtifact:     prepared,
-		ArtifactContract:     contract,
-	}
-	sess.lastResult = openClawRunningTaskResult(sess.openClaw)
-	sess.mu.Unlock()
-	return sess
+	return result
 }
 
 func (s *Server) cancelSession(ctx context.Context, sessionID string) {

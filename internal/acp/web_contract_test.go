@@ -40,20 +40,11 @@ func sseFirstResultEnvelope(t *testing.T, body string) map[string]any {
 func taskGetHTTPResult(t *testing.T, handler http.Handler, handle map[string]any) map[string]any {
 	t.Helper()
 	body := fmt.Sprintf(
-		`{"jsonrpc":"2.0","id":"task-get","method":"xworkmate.tasks.get","params":{"sessionId":%q,"threadId":%q,"turnId":%q,"runId":%q,"appThreadKey":%q,"openclawSessionKey":%q,"artifactScope":%q,"artifactDirectory":%q,"gatewayProviderId":%q,"runtimeBudgetMinutes":%q,"taskLoadClass":%q,"expectedArtifactExtensions":%s,"requiredArtifactExtensions":%s}}`,
-		shared.StringArg(handle, "sessionId", ""),
-		shared.StringArg(handle, "threadId", ""),
-		shared.StringArg(handle, "turnId", ""),
+		`{"jsonrpc":"2.0","id":"task-get","method":"xworkmate.tasks.get","params":{"runId":%q,"appThreadKey":%q,"openclawSessionKey":%q,"gatewayProviderId":%q,"includeArtifacts":true}}`,
 		shared.StringArg(handle, "runId", ""),
 		shared.StringArg(handle, "appThreadKey", ""),
 		shared.StringArg(handle, "openclawSessionKey", ""),
-		shared.StringArg(handle, "artifactScope", ""),
-		shared.StringArg(handle, "artifactDirectory", ""),
 		shared.StringArg(handle, "resolvedGatewayProviderId", "openclaw"),
-		shared.StringArg(handle, "runtimeBudgetMinutes", ""),
-		shared.StringArg(handle, "taskLoadClass", ""),
-		jsonArrayString(t, shared.ListArg(handle, "expectedArtifactExtensions")),
-		jsonArrayString(t, shared.ListArg(handle, "requiredArtifactExtensions")),
 	)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/acp/rpc", strings.NewReader(body))
@@ -317,7 +308,7 @@ func TestHTTPHandlerGatewayOpenClawReturnsRunningEnvelopeAndDone(t *testing.T) {
 	}
 }
 
-func TestHTTPHandlerGatewayOpenClawAdmissionQueuesExcessConcurrentSSE(t *testing.T) {
+func TestHTTPHandlerGatewayOpenClawAdmissionReleasesAfterAcceptedSSE(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
 	gateway.agentWaitDelayMs.Store(1500)
@@ -376,21 +367,13 @@ func TestHTTPHandlerGatewayOpenClawAdmissionQueuesExcessConcurrentSSE(t *testing
 	}
 	close(start)
 	waitForOpenClawGatewayCount(t, func() int { return gateway.ChatSendCount() }, 1)
-	time.Sleep(75 * time.Millisecond)
-	if got := gateway.ChatSendCount(); got != 1 {
-		t.Fatalf("expected admission gate to hold queued chat.send while one is active, got %d", got)
-	}
 	wg.Wait()
 	close(results)
 
-	var sawQueued bool
 	var runningHandleCount int
 	for item := range results {
 		if item.err != nil {
 			t.Fatalf("concurrent request failed: %v", item.err)
-		}
-		if strings.Contains(item.body, `"event":"queued"`) {
-			sawQueued = true
 		}
 		envelope := sseFirstResultEnvelope(t, item.body)
 		result := shared.AsMap(envelope["result"])
@@ -398,14 +381,11 @@ func TestHTTPHandlerGatewayOpenClawAdmissionQueuesExcessConcurrentSSE(t *testing
 			runningHandleCount += 1
 		}
 	}
-	if !sawQueued {
-		t.Fatalf("expected one queued session.update event")
-	}
 	if runningHandleCount != 2 {
 		t.Fatalf("expected both requests to return running handles, got %d", runningHandleCount)
 	}
 	if got := gateway.ChatSendCount(); got != 2 {
-		t.Fatalf("expected queued request to run after a slot releases, got %d chat.send calls", got)
+		t.Fatalf("expected admission to release after accepted native chat.send, got %d chat.send calls", got)
 	}
 }
 
@@ -530,12 +510,12 @@ func TestHTTPHandlerGatewayOpenClawHandlesFiveConcurrentE2ECases(t *testing.T) {
 	if got := gateway.ChatSendCount(); got != expectedGatewayTurns {
 		t.Fatalf("expected five primary chat.send calls without model repair turns, got %d", got)
 	}
-	if got := gateway.AgentWaitCount(); got != expectedGatewayTurns {
-		t.Fatalf("expected five primary agent.wait calls without model repair turns, got %d", got)
+	if got := gateway.AgentWaitCount(); got != 0 {
+		t.Fatalf("expected task polling to use native task-registry without Bridge-owned agent.wait, got %d", got)
 	}
 }
 
-func TestHTTPHandlerGatewayOpenClawAdmissionRejectsWhenQueueFull(t *testing.T) {
+func TestHTTPHandlerGatewayOpenClawAdmissionDoesNotHoldAcceptedNativeTasks(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
 	gateway.agentWaitDelayMs.Store(300)
@@ -595,14 +575,13 @@ func TestHTTPHandlerGatewayOpenClawAdmissionRejectsWhenQueueFull(t *testing.T) {
 		t.Fatalf("read second response: %v", err)
 	}
 	bodyText := string(body)
-	if !strings.Contains(bodyText, openClawGatewayBusyErrorCode) {
-		t.Fatalf("expected busy error, got %s", bodyText)
+	envelope := sseFirstResultEnvelope(t, bodyText)
+	result := shared.AsMap(envelope["result"])
+	if result["status"] != "running" {
+		t.Fatalf("expected second request to receive running handle after first native chat was accepted, got %s", bodyText)
 	}
-	if strings.Contains(bodyText, `"result"`) {
-		t.Fatalf("busy response must not return a result envelope: %s", bodyText)
-	}
-	if got := gateway.ChatSendCount(); got != 1 {
-		t.Fatalf("rejected request must not reach chat.send, got %d", got)
+	if got := gateway.ChatSendCount(); got != 2 {
+		t.Fatalf("accepted native task must not hold admission slot, got %d chat.send calls", got)
 	}
 	if err := <-firstDone; err != nil {
 		t.Fatalf("first request failed: %v", err)
@@ -720,8 +699,8 @@ func TestHTTPHandlerGatewayOpenClawFiltersRawGatewayEventsAndKeepsFinalResult(t 
 	if !strings.Contains(fmt.Sprint(result), openClawArtifactDownloadPath) {
 		t.Fatalf("expected normalized artifact download URL in task result, got %#v", result)
 	}
-	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.session.prepare", "chat.send", "agent.wait", "xworkmate.artifacts.export", "xworkmate.artifacts.collect-and-snapshot"}) {
-		t.Fatalf("expected artifact workflow methods to prepare before chat.send, got %#v", got)
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.session.prepare", "chat.send", "xworkmate.tasks.get"}) {
+		t.Fatalf("expected prepare, chat.send, then native task lookup, got %#v", got)
 	}
 }
 
@@ -766,8 +745,8 @@ func TestHTTPHandlerGatewayOpenClawForcesGatewayRouting(t *testing.T) {
 	if got := result["status"]; got != "completed" {
 		t.Fatalf("expected completed task result, got %#v", result)
 	}
-	if gateway.AgentWaitCount() != 1 {
-		t.Fatalf("expected one OpenClaw agent.wait, got %d", gateway.AgentWaitCount())
+	if gateway.AgentWaitCount() != 0 {
+		t.Fatalf("expected native task-registry lookup without Bridge-owned agent.wait, got %d", gateway.AgentWaitCount())
 	}
 }
 
