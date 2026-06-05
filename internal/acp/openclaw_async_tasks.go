@@ -445,6 +445,9 @@ func (o *SessionOrchestrator) completeOpenClawTask(
 	}
 	if output == "" {
 		output = firstNonEmptyString(waitPayload, "output", "message", "summary", "assistantText", "text")
+		if output == "" {
+			output = firstNonEmptyString(shared.AsMap(waitPayload["result"]), "output", "message", "summary", "assistantText", "text")
+		}
 	}
 	noDisplayableOutput := strings.TrimSpace(output) == ""
 	if output == "" {
@@ -471,6 +474,9 @@ func (o *SessionOrchestrator) completeOpenClawTask(
 		"runtimeBudgetMinutes":      record.RuntimeBudgetMinutes,
 	}
 	mergeOpenClawArtifactPayload(result, waitPayload)
+	if nestedResult := shared.AsMap(waitPayload["result"]); len(nestedResult) > 0 {
+		mergeOpenClawArtifactPayload(result, nestedResult)
+	}
 	if collector != nil {
 		mergeOpenClawArtifactPayload(result, collector.artifactPayload())
 	}

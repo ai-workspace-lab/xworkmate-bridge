@@ -56,19 +56,19 @@ func (s *Service) StartSession(sessionID string, cfg PipelineConfig, iceServers 
 	// 2. Initialize WebRTC server
 	webrtcSrv, err := NewWebRTCServer(injector)
 	if err != nil {
-		injector.Close()
+		_ = injector.Close()
 		return nil, fmt.Errorf("failed to create WebRTC server: %w", err)
 	}
 
 	if err := webrtcSrv.InitPeerConnection(iceServers); err != nil {
-		injector.Close()
+		_ = injector.Close()
 		return nil, fmt.Errorf("failed to init peer connection: %w", err)
 	}
 
 	// Start local UDP listener for GStreamer RTP packets
 	if err := webrtcSrv.StartRTPReceiver(cfg.Port); err != nil {
 		webrtcSrv.Close()
-		injector.Close()
+		_ = injector.Close()
 		return nil, fmt.Errorf("failed to start RTP receiver: %w", err)
 	}
 
@@ -76,7 +76,7 @@ func (s *Service) StartSession(sessionID string, cfg PipelineConfig, iceServers 
 	pipeline := NewPipelineManager()
 	if err := pipeline.Start(cfg); err != nil {
 		webrtcSrv.Close()
-		injector.Close()
+		_ = injector.Close()
 		return nil, fmt.Errorf("failed to start capture pipeline: %w", err)
 	}
 

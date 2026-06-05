@@ -59,13 +59,13 @@ func (w *WebRTCServer) InitPeerConnection(iceServers []string) error {
 		"xworkmate-desktop",
 	)
 	if err != nil {
-		pc.Close()
+		_ = pc.Close()
 		return fmt.Errorf("failed to create video track: %w", err)
 	}
 
 	_, err = pc.AddTrack(videoTrack)
 	if err != nil {
-		pc.Close()
+		_ = pc.Close()
 		return fmt.Errorf("failed to add video track: %w", err)
 	}
 

@@ -1336,18 +1336,6 @@ func applyOpenClawArtifactContractResult(result map[string]any, contract openCla
 	}
 }
 
-func openClawArtifactExtension(artifact map[string]any) string {
-	for _, key := range []string{"relativePath", "path", "label", "name"} {
-		value := strings.TrimSpace(shared.StringArg(artifact, key, ""))
-		if value == "" {
-			continue
-		}
-		if extension := strings.TrimPrefix(strings.ToLower(filepath.Ext(value)), "."); extension != "" {
-			return extension
-		}
-	}
-	return ""
-}
 
 func mergeOpenClawArtifactPayload(result map[string]any, source map[string]any) {
 	if result == nil || len(source) == 0 {

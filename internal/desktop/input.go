@@ -78,7 +78,7 @@ func (xi *XdotoolInjector) Start() error {
 	}
 
 	if err := cmd.Start(); err != nil {
-		stdin.Close()
+		_ = stdin.Close()
 		return fmt.Errorf("failed to start xdotool process: %w", err)
 	}
 
@@ -144,7 +144,7 @@ func (xi *XdotoolInjector) Inject(event InputEvent) error {
 			// Try to restart if pipe is broken
 			log.Printf("xdotool write error: %v. Attempting to restart injector.", err)
 			xi.isStarted = false
-			xi.stdin.Close()
+			_ = xi.stdin.Close()
 			if restartErr := xi.Start(); restartErr == nil {
 				_, _ = xi.stdin.Write([]byte(cmdStr))
 			}
