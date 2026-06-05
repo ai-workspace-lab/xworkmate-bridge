@@ -37,12 +37,12 @@ func TestCapabilitiesExposeBuiltInProductionProviderCatalog(t *testing.T) {
 	}
 
 	capabilities := response
-	if capabilities["multiAgent"] != true {
-		t.Fatalf("expected multiAgent capability to be enabled, got %#v", capabilities["multiAgent"])
+	if capabilities["multiAgent"] != false {
+		t.Fatalf("expected multiAgent capability to be disabled, got %#v", capabilities["multiAgent"])
 	}
 	nestedCapabilities := shared.AsMap(capabilities["capabilities"])
-	if nestedCapabilities["multi_agent"] != true {
-		t.Fatalf("expected nested multi_agent capability to be enabled, got %#v", nestedCapabilities["multi_agent"])
+	if nestedCapabilities["multi_agent"] != false {
+		t.Fatalf("expected nested multi_agent capability to be disabled, got %#v", nestedCapabilities["multi_agent"])
 	}
 	targets, ok := capabilities["availableExecutionTargets"].([]any)
 	if !ok {

@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -686,9 +685,6 @@ func openClawArtifactSystemProvenanceReceipt(
 			"- Do not report completion until requested final deliverables are present in artifactDirectory.",
 		)
 	}
-	if len(contract.ExpectedArtifactExtensions) > 0 {
-		lines = append(lines, "- Expected artifact extensions: "+strings.Join(contract.ExpectedArtifactExtensions, ", "))
-	}
 	return strings.Join(lines, "\n")
 }
 
@@ -699,42 +695,10 @@ func shellSingleQuote(value string) string {
 type openClawArtifactContract struct {
 	TaskLoadClass              string
 	ComplexLongChain           bool
-	ExpectedArtifactExtensions []string
+	ExpectedArtifactDirs       []string
 	SourceMessage              string
 }
 
-var (
-	openClawDottedExtensionPattern  = regexp.MustCompile(`(?i)\.([a-z0-9]{2,5})\b`)
-	openClawFormatTokenPattern      = regexp.MustCompile(`(?i)\b([a-z0-9]{2,5})\s*(?:格式|文件|产物|artifact|file|output)`)
-	openClawOutputTokenPattern      = regexp.MustCompile(`(?i)(?:输出|导出|生成|制作)\s*([a-z0-9]{2,5})`)
-	openClawKnownArtifactExtensions = map[string]bool{
-		"csv":  true,
-		"doc":  true,
-		"docx": true,
-		"epub": true,
-		"gif":  true,
-		"html": true,
-		"jpeg": true,
-		"jpg":  true,
-		"json": true,
-		"md":   true,
-		"mov":  true,
-		"mp3":  true,
-		"mp4":  true,
-		"pdf":  true,
-		"png":  true,
-		"ppt":  true,
-		"pptx": true,
-		"svg":  true,
-		"txt":  true,
-		"wav":  true,
-		"webm": true,
-		"webp": true,
-		"xls":  true,
-		"xlsx": true,
-		"zip":  true,
-	}
-)
 
 func openClawArtifactContractForParams(params map[string]any, chatParams map[string]any) openClawArtifactContract {
 	metadata := shared.AsMap(params["metadata"])
@@ -744,120 +708,31 @@ func openClawArtifactContractForParams(params map[string]any, chatParams map[str
 		message = openClawCurrentTurnMessage(params)
 	}
 	lowerMessage := strings.ToLower(message)
-	expected := normalizeOpenClawExtensionList(shared.ListArg(metadata, "expectedArtifactExtensions"))
-	if len(expected) == 0 {
-		expected = extractOpenClawExtensionMentions(lowerMessage)
-	}
-	expected = appendOpenClawUniqueExtensions(expected, inferOpenClawArtifactExtensions(lowerMessage, expected)...)
+	expectedDirs := normalizeOpenClawDirList(shared.ListArg(metadata, "expectedArtifactDirs"))
 	complex := taskLoadClass == "complex_long_chain_task" || isOpenClawLongArtifactTask(lowerMessage)
 	return openClawArtifactContract{
 		TaskLoadClass:              taskLoadClass,
 		ComplexLongChain:           complex,
-		ExpectedArtifactExtensions: expected,
+		ExpectedArtifactDirs:       expectedDirs,
 		SourceMessage:              message,
 	}
 }
 
-func appendOpenClawUniqueExtensions(base []string, values ...string) []string {
-	result := append([]string(nil), base...)
-	seen := map[string]bool{}
-	for _, extension := range result {
-		seen[extension] = true
+func normalizeOpenClawDirList(values []any) []string {
+	if len(values) == 0 {
+		return nil
 	}
-	for _, value := range values {
-		extension := normalizeOpenClawArtifactExtension(value)
-		if extension == "" || seen[extension] {
-			continue
-		}
-		seen[extension] = true
-		result = append(result, extension)
-	}
-	return result
-}
-
-func inferOpenClawArtifactExtensions(lowerMessage string, existing []string) []string {
-	result := make([]string, 0, 2)
-	hasExisting := func(extension string) bool {
-		for _, value := range existing {
-			if value == extension {
-				return true
-			}
-		}
-		return false
-	}
-	hasDocumentOutput := openClawMessageContainsAny(lowerMessage, []string{
-		"pdf", "ppt", "pptx", "powerpoint", "doc", "docx", "文档",
-	})
-	if openClawMessageContainsAny(lowerMessage, []string{
-		"video", "mp4", "remotion", "ffmpeg", "render", "视频", "渲染",
-	}) && !hasExisting("mp4") {
-		result = append(result, "mp4")
-	}
-	if len(existing) == 0 && !hasDocumentOutput && openClawMessageContainsAny(lowerMessage, []string{
-		"image", "images", "png", "jpg", "jpeg", "图片", "生成图", "配图", "插图", "多图片",
-	}) {
-		result = append(result, "png")
-	}
-	if len(existing) == 0 && openClawMessageContainsAny(lowerMessage, []string{
-		"文案", "小红书", "微信文章", "头条号", "copywriting", "资讯", "新闻", "报告", "news",
-	}) {
-		result = append(result, "md")
-	}
-	return result
-}
-
-func normalizeOpenClawExtensionList(values []any) []string {
 	result := make([]string, 0, len(values))
 	seen := map[string]bool{}
 	for _, value := range values {
-		extension := normalizeOpenClawArtifactExtension(fmt.Sprint(value))
-		if extension == "" || seen[extension] {
+		dir := strings.TrimSpace(fmt.Sprint(value))
+		if dir == "" || seen[dir] {
 			continue
 		}
-		seen[extension] = true
-		result = append(result, extension)
+		seen[dir] = true
+		result = append(result, dir)
 	}
 	return result
-}
-
-func extractOpenClawExtensionMentions(message string) []string {
-	result := make([]string, 0, 4)
-	add := func(value string) {
-		extension := normalizeOpenClawArtifactExtension(value)
-		if extension == "" {
-			return
-		}
-		for _, existing := range result {
-			if existing == extension {
-				return
-			}
-		}
-		result = append(result, extension)
-	}
-	for _, match := range openClawDottedExtensionPattern.FindAllStringSubmatch(message, -1) {
-		if len(match) > 1 {
-			add(match[1])
-		}
-	}
-	for _, match := range openClawFormatTokenPattern.FindAllStringSubmatch(message, -1) {
-		if len(match) > 1 {
-			add(match[1])
-		}
-	}
-	for _, match := range openClawOutputTokenPattern.FindAllStringSubmatch(message, -1) {
-		if len(match) > 1 {
-			add(match[1])
-		}
-	}
-	return result
-}
-
-func normalizeOpenClawArtifactExtension(value string) string {
-	extension := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(value)), ".")
-	if extension == "" || !openClawKnownArtifactExtensions[extension] {
-		return ""
-	}
-	return extension
 }
 
 func openClawChatSendParams(
@@ -1450,41 +1325,6 @@ func applyOpenClawArtifactContractResult(result map[string]any, contract openCla
 	if strings.TrimSpace(contract.TaskLoadClass) != "" {
 		result["taskLoadClass"] = contract.TaskLoadClass
 	}
-	if len(contract.ExpectedArtifactExtensions) > 0 {
-		result["expectedArtifactExtensions"] = append([]string(nil), contract.ExpectedArtifactExtensions...)
-	}
-	if !parseBool(result["success"]) || len(contract.ExpectedArtifactExtensions) == 0 {
-		return
-	}
-	remoteWorkingDirectory := strings.TrimSpace(shared.StringArg(result, "remoteWorkingDirectory", ""))
-	artifacts := extractArtifactPayloads(result, remoteWorkingDirectory)
-	found := map[string]bool{}
-	for _, artifact := range artifacts {
-		if extension := openClawArtifactExtension(artifact); extension != "" {
-			found[extension] = true
-		}
-	}
-	missing := make([]string, 0, len(contract.ExpectedArtifactExtensions))
-	for _, extension := range contract.ExpectedArtifactExtensions {
-		if !found[extension] {
-			missing = append(missing, extension)
-		}
-	}
-	if len(missing) == 0 {
-		return
-	}
-	message := openClawRequiredArtifactMissingText
-	if len(artifacts) > 0 {
-		message = "openclaw returned partial artifacts without required final deliverables"
-	}
-	result["success"] = false
-	result["status"] = string(TaskStateFailed)
-	result["code"] = "OPENCLAW_REQUIRED_ARTIFACT_MISSING"
-	result["error"] = message
-	result["message"] = message
-	result["output"] = message
-	result["summary"] = message
-	result["missingArtifactExtensions"] = missing
 }
 
 func openClawArtifactExtension(artifact map[string]any) string {

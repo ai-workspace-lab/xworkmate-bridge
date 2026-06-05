@@ -98,7 +98,11 @@ func (s *Server) handleTaskGet(ctx context.Context, params map[string]any, notif
 	if sess == nil {
 		return map[string]any{"status": "not_found"}
 	}
-	return s.orchestrator.probeOpenClawTask(ctx, sess, notify)
+	waitForArtifacts := shared.BoolArg(shared.StringArg(params, "waitForArtifacts", ""), false)
+	if val, ok := params["waitForArtifacts"].(bool); ok {
+		waitForArtifacts = val
+	}
+	return s.orchestrator.probeOpenClawTask(ctx, sess, notify, waitForArtifacts)
 }
 
 func (s *Server) handleTaskCancel(ctx context.Context, params map[string]any, notify func(map[string]any)) map[string]any {
@@ -200,7 +204,7 @@ func (s *Server) reassociateOpenClawTask(params map[string]any) *session {
 	}
 	contract := openClawArtifactContract{
 		TaskLoadClass:              strings.TrimSpace(shared.StringArg(params, "taskLoadClass", "")),
-		ExpectedArtifactExtensions: normalizeOpenClawExtensionList(shared.ListArg(params, "expectedArtifactExtensions")),
+		ComplexLongChain:           shared.BoolArg(shared.StringArg(params, "complexLongChain", ""), false),
 	}
 	taskLoadClass, budget := openClawTaskRuntimePolicy(params, map[string]any{"sessionKey": sessionKey}, contract)
 	if explicitBudget := shared.IntArg(shared.StringArg(params, "runtimeBudgetMinutes", ""), 0); explicitBudget > 0 {

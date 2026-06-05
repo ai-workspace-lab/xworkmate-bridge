@@ -599,7 +599,7 @@ func TestProbeOpenClawTaskFailsAfterMaxAllowedSilentDuration(t *testing.T) {
 	}
 	sess.mu.Unlock()
 
-	result := orchestrator.probeOpenClawTask(context.Background(), sess, nil)
+	result := orchestrator.probeOpenClawTask(context.Background(), sess, nil, false)
 
 	if got := result["status"]; got != string(TaskStateFailed) {
 		t.Fatalf("expected failed status after silent duration, got %#v", result)

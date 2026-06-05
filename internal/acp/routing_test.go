@@ -562,7 +562,7 @@ func TestExecuteSessionTaskGatewayAutoConnectsLocalOpenClaw(t *testing.T) {
 	if gateway.ArtifactExportCount() != 1 {
 		t.Fatalf("expected one OpenClaw artifact export sync after run, got %d", gateway.ArtifactExportCount())
 	}
-	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "agent.wait", "xworkmate.artifacts.collect-and-snapshot", "xworkmate.artifacts.export"}) {
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "agent.wait", "xworkmate.artifacts.export", "xworkmate.artifacts.collect-and-snapshot"}) {
 		t.Fatalf("expected connect, artifact prepare, chat.send, agent.wait, then artifact export, got %#v", got)
 	}
 	client := gateway.LastConnectClient()
@@ -617,45 +617,6 @@ func TestOpenClawAgentWaitTimeoutUsesOneHourForLongPDFImageWork(t *testing.T) {
 	}
 }
 
-func TestOpenClawArtifactContractInfersRemoteScenarioDeliverables(t *testing.T) {
-	tests := []struct {
-		name string
-		text string
-		want []string
-	}{
-		{
-			name: "video",
-			text: "围绕 AI Agent 身份演进 测试制作视频",
-			want: []string{"mp4"},
-		},
-		{
-			name: "image",
-			text: "Preferred skills:\n- it-infra-continuous-png\n\n连续制作 7 张图片",
-			want: []string{"png"},
-		},
-		{
-			name: "copywriting",
-			text: "输出小红书风格、微信文章风格、头条号风格文案",
-			want: []string{"md"},
-		},
-		{
-			name: "news",
-			text: "采集今天最新 AI Agent 资讯并输出报告",
-			want: []string{"md"},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			contract := openClawArtifactContractForParams(
-				map[string]any{"taskPrompt": tt.text},
-				map[string]any{"message": tt.text},
-			)
-			if !slices.Equal(contract.ExpectedArtifactExtensions, tt.want) {
-				t.Fatalf("expected expected extensions %#v, got %#v", tt.want, contract.ExpectedArtifactExtensions)
-			}
-		})
-	}
-}
 
 func TestGatewayRequestForwardsOpenClawSkillsStatus(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
@@ -809,48 +770,6 @@ func TestExecuteSessionTaskGatewayNoDisplayableOutputFails(t *testing.T) {
 	}
 }
 
-func TestExecuteSessionTaskGatewayComplexArtifactContractAcceptsRequiredFinalArtifact(t *testing.T) {
-	gateway := newAcpFakeOpenClawGateway(t)
-	defer gateway.Close()
-
-	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
-	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
-
-	server := NewServer()
-	response, rpcErr := server.executeSessionTask(task{
-		req: shared.RPCRequest{
-			Method: "session.start",
-			Params: map[string]any{
-				"sessionId":        "session-openclaw-complex-pdf",
-				"threadId":         "thread-openclaw-complex-pdf",
-				"taskPrompt":       "make pdf artifact",
-				"workingDirectory": t.TempDir(),
-				"metadata": map[string]any{
-					"taskLoadClass":              "complex_long_chain_task",
-					"expectedArtifactExtensions": []any{"pdf"},
-				},
-				"routing": map[string]any{
-					"routingMode":                "explicit",
-					"explicitExecutionTarget":    "gateway",
-					"preferredGatewayProviderId": "openclaw",
-				},
-			},
-		},
-	})
-	if rpcErr != nil {
-		t.Fatalf("expected gateway response, got rpc error: %#v", rpcErr)
-	}
-	if got := response["success"]; got != true {
-		t.Fatalf("expected required PDF artifact to satisfy contract, got %#v", response)
-	}
-	artifacts := responseArtifactMaps(t, response)
-	if len(artifacts) != 1 || artifacts[0]["relativePath"] != "exports/final.pdf" {
-		t.Fatalf("expected final PDF artifact, got %#v", artifacts)
-	}
-	if got := response["expectedArtifactExtensions"]; fmt.Sprint(got) != "[pdf]" {
-		t.Fatalf("expected artifact extension diagnostics, got %#v", response)
-	}
-}
 
 func TestExecuteSessionTaskGatewayFailsArtifactContractAfterWaitFailure(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
@@ -1027,130 +946,12 @@ func TestExecuteSessionMessageGatewayUsesOpenClawChatSend(t *testing.T) {
 	if gateway.ArtifactExportCount() != 1 {
 		t.Fatalf("expected one OpenClaw artifact export sync after message run, got %d", gateway.ArtifactExportCount())
 	}
-	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "agent.wait", "xworkmate.artifacts.collect-and-snapshot", "xworkmate.artifacts.export"}) {
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "agent.wait", "xworkmate.artifacts.export", "xworkmate.artifacts.collect-and-snapshot"}) {
 		t.Fatalf("expected connect, artifact prepare, chat.send, agent.wait, then artifact export, got %#v", got)
 	}
 }
 
-func TestExecuteSessionTaskMultiAgentModes(t *testing.T) {
-	cases := []struct {
-		name      string
-		mode      string
-		maxTurns  int
-		wantSteps int
-	}{
-		{name: "sequence", mode: "sequence", wantSteps: 2},
-		{name: "parallel", mode: "parallel", wantSteps: 2},
-		{name: "race", mode: "race", wantSteps: 1},
-		{name: "conversation", mode: "conversation", maxTurns: 2, wantSteps: 2},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			server := NewServer()
-			opencodeProvider := newExternalSingleAgentProvider(t, "opencode", "opencode-output")
-			defer opencodeProvider.Close()
-			geminiProvider := newExternalSingleAgentProvider(t, "gemini", "gemini-output")
-			defer geminiProvider.Close()
-			setTestBridgeProvider(server, syncedProvider{
-				ProviderID: "opencode",
-				Label:      "OpenCode",
-				Endpoint:   opencodeProvider.URL,
-				Enabled:    true,
-			})
-			setTestBridgeProvider(server, syncedProvider{
-				ProviderID: "gemini",
-				Label:      "Gemini",
-				Endpoint:   geminiProvider.URL,
-				Enabled:    true,
-			})
 
-			routing := map[string]any{
-				"orchestrationMode": tc.mode,
-				"steps": []any{
-					map[string]any{"providerId": "opencode", "prompt": "first"},
-					map[string]any{"providerId": "gemini", "prompt": "second sees {{previousOutput}}"},
-				},
-			}
-			if tc.mode == "conversation" {
-				routing["maxTurns"] = tc.maxTurns
-				routing["participants"] = []any{"opencode", "gemini"}
-			}
-			response, rpcErr := server.executeSessionTask(task{
-				req: shared.RPCRequest{
-					Method: "session.start",
-					Params: map[string]any{
-						"sessionId":        "session-multi-" + tc.name,
-						"threadId":         "thread-multi-" + tc.name,
-						"taskPrompt":       "coordinate two agents",
-						"workingDirectory": t.TempDir(),
-						"multiAgent":       true,
-						"routing":          routing,
-					},
-				},
-			})
-			if rpcErr != nil {
-				t.Fatalf("expected multi-agent response, got rpc error: %#v", rpcErr)
-			}
-			if !parseBool(response["success"]) {
-				t.Fatalf("expected successful multi-agent response, got %#v", response)
-			}
-			if got := response["resolvedExecutionTarget"]; got != "multi-agent" {
-				t.Fatalf("expected multi-agent execution target, got %#v", response)
-			}
-			if got := response["orchestrationMode"]; got != tc.mode {
-				t.Fatalf("expected orchestration mode %q, got %#v", tc.mode, response)
-			}
-			steps := mustStepMaps(t, response["steps"])
-			if len(steps) != tc.wantSteps {
-				t.Fatalf("expected %d step results, got %#v", tc.wantSteps, steps)
-			}
-			if output := strings.TrimSpace(shared.StringArg(response, "output", "")); output == "" {
-				t.Fatalf("expected displayable multi-agent output, got %#v", response)
-			}
-		})
-	}
-}
-
-func TestExecuteSessionTaskMultiAgentProviderUnavailableIsResultFailure(t *testing.T) {
-	server := NewServer()
-	providerServer := newExternalSingleAgentProvider(t, "opencode", "opencode-output")
-	defer providerServer.Close()
-	setTestBridgeProvider(server, syncedProvider{
-		ProviderID: "opencode",
-		Label:      "OpenCode",
-		Endpoint:   providerServer.URL,
-		Enabled:    true,
-	})
-
-	response, rpcErr := server.executeSessionTask(task{
-		req: shared.RPCRequest{
-			Method: "session.start",
-			Params: map[string]any{
-				"sessionId":        "session-multi-missing",
-				"threadId":         "thread-multi-missing",
-				"taskPrompt":       "coordinate agents",
-				"workingDirectory": t.TempDir(),
-				"multiAgent":       true,
-				"routing": map[string]any{
-					"orchestrationMode": "parallel",
-					"steps": []any{
-						map[string]any{"providerId": "opencode", "prompt": "first"},
-						map[string]any{"providerId": "missing", "prompt": "second"},
-					},
-				},
-			},
-		},
-	})
-	if rpcErr != nil {
-		t.Fatalf("expected normalized failure result, got rpc error: %#v", rpcErr)
-	}
-	if parseBool(response["success"]) || response["status"] != "failed" {
-		t.Fatalf("expected failed multi-agent result, got %#v", response)
-	}
-	if !strings.Contains(strings.TrimSpace(shared.StringArg(response, "error", "")), "missing: provider unavailable") {
-		t.Fatalf("expected provider unavailable error, got %#v", response)
-	}
-}
 
 func TestInternalJobsSubmitCompletesAndReportsStats(t *testing.T) {
 	server := NewServer()
@@ -1685,7 +1486,7 @@ func TestExecuteSessionTaskGatewayExportsOpenClawArtifacts(t *testing.T) {
 	if got := shared.BoolArg(shared.StringArg(exportParams, "includeContent", ""), true); got {
 		t.Fatalf("expected OpenClaw artifact export to omit content, got %#v", exportParams)
 	}
-	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "agent.wait", "xworkmate.artifacts.collect-and-snapshot", "xworkmate.artifacts.export"}) {
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "agent.wait", "xworkmate.artifacts.export", "xworkmate.artifacts.collect-and-snapshot"}) {
 		t.Fatalf("expected connect, artifact prepare, chat.send, agent.wait, then artifact export, got %#v", got)
 	}
 }
@@ -1736,7 +1537,7 @@ func TestExecuteSessionTaskGatewayDoesNotTreatPromptTextAsArtifactContract(t *te
 	if got := shared.BoolArg(shared.StringArg(exportParams, "includeContent", ""), true); got {
 		t.Fatalf("expected latest workspace export to omit content, got %#v", exportParams)
 	}
-	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "agent.wait", "xworkmate.artifacts.collect-and-snapshot", "xworkmate.artifacts.export"}) {
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "agent.wait", "xworkmate.artifacts.export", "xworkmate.artifacts.collect-and-snapshot"}) {
 		t.Fatalf("expected connect, artifact prepare, chat.send, agent.wait, then artifact export, got %#v", got)
 	}
 }
@@ -1797,7 +1598,7 @@ func TestExecuteSessionTaskGatewayExportsWithActualOpenClawRunID(t *testing.T) {
 	if got := parsedDownloadURL.Query().Get("artifactScope"); got != "tasks/"+shared.StringArg(response, "sessionKey", "")+"/openclaw-run-actual" {
 		t.Fatalf("expected download URL to use actual OpenClaw artifact scope, got %q", got)
 	}
-	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "xworkmate.artifacts.prepare", "agent.wait", "xworkmate.artifacts.collect-and-snapshot", "xworkmate.artifacts.export"}) {
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "xworkmate.artifacts.prepare", "agent.wait", "xworkmate.artifacts.export", "xworkmate.artifacts.collect-and-snapshot"}) {
 		t.Fatalf("expected bridge to reprepare actual OpenClaw run before wait/export, got %#v", got)
 	}
 }
@@ -1948,7 +1749,7 @@ func TestExecuteSessionMessageGatewayDoesNotRewriteClaimedArtifactsWithoutGatewa
 	if gateway.ArtifactExportCount() != 1 {
 		t.Fatalf("expected one post-run artifact export sync, got %d", gateway.ArtifactExportCount())
 	}
-	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "agent.wait", "xworkmate.artifacts.collect-and-snapshot", "xworkmate.artifacts.export"}) {
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "agent.wait", "xworkmate.artifacts.export", "xworkmate.artifacts.collect-and-snapshot"}) {
 		t.Fatalf("expected connect, artifact prepare, chat.send, agent.wait, then artifact export, got %#v", got)
 	}
 }
@@ -1998,7 +1799,7 @@ func TestExecuteSessionMessageGatewayExportsArtifactsWithoutPromptHeuristic(t *t
 	if got := strings.TrimSpace(shared.StringArg(exportParams, "artifactScope", "")); got == "" {
 		t.Fatalf("expected bridge to export the prepared task artifact scope, got %#v", exportParams)
 	}
-	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "agent.wait", "xworkmate.artifacts.collect-and-snapshot", "xworkmate.artifacts.export"}) {
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "agent.wait", "xworkmate.artifacts.export", "xworkmate.artifacts.collect-and-snapshot"}) {
 		t.Fatalf("expected connect, artifact prepare, chat.send, agent.wait, then artifact export, got %#v", got)
 	}
 }
@@ -2665,46 +2466,6 @@ func TestExecuteSessionTaskGatewayAlwaysSyncsGatewayArtifactsAfterRun(t *testing
 	}
 }
 
-func TestExecuteSessionTaskGatewayFailsHallucinatedFileClaimsWithoutArtifacts(t *testing.T) {
-	gateway := newAcpFakeOpenClawGateway(t)
-	defer gateway.Close()
-
-	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
-	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
-
-	server := NewServer()
-	response, rpcErr := server.executeSessionTask(task{
-		req: shared.RPCRequest{
-			Method: "session.start",
-			Params: map[string]any{
-				"sessionId":        "session-openclaw-missing-files",
-				"threadId":         "thread-openclaw-missing-files",
-				"taskPrompt":       "输出 PPT PDF docx 文件 hallucinate-files",
-				"workingDirectory": t.TempDir(),
-				"routing": map[string]any{
-					"routingMode":                "explicit",
-					"explicitExecutionTarget":    "gateway",
-					"preferredGatewayProviderId": "openclaw",
-				},
-			},
-		},
-	})
-	if rpcErr != nil {
-		t.Fatalf("expected bridge response, got rpc error: %#v", rpcErr)
-	}
-	if success, _ := response["success"].(bool); success {
-		t.Fatalf("expected bridge to reject hallucinated file success without artifacts, got %#v", response)
-	}
-	if got := response["code"]; got != "OPENCLAW_REQUIRED_ARTIFACT_MISSING" {
-		t.Fatalf("expected required artifact failure code, got %#v", response)
-	}
-	if _, ok := response["artifacts"]; ok {
-		t.Fatalf("expected no artifacts when export returned none, got %#v", response["artifacts"])
-	}
-	if missing := fmt.Sprint(response["missingArtifactExtensions"]); missing == "[]" || strings.TrimSpace(missing) == "" {
-		t.Fatalf("expected missing extension diagnostics, got %#v", response)
-	}
-}
 
 func TestExtractArtifactPayloadsDoesNotScanRemoteDirectoryFallback(t *testing.T) {
 	root := t.TempDir()

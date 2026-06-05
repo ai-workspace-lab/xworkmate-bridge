@@ -82,15 +82,6 @@ func TestReassociateOpenClawTaskDerivesRuntimeBudgetWithoutExplicitBudget(t *tes
 			},
 			want: openClawShortTaskMinutes,
 		},
-		{
-			name: "required final artifact",
-			params: map[string]any{
-				"runId":                      "run-pdf",
-				"artifactScope":              "tasks/main/run-pdf",
-				"expectedArtifactExtensions": []any{"pdf"},
-			},
-			want: openClawLongTaskMinutes,
-		},
 	}
 
 	for _, tc := range cases {

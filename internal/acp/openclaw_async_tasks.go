@@ -75,7 +75,7 @@ func openClawTaskRuntimePolicy(params map[string]any, chatParams map[string]any,
 	}) {
 		return "complex_chain_task", openClawComplexTaskMinutes
 	}
-	if len(contract.ExpectedArtifactExtensions) > 0 || openClawMessageContainsAny(lower, []string{
+	if openClawMessageContainsAny(lower, []string{
 		"生成文件", "同步生成文件", "产物", "附件", "pdf", "docx", "ppt", "pptx", "markdown", ".md", "png", "jpg", "jpeg", "mp4",
 	}) || len(shared.ListArg(params, "attachments"))+len(shared.ListArg(params, "inlineAttachments")) >= 2 {
 		return "long_task", openClawLongTaskMinutes
@@ -105,10 +105,6 @@ func openClawRunningTaskResult(record *OpenClawTaskRecord) map[string]any {
 	}
 	if record.PreparedArtifact != nil {
 		applyOpenClawPreparedArtifactToResult(result, record.PreparedArtifact)
-	}
-
-	if len(record.ArtifactContract.ExpectedArtifactExtensions) > 0 {
-		result["expectedArtifactExtensions"] = append([]string(nil), record.ArtifactContract.ExpectedArtifactExtensions...)
 	}
 	return result
 }
@@ -168,7 +164,7 @@ func (o *SessionOrchestrator) startOpenClawTaskMonitor(sess *session) {
 				o.failOpenClawTask(sess, "TASK_SLA_EXPIRED", "OpenClaw task exceeded its runtime SLA")
 				return
 			}
-			o.probeOpenClawTask(context.Background(), sess, nil)
+			o.probeOpenClawTask(context.Background(), sess, nil, false)
 			sess.mu.Lock()
 			state = sess.task.State
 			sess.mu.Unlock()
@@ -243,7 +239,7 @@ func (o *SessionOrchestrator) failOpenClawTask(sess *session, code string, messa
 	return result
 }
 
-func (o *SessionOrchestrator) probeOpenClawTask(ctx context.Context, sess *session, notify func(map[string]any)) map[string]any {
+func (o *SessionOrchestrator) probeOpenClawTask(ctx context.Context, sess *session, notify func(map[string]any), waitForArtifacts bool) map[string]any {
 	if sess == nil {
 		return map[string]any{"status": "not_found"}
 	}
@@ -294,13 +290,17 @@ func (o *SessionOrchestrator) probeOpenClawTask(ctx context.Context, sess *sessi
 		}
 	}
 	waitStarted := time.Now()
+	waitParams := map[string]any{
+		"runId":     runID,
+		"timeoutMs": openClawTaskProbeTimeoutMs,
+	}
+	if waitForArtifacts {
+		waitParams["waitForArtifacts"] = true
+	}
 	waitResult := o.openClawGatewayRequestWithRetry(
 		gatewayProvider,
 		"agent.wait",
-		map[string]any{
-			"runId":     runID,
-			"timeoutMs": openClawTaskProbeTimeoutMs,
-		},
+		waitParams,
 		openClawTaskProbeTimeout,
 		notifyWithCollection,
 	)
@@ -475,15 +475,6 @@ func (o *SessionOrchestrator) completeOpenClawTask(
 		mergeOpenClawArtifactPayload(result, collector.artifactPayload())
 	}
 	applyOpenClawPreparedArtifactToResult(result, record.PreparedArtifact)
-	snapshotPayload := o.openClawArtifactCollectAndSnapshot(
-		record.GatewayProviderID,
-		record.ChatParams,
-		record.RunID,
-		record.ArtifactSinceUnixMs,
-		record.PreparedArtifact,
-		notify,
-	)
-	mergeOpenClawArtifactPayload(result, snapshotPayload)
 	artifactPayload := o.openClawArtifactExport(
 		record.GatewayProviderID,
 		record.ChatParams,
@@ -493,6 +484,15 @@ func (o *SessionOrchestrator) completeOpenClawTask(
 		notify,
 	)
 	mergeOpenClawArtifactPayload(result, artifactPayload)
+	snapshotPayload := o.openClawArtifactCollectAndSnapshot(
+		record.GatewayProviderID,
+		record.ChatParams,
+		record.RunID,
+		record.ArtifactSinceUnixMs,
+		record.PreparedArtifact,
+		notify,
+	)
+	mergeOpenClawArtifactPayload(result, snapshotPayload)
 	result[openClawArtifactExportAttemptedField] = true
 	exportedCount := openClawArtifactPayloadCount(result)
 	logOpenClawArtifactSync(record.GatewayProviderID, record.SessionKey, record.RunID, "export", record.PreparedArtifact != nil, exportedCount > 0, exportedCount == 0)
