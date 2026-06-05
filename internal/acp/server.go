@@ -51,7 +51,8 @@ func NewServer() *Server {
 			shared.EnvOrDefault("BRIDGE_AUTH_TOKEN", ""),
 			shared.EnvOrDefault("BRIDGE_REVIEW_AUTH_TOKEN", ""),
 		),
-		openClawGate: newOpenClawGatewayAdmissionGate(config),
+		openClawGate:     newOpenClawGatewayAdmissionGate(config),
+		openClawSessions: NewThreadSessionMapper(),
 		taskRouter: newDistributedTaskRouter(distributedTaskRouterConfig{
 			Config: config,
 			Token:  resolveDistributedTaskForwardToken(config),

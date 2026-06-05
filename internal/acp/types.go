@@ -96,11 +96,12 @@ type Server struct {
 	orchestrator  *SessionOrchestrator
 	memoryService memory.Service
 
-	providerOrder []string
-	gateway       *gatewayruntime.Manager
-	openClawGate  *openClawGatewayAdmissionGate
-	jobs          *jobManager
-	taskRouter    *distributedTaskRouter
+	providerOrder    []string
+	gateway          *gatewayruntime.Manager
+	openClawGate     *openClawGatewayAdmissionGate
+	openClawSessions *ThreadSessionMapper
+	jobs             *jobManager
+	taskRouter       *distributedTaskRouter
 
 	// Legacy / Common
 	authService    interface{} // Minimal auth dependency

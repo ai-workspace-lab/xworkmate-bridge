@@ -475,13 +475,21 @@ func (o *SessionOrchestrator) completeOpenClawTask(
 		mergeOpenClawArtifactPayload(result, collector.artifactPayload())
 	}
 	applyOpenClawPreparedArtifactToResult(result, record.PreparedArtifact)
+	snapshotPayload := o.openClawArtifactCollectAndSnapshot(
+		record.GatewayProviderID,
+		record.ChatParams,
+		record.RunID,
+		record.ArtifactSinceUnixMs,
+		record.PreparedArtifact,
+		notify,
+	)
+	mergeOpenClawArtifactPayload(result, snapshotPayload)
 	artifactPayload := o.openClawArtifactExport(
 		record.GatewayProviderID,
 		record.ChatParams,
 		record.RunID,
 		record.ArtifactSinceUnixMs,
 		record.PreparedArtifact,
-		output,
 		notify,
 	)
 	mergeOpenClawArtifactPayload(result, artifactPayload)

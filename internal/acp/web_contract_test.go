@@ -18,7 +18,6 @@ import (
 	"xworkmate-bridge/internal/shared"
 )
 
-
 func sseFirstResultEnvelope(t *testing.T, body string) map[string]any {
 	t.Helper()
 	for _, rawLine := range strings.Split(body, "\n") {
@@ -720,7 +719,7 @@ func TestHTTPHandlerGatewayOpenClawFiltersRawGatewayEventsAndKeepsFinalResult(t 
 	if !strings.Contains(fmt.Sprint(result), openClawArtifactDownloadPath) {
 		t.Fatalf("expected normalized artifact download URL in task result, got %#v", result)
 	}
-	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "agent.wait", "xworkmate.artifacts.export"}) {
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "agent.wait", "xworkmate.artifacts.collect-and-snapshot", "xworkmate.artifacts.export"}) {
 		t.Fatalf("expected artifact workflow methods to prepare before chat.send, got %#v", got)
 	}
 }

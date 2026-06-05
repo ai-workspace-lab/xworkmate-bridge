@@ -324,9 +324,9 @@ func (o *SessionOrchestrator) startOpenClawGatewayTask(
 			notify(update)
 		}
 	}
-	sessionKey := openClawSessionKey(params, turnID)
+	sessionKey := o.openClawSessionKey(params, turnID)
 	params = withOpenClawWritableWorkspace(params, sessionKey)
-	chatParams, rpcErr := openClawChatSendParams(params, turnID)
+	chatParams, rpcErr := openClawChatSendParamsWithSessionKey(params, turnID, sessionKey)
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
@@ -864,11 +864,18 @@ func openClawChatSendParams(
 	params map[string]any,
 	turnID string,
 ) (map[string]any, *shared.RPCError) {
+	return openClawChatSendParamsWithSessionKey(params, turnID, fallbackOpenClawSessionKey(params, turnID))
+}
+
+func openClawChatSendParamsWithSessionKey(
+	params map[string]any,
+	turnID string,
+	sessionKey string,
+) (map[string]any, *shared.RPCError) {
 	message := openClawCurrentTurnMessage(params)
 	if message == "" {
 		return nil, &shared.RPCError{Code: -32602, Message: "OPENCLAW_TASK_PROMPT_REQUIRED"}
 	}
-	sessionKey := openClawSessionKey(params, turnID)
 	chatParams := map[string]any{
 		"sessionKey":     sessionKey,
 		"message":        message,
@@ -1278,7 +1285,16 @@ func compactOpenClawTexts(texts []string) []string {
 	return result
 }
 
-func openClawSessionKey(params map[string]any, turnID string) string {
+func (o *SessionOrchestrator) openClawSessionKey(params map[string]any, turnID string) string {
+	threadID := strings.TrimSpace(shared.StringArg(params, "threadId", ""))
+	sessionID := strings.TrimSpace(shared.StringArg(params, "sessionId", ""))
+	if o != nil && o.server != nil && o.server.openClawSessions != nil {
+		return o.server.openClawSessions.OpenClawSessionID(threadID, sessionID)
+	}
+	return fallbackOpenClawSessionKey(params, turnID)
+}
+
+func fallbackOpenClawSessionKey(params map[string]any, turnID string) string {
 	for _, key := range []string{"threadId", "sessionId"} {
 		if value := strings.TrimSpace(shared.StringArg(params, key, "")); value != "" {
 			return value
@@ -1296,7 +1312,6 @@ func (o *SessionOrchestrator) openClawArtifactExport(
 	runID string,
 	sinceUnixMs int64,
 	preparedArtifact *openClawPreparedArtifactScope,
-	outputText string,
 	notify func(map[string]any),
 ) map[string]any {
 	sessionKey := strings.TrimSpace(shared.StringArg(chatParams, "sessionKey", ""))
@@ -1315,28 +1330,47 @@ func (o *SessionOrchestrator) openClawArtifactExport(
 		exportParams["artifactScope"] = strings.TrimSpace(preparedArtifact.ArtifactScope)
 	}
 	payload := o.openClawArtifactExportRequest(gatewayProvider, exportParams, notify)
-	if openClawArtifactPayloadCount(payload) > 0 {
-		return payload
-	}
-
-	fallbackScope := openClawArtifactScopeFromOutput(outputText, runID)
-	if fallbackScope != "" && fallbackScope != strings.TrimSpace(shared.StringArg(exportParams, "artifactScope", "")) {
-		fallbackParams := cloneMap(exportParams)
-		applyOpenClawArtifactScopeFallbackParams(fallbackParams, fallbackScope)
-		fallbackPayload := o.openClawArtifactExportRequest(gatewayProvider, fallbackParams, notify)
-		if openClawArtifactPayloadCount(fallbackPayload) > 0 {
-			return fallbackPayload
-		}
-	}
-	for _, fallbackScope := range openClawArtifactScopeVariants(strings.TrimSpace(shared.StringArg(exportParams, "artifactScope", ""))) {
-		fallbackParams := cloneMap(exportParams)
-		applyOpenClawArtifactScopeFallbackParams(fallbackParams, fallbackScope)
-		fallbackPayload := o.openClawArtifactExportRequest(gatewayProvider, fallbackParams, notify)
-		if openClawArtifactPayloadCount(fallbackPayload) > 0 {
-			return fallbackPayload
-		}
-	}
 	return payload
+}
+
+func (o *SessionOrchestrator) openClawArtifactCollectAndSnapshot(
+	gatewayProvider string,
+	chatParams map[string]any,
+	runID string,
+	sinceUnixMs int64,
+	preparedArtifact *openClawPreparedArtifactScope,
+	notify func(map[string]any),
+) map[string]any {
+	sessionKey := strings.TrimSpace(shared.StringArg(chatParams, "sessionKey", ""))
+	if sessionKey == "" || strings.TrimSpace(runID) == "" || preparedArtifact == nil {
+		return nil
+	}
+	snapshotParams := map[string]any{
+		"sessionKey":  sessionKey,
+		"runId":       strings.TrimSpace(runID),
+		"sinceUnixMs": sinceUnixMs,
+		"maxFiles":    64,
+	}
+	if strings.TrimSpace(preparedArtifact.ArtifactScope) != "" {
+		snapshotParams["artifactScope"] = strings.TrimSpace(preparedArtifact.ArtifactScope)
+	}
+	snapshotResult := o.openClawGatewayRequestWithRetry(
+		gatewayProvider,
+		"xworkmate.artifacts.collect-and-snapshot",
+		snapshotParams,
+		30*time.Second,
+		notify,
+	)
+	if snapshotResult.OK {
+		return shared.AsMap(snapshotResult.Payload)
+	}
+	message := strings.TrimSpace(shared.StringArg(snapshotResult.Error, "message", ""))
+	if message == "" {
+		message = "openclaw artifact snapshot unavailable"
+	}
+	return map[string]any{
+		"artifactWarnings": []any{message},
+	}
 }
 
 func (o *SessionOrchestrator) openClawArtifactExportRequest(
@@ -1360,72 +1394,6 @@ func (o *SessionOrchestrator) openClawArtifactExportRequest(
 	}
 	return map[string]any{
 		"artifactWarnings": []any{message},
-	}
-}
-
-func openClawArtifactScopeFromOutput(outputText string, runID string) string {
-	runID = strings.TrimSpace(runID)
-	if strings.TrimSpace(outputText) == "" || runID == "" {
-		return ""
-	}
-	for _, token := range strings.Fields(outputText) {
-		scope := openClawArtifactScopeFromOutputToken(token, runID)
-		if scope != "" {
-			return scope
-		}
-	}
-	return ""
-}
-
-func openClawArtifactScopeFromOutputToken(token string, runID string) string {
-	token = strings.Trim(token, " \t\r\n`'\".,;:()[]{}<>")
-	token = strings.ReplaceAll(token, "\\", "/")
-	index := strings.Index(token, "/tasks/")
-	if index < 0 {
-		return ""
-	}
-	segments := strings.Split(token[index+1:], "/")
-	if len(segments) < 4 || segments[0] != "tasks" {
-		return ""
-	}
-	sessionSegment := strings.TrimSpace(segments[1])
-	runSegment := strings.TrimSpace(segments[2])
-	relativeFile := safeOpenClawArtifactDownloadRelativePath(strings.Join(segments[3:], "/"))
-	if sessionSegment == "" || runSegment != runID || relativeFile == "" {
-		return ""
-	}
-	return "tasks/" + sessionSegment + "/" + runSegment
-}
-
-func openClawArtifactScopeVariants(scope string) []string {
-	scope = strings.TrimSpace(scope)
-	parts := strings.Split(scope, "/")
-	if len(parts) != 3 || parts[0] != "tasks" {
-		return nil
-	}
-	sessionSegment := strings.TrimSpace(parts[1])
-	runSegment := strings.TrimSpace(parts[2])
-	if sessionSegment == "" || runSegment == "" {
-		return nil
-	}
-	var variants []string
-	if strings.HasPrefix(sessionSegment, "draft-") {
-		variants = append(variants, "tasks/"+strings.Replace(sessionSegment, "draft-", "draft_", 1)+"/"+runSegment)
-	}
-	if strings.HasPrefix(sessionSegment, "draft_") {
-		variants = append(variants, "tasks/"+strings.Replace(sessionSegment, "draft_", "draft-", 1)+"/"+runSegment)
-	}
-	return variants
-}
-
-func applyOpenClawArtifactScopeFallbackParams(params map[string]any, scope string) {
-	if params == nil {
-		return
-	}
-	scope = strings.TrimSpace(scope)
-	params["artifactScope"] = scope
-	if sessionKey := openClawSessionKeyFromArtifactScope(scope); sessionKey != "" {
-		params["sessionKey"] = sessionKey
 	}
 }
 
@@ -1485,9 +1453,39 @@ func applyOpenClawArtifactContractResult(result map[string]any, contract openCla
 	if len(contract.ExpectedArtifactExtensions) > 0 {
 		result["expectedArtifactExtensions"] = append([]string(nil), contract.ExpectedArtifactExtensions...)
 	}
+	if !parseBool(result["success"]) || len(contract.ExpectedArtifactExtensions) == 0 {
+		return
+	}
+	remoteWorkingDirectory := strings.TrimSpace(shared.StringArg(result, "remoteWorkingDirectory", ""))
+	artifacts := extractArtifactPayloads(result, remoteWorkingDirectory)
+	found := map[string]bool{}
+	for _, artifact := range artifacts {
+		if extension := openClawArtifactExtension(artifact); extension != "" {
+			found[extension] = true
+		}
+	}
+	missing := make([]string, 0, len(contract.ExpectedArtifactExtensions))
+	for _, extension := range contract.ExpectedArtifactExtensions {
+		if !found[extension] {
+			missing = append(missing, extension)
+		}
+	}
+	if len(missing) == 0 {
+		return
+	}
+	message := openClawRequiredArtifactMissingText
+	if len(artifacts) > 0 {
+		message = "openclaw returned partial artifacts without required final deliverables"
+	}
+	result["success"] = false
+	result["status"] = string(TaskStateFailed)
+	result["code"] = "OPENCLAW_REQUIRED_ARTIFACT_MISSING"
+	result["error"] = message
+	result["message"] = message
+	result["output"] = message
+	result["summary"] = message
+	result["missingArtifactExtensions"] = missing
 }
-
-
 
 func openClawArtifactExtension(artifact map[string]any) string {
 	for _, key := range []string{"relativePath", "path", "label", "name"} {
@@ -1958,7 +1956,7 @@ func (o *SessionOrchestrator) completeOpenClawScopedArtifactExport(
 	if preparedArtifact == nil {
 		return
 	}
-	sessionKey := openClawSessionKey(params, turnID)
+	sessionKey := o.openClawSessionKey(params, turnID)
 	runID := strings.TrimSpace(shared.StringArg(result, "runId", turnID))
 	chatParams := map[string]any{"sessionKey": sessionKey}
 	mergeOpenClawArtifactPayload(result, o.openClawArtifactExport(
@@ -1967,7 +1965,6 @@ func (o *SessionOrchestrator) completeOpenClawScopedArtifactExport(
 		runID,
 		0,
 		preparedArtifact,
-		firstNonEmptyString(result, "output", "message", "summary", "assistantText", "text"),
 		nil,
 	))
 	o.server.decorateOpenClawArtifactDownloadURLs(result, sessionKey, runID)

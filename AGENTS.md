@@ -44,4 +44,4 @@ Notes:
 - Run `go vet` and ensure zero warnings before committing.
 - Run `go build ./...` and verify compilation succeeds after every refactor.
 - After removing a source file, verify that no remaining file imports it or references its exported symbols.
-- Do not modify `*_test.go` files. If a refactor breaks a test, adjust the production code to keep the test passing.
+- Do not modify `*_test.go` files just to hide a production regression. When a requested behavior or protocol contract changes, update the nearest tests first or in the same change, and keep the assertions tied to the new contract.
