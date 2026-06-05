@@ -471,8 +471,7 @@ func TestExecuteSessionTaskExplicitGatewayUsesResolvedGatewayProvider(t *testing
 	})
 	if rpcErr == nil {
 		t.Fatalf("expected gateway connectivity rpc error, got response: %v", response)
-	}
-	if rpcErr.Message == "GATEWAY_PROVIDER_REQUIRED" {
+	} else if rpcErr.Message == "GATEWAY_PROVIDER_REQUIRED" {
 		t.Fatalf("expected resolved gateway provider to be reused, got %q", rpcErr.Message)
 	}
 }
@@ -1213,8 +1212,7 @@ func TestExecuteSessionTaskGatewaySurfacesOpenClawChatSendError(t *testing.T) {
 	})
 	if rpcErr == nil {
 		t.Fatalf("expected OpenClaw chat.send error, got response: %#v", response)
-	}
-	if rpcErr.Code != -32002 || !strings.Contains(rpcErr.Message, "openclaw chat failed") {
+	} else if rpcErr.Code != -32002 || !strings.Contains(rpcErr.Message, "openclaw chat failed") {
 		t.Fatalf("expected surfaced chat.send failure, got %#v", rpcErr)
 	}
 	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send"}) {
@@ -1288,8 +1286,7 @@ func TestExecuteSessionTaskGatewayReturnsStructuredOpenClawSocketCloseAfterRetry
 	})
 	if rpcErr == nil {
 		t.Fatalf("expected OpenClaw socket close error, got response: %#v", response)
-	}
-	if rpcErr.Code != -32002 || !strings.Contains(rpcErr.Message, "OPENCLAW_GATEWAY_SOCKET_CLOSED") {
+	} else if rpcErr.Code != -32002 || !strings.Contains(rpcErr.Message, "OPENCLAW_GATEWAY_SOCKET_CLOSED") {
 		t.Fatalf("expected structured socket close failure, got %#v", rpcErr)
 	}
 	data := shared.AsMap(rpcErr.Data)
@@ -2369,8 +2366,7 @@ func TestExecuteSessionTaskGatewayRejectsOversizedInlineAttachmentBeforeChatSend
 	})
 	if rpcErr == nil {
 		t.Fatalf("expected oversized attachment rpc error, got response: %#v", response)
-	}
-	if !strings.Contains(rpcErr.Message, "OPENCLAW_ATTACHMENT_FILE_TOO_LARGE") {
+	} else if !strings.Contains(rpcErr.Message, "OPENCLAW_ATTACHMENT_FILE_TOO_LARGE") {
 		t.Fatalf("expected attachment size error, got %#v", rpcErr)
 	}
 	if gateway.ChatSendCount() != 0 {
@@ -2500,8 +2496,7 @@ func TestExecuteSessionTaskDefaultsExplicitGatewayToOpenClaw(t *testing.T) {
 	})
 	if rpcErr == nil {
 		t.Fatal("expected gateway connectivity error")
-	}
-	if rpcErr.Message == "GATEWAY_PROVIDER_REQUIRED" {
+	} else if rpcErr.Message == "GATEWAY_PROVIDER_REQUIRED" {
 		t.Fatalf("expected openclaw default from routing result, got %#v", rpcErr)
 	}
 }
@@ -3317,38 +3312,6 @@ func sameMethods(got []string, want []string) bool {
 	return true
 }
 
-func responseArtifactMaps(t *testing.T, response map[string]any) []map[string]any {
-	t.Helper()
-	if artifacts, ok := response["artifacts"].([]map[string]any); ok {
-		return artifacts
-	}
-	raw, ok := response["artifacts"].([]any)
-	if !ok {
-		t.Fatalf("expected artifacts payload, got %#v", response["artifacts"])
-	}
-	artifacts := make([]map[string]any, 0, len(raw))
-	for _, item := range raw {
-		artifacts = append(artifacts, shared.AsMap(item))
-	}
-	return artifacts
-}
-
-func mustStepMaps(t *testing.T, value any) []map[string]any {
-	t.Helper()
-	switch typed := value.(type) {
-	case []map[string]any:
-		return typed
-	case []any:
-		steps := make([]map[string]any, 0, len(typed))
-		for _, item := range typed {
-			steps = append(steps, shared.AsMap(item))
-		}
-		return steps
-	default:
-		t.Fatalf("expected step map list, got %#v", value)
-		return nil
-	}
-}
 
 func waitForCondition(t *testing.T, condition func() bool) {
 	t.Helper()
@@ -3500,8 +3463,7 @@ func TestExecuteSessionTaskKeepsRemoteWorkspaceHintOutOfLocalCWD(t *testing.T) {
 	sess := server.sessions["session-remote-hint"]
 	if sess == nil {
 		t.Fatal("expected session state to be retained")
-	}
-	if sess.control.RequestedWorkingDir != workspaceDir {
+	} else if sess.control.RequestedWorkingDir != workspaceDir {
 		t.Fatalf("expected local requested cwd %q, got %q", workspaceDir, sess.control.RequestedWorkingDir)
 	}
 	if sess.control.RemoteWorkingDirHint != "/owners/local/user/demo/threads/main" {
@@ -3530,8 +3492,7 @@ func TestExecuteSessionTaskRequiresRouting(t *testing.T) {
 	})
 	if rpcErr == nil {
 		t.Fatalf("expected routing-required error")
-	}
-	if rpcErr.Message != "ROUTING_REQUIRED" {
+	} else if rpcErr.Message != "ROUTING_REQUIRED" {
 		t.Fatalf("expected ROUTING_REQUIRED, got %#v", rpcErr)
 	}
 }
@@ -3566,8 +3527,7 @@ func TestExecuteSessionMessageMissingProviderStateReturnsContinuationUnavailable
 	})
 	if rpcErr == nil {
 		t.Fatalf("expected continuation unavailable error, got response %#v", response)
-	}
-	if rpcErr.Code != -32002 || !strings.Contains(rpcErr.Message, "SESSION_CONTINUATION_UNAVAILABLE") {
+	} else if rpcErr.Code != -32002 || !strings.Contains(rpcErr.Message, "SESSION_CONTINUATION_UNAVAILABLE") {
 		t.Fatalf("expected structured continuation error, got %#v", rpcErr)
 	}
 	data := shared.AsMap(rpcErr.Data)
@@ -3607,8 +3567,7 @@ func TestExecuteSessionTaskComplexRequestNoLongerPromotesToMultiAgent(t *testing
 	})
 	if rpcErr == nil {
 		t.Fatalf("expected gateway-not-connected error, got response %#v", response)
-	}
-	if strings.Contains(rpcErr.Message, "multi-agent") {
+	} else if strings.Contains(rpcErr.Message, "multi-agent") {
 		t.Fatalf("expected no multi-agent path, got rpc error: %v", rpcErr)
 	}
 }

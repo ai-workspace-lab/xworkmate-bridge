@@ -93,17 +93,18 @@ func TestReassociateOpenClawTaskDerivesRuntimeBudgetWithoutExplicitBudget(t *tes
 			sess := server.reassociateOpenClawTask(tc.params)
 			if sess == nil {
 				t.Fatal("expected reassociated session")
-			}
-			sess.mu.Lock()
-			gotTaskBudget := sess.task.RuntimeBudgetMinutes
-			gotRecordBudget := sess.openClaw.RuntimeBudgetMinutes
-			sess.mu.Unlock()
+			} else {
+				sess.mu.Lock()
+				gotTaskBudget := sess.task.RuntimeBudgetMinutes
+				gotRecordBudget := sess.openClaw.RuntimeBudgetMinutes
+				sess.mu.Unlock()
 
-			if gotTaskBudget != tc.want {
-				t.Fatalf("task RuntimeBudgetMinutes = %d, want %d", gotTaskBudget, tc.want)
-			}
-			if gotRecordBudget != tc.want {
-				t.Fatalf("record RuntimeBudgetMinutes = %d, want %d", gotRecordBudget, tc.want)
+				if gotTaskBudget != tc.want {
+					t.Fatalf("task RuntimeBudgetMinutes = %d, want %d", gotTaskBudget, tc.want)
+				}
+				if gotRecordBudget != tc.want {
+					t.Fatalf("record RuntimeBudgetMinutes = %d, want %d", gotRecordBudget, tc.want)
+				}
 			}
 		})
 	}
