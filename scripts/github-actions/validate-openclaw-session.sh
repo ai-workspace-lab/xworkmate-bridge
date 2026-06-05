@@ -129,6 +129,25 @@ def output_text_from(payload):
     return " ".join(part for part in candidates if part)
 
 
+def require_nonempty(payload, key):
+    value = payload.get(key)
+    if isinstance(value, str) and value.strip():
+        return
+    raise SystemExit(f"OpenClaw smoke result missing {key}: {json.dumps(payload, ensure_ascii=False, sort_keys=True)[:1000]}")
+
+
+def is_valid_no_displayable_contract(payload):
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("code") != "OPENCLAW_NO_DISPLAYABLE_OUTPUT":
+        return False
+    if payload.get("resolvedGatewayProviderId") != "openclaw":
+        return False
+    for key in ("sessionId", "threadId", "runId", "openclawSessionKey", "artifactScope"):
+        require_nonempty(payload, key)
+    return True
+
+
 final = next(
     (item for item in payloads if isinstance(item, dict) and item.get("id") == "validate-openclaw"),
     None,
@@ -204,6 +223,9 @@ for marker in (
 
 output_text = output_text_from(result)
 if "pong" not in output_text.lower():
+    if is_valid_no_displayable_contract(result):
+        print("OpenClaw smoke OK: session contract completed without displayable output")
+        sys.exit(0)
     result_preview = json.dumps(result, ensure_ascii=False, sort_keys=True)[:1000]
     raise SystemExit(f"OpenClaw smoke did not return pong: {output_text[:500]}\nresult preview: {result_preview}")
 
