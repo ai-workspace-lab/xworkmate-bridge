@@ -94,7 +94,8 @@ def terminal_result(payload):
     if not isinstance(payload, dict):
         return {}
     nested = payload.get("result")
-    if isinstance(nested, dict) and str(payload.get("status", "")).lower() in {
+    status = str(payload.get("status", "")).lower()
+    if isinstance(nested, dict) and nested and status in {
         "completed",
         "failed",
         "cancelled",
@@ -136,6 +137,45 @@ def require_nonempty(payload, key):
     raise SystemExit(f"OpenClaw smoke result missing {key}: {json.dumps(payload, ensure_ascii=False, sort_keys=True)[:1000]}")
 
 
+def first_nonempty(payload, *keys):
+    if not isinstance(payload, dict):
+        return ""
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def task_handle_from_payload(payload):
+    if not isinstance(payload, dict):
+        return {}
+    candidates = []
+    if isinstance(payload.get("result"), dict):
+        candidates.append(payload["result"])
+    if isinstance(payload.get("payload"), dict):
+        candidates.append(payload["payload"])
+    if isinstance(payload.get("params"), dict):
+        candidates.append(payload["params"])
+    candidates.append(payload)
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        if first_nonempty(candidate, "sessionId") and first_nonempty(candidate, "threadId") and (
+            first_nonempty(candidate, "turnId") or first_nonempty(candidate, "runId")
+        ):
+            return candidate
+    return {}
+
+
+def find_task_handle(payloads, final):
+    for payload in reversed(payloads):
+        handle = task_handle_from_payload(payload)
+        if handle:
+            return handle
+    return task_handle_from_payload(final)
+
+
 def is_valid_no_displayable_contract(payload):
     if not isinstance(payload, dict):
         return False
@@ -143,8 +183,12 @@ def is_valid_no_displayable_contract(payload):
         return False
     if payload.get("resolvedGatewayProviderId") != "openclaw":
         return False
-    for key in ("sessionId", "threadId", "runId", "openclawSessionKey", "artifactScope"):
+    for key in ("sessionId", "threadId", "runId", "artifactScope"):
         require_nonempty(payload, key)
+    if not first_nonempty(payload, "openclawSessionKey", "sessionKey"):
+        artifact_scope = first_nonempty(payload, "artifactScope")
+        if not artifact_scope.startswith("tasks/"):
+            raise SystemExit(f"OpenClaw smoke result missing session scope: {json.dumps(payload, ensure_ascii=False, sort_keys=True)[:1000]}")
     return True
 
 
@@ -158,11 +202,14 @@ if not payloads or payloads[-1].get("done") is not True:
     raise SystemExit("missing SSE done marker")
 
 result = terminal_result(final.get("result") or final.get("payload") or {})
-if result.get("status") == "running":
-    session_id = result.get("sessionId")
-    thread_id = result.get("threadId")
-    turn_id = result.get("turnId")
-    run_id = result.get("runId")
+handle = result
+if result.get("status") != "running":
+    handle = find_task_handle(payloads, final)
+if handle.get("status") == "running" or (not result and handle):
+    session_id = first_nonempty(handle, "sessionId")
+    thread_id = first_nonempty(handle, "threadId")
+    turn_id = first_nonempty(handle, "turnId")
+    run_id = first_nonempty(handle, "runId")
 
     deadline = time.time() + poll_timeout
     while time.time() < deadline:
@@ -192,7 +239,8 @@ if result.get("status") == "running":
                 poll_result = resp_data.get("result") or {}
                 status = poll_result.get("status")
                 if status in ("completed", "failed", "cancelled"):
-                    result = terminal_result(poll_result)
+                    terminal = terminal_result(poll_result)
+                    result = terminal if terminal else poll_result
                     final["result"] = poll_result
                     break
         except Exception as exc:
@@ -227,7 +275,8 @@ if "pong" not in output_text.lower():
         print("OpenClaw smoke OK: session contract completed without displayable output")
         sys.exit(0)
     result_preview = json.dumps(result, ensure_ascii=False, sort_keys=True)[:1000]
-    raise SystemExit(f"OpenClaw smoke did not return pong: {output_text[:500]}\nresult preview: {result_preview}")
+    payload_preview = json.dumps(payloads[:6], ensure_ascii=False, sort_keys=True)[:1500]
+    raise SystemExit(f"OpenClaw smoke did not return pong: {output_text[:500]}\nresult preview: {result_preview}\nSSE preview: {payload_preview}")
 
 print("OpenClaw smoke OK: pong received from session contract")
 PY
