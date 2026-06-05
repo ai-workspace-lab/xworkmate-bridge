@@ -330,7 +330,6 @@ func (o *SessionOrchestrator) startOpenClawGatewayTask(
 		return nil, rpcErr
 	}
 	artifactContract := openClawArtifactContractForParams(params, chatParams)
-	artifactSinceUnixMs := time.Now().Add(-1 * time.Second).UnixMilli()
 	preparedArtifact, prepareErr := o.openClawArtifactPrepare(
 		gatewayProvider,
 		params,
@@ -393,18 +392,14 @@ func (o *SessionOrchestrator) startOpenClawGatewayTask(
 		SessionKey:           sessionKey,
 		GatewayProviderID:    gatewayProvider,
 		TaskLoadClass:        taskLoadClass,
-		ArtifactSinceUnixMs:  artifactSinceUnixMs,
 		RuntimeBudgetMinutes: runtimeBudgetMinutes,
 		StartedAt:            startedAt,
 		DeadlineAt:           startedAt.Add(time.Duration(runtimeBudgetMinutes) * time.Minute),
 		ProgressStage:        "running",
 		ProgressMessage:      "OpenClaw task accepted",
-		ChatParams:           cloneMap(chatParams),
 		PreparedArtifact:     preparedArtifact,
-		ArtifactContract:     artifactContract,
 		ResolvedModel:        routing.Model,
 		ResolvedSkills:       append([]string(nil), routing.Skills...),
-		AdmissionRelease:     releaseAdmission,
 	}
 	sess := o.server.getOrCreateSession(sessionID, threadID)
 	sess.mu.Lock()
@@ -423,7 +418,9 @@ func (o *SessionOrchestrator) startOpenClawGatewayTask(
 	running := openClawRunningTaskResult(record)
 	sess.lastResult = cloneMap(running)
 	sess.mu.Unlock()
-	o.startOpenClawTaskMonitor(sess)
+	if releaseAdmission != nil {
+		releaseAdmission()
+	}
 	if notify != nil {
 		notify(shared.NotificationEnvelope("session.update", map[string]any{
 			"sessionId":            sessionID,
@@ -786,7 +783,12 @@ func normalizeOpenClawDirList(values []any) []string {
 	return result
 }
 
-
+func openClawChatSendParams(
+	params map[string]any,
+	turnID string,
+) (map[string]any, *shared.RPCError) {
+	return openClawChatSendParamsWithSessionKey(params, turnID, openClawAgentMainSessionKey(openClawAppThreadKey(params)))
+}
 
 func openClawChatSendParamsWithSessionKey(
 	params map[string]any,
@@ -1207,7 +1209,18 @@ func compactOpenClawTexts(texts []string) []string {
 }
 
 func (o *SessionOrchestrator) openClawSessionKey(params map[string]any, turnID string) string {
-	return strings.TrimSpace(shared.StringArg(params, "openclawSessionKey", ""))
+	if explicit := strings.TrimSpace(shared.StringArg(params, "openclawSessionKey", "")); explicit != "" {
+		return explicit
+	}
+	return openClawAgentMainSessionKey(openClawAppThreadKey(params))
+}
+
+func openClawAgentMainSessionKey(appThreadKey string) string {
+	appThreadKey = strings.TrimSpace(appThreadKey)
+	if appThreadKey == "" {
+		appThreadKey = "main"
+	}
+	return "agent:main:" + appThreadKey
 }
 
 func validateOpenClawAcceptedSessionKey(payload map[string]any, expectedSessionKey string) *shared.RPCError {
@@ -1232,8 +1245,6 @@ func validateOpenClawAcceptedSessionKey(payload map[string]any, expectedSessionK
 		},
 	}
 }
-
-
 
 func (o *SessionOrchestrator) openClawArtifactExport(
 	gatewayProvider string,
@@ -1332,14 +1343,6 @@ func (o *SessionOrchestrator) openClawArtifactExportRequest(
 	return map[string]any{
 		"artifactWarnings": []any{message},
 	}
-}
-
-func openClawSessionKeyFromArtifactScope(scope string) string {
-	parts := strings.Split(strings.TrimSpace(scope), "/")
-	if len(parts) != 3 || parts[0] != "tasks" {
-		return ""
-	}
-	return strings.TrimSpace(parts[1])
 }
 
 func guardOpenClawNoDisplayableResult(result map[string]any, noDisplayableOutput bool) {
