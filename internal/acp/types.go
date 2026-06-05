@@ -99,7 +99,6 @@ type Server struct {
 	providerOrder    []string
 	gateway          *gatewayruntime.Manager
 	openClawGate     *openClawGatewayAdmissionGate
-	openClawSessions *ThreadSessionMapper
 	jobs             *jobManager
 	taskRouter       *distributedTaskRouter
 

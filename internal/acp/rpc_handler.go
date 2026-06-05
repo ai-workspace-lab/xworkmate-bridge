@@ -182,16 +182,16 @@ func (s *Server) reassociateOpenClawTask(params map[string]any) *session {
 		sessionID = threadID
 	}
 	if sessionID == "" {
-		sessionID = strings.TrimSpace(shared.StringArg(params, "sessionKey", ""))
-	}
-	if sessionID == "" {
 		sessionID = "openclaw:" + runID
 	}
 	if threadID == "" {
 		threadID = sessionID
 	}
 	turnID := strings.TrimSpace(shared.StringArg(params, "turnId", runID))
-	sessionKey := strings.TrimSpace(shared.StringArg(params, "sessionKey", threadID))
+	sessionKey := strings.TrimSpace(shared.StringArg(params, "openclawSessionKey", ""))
+	if sessionKey == "" {
+		sessionKey = openClawAgentMainSessionKey(strings.TrimSpace(shared.StringArg(params, "appThreadKey", threadID)))
+	}
 	gatewayProvider := strings.TrimSpace(shared.StringArg(params, "gatewayProviderId", "openclaw"))
 	now := time.Now()
 	prepared := &openClawPreparedArtifactScope{

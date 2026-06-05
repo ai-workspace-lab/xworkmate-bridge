@@ -310,7 +310,7 @@ func TestSessionEmitsNormalizedChatRunPushEvents(t *testing.T) {
 		map[string]any{"seq": 7},
 		map[string]any{
 			"runId":      "run-1",
-			"sessionKey": "agent:main:main",
+			"sessionKey": "main",
 			"state":      "final",
 			"message": map[string]any{
 				"role": "assistant",

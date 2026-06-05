@@ -40,12 +40,13 @@ func sseFirstResultEnvelope(t *testing.T, body string) map[string]any {
 func taskGetHTTPResult(t *testing.T, handler http.Handler, handle map[string]any) map[string]any {
 	t.Helper()
 	body := fmt.Sprintf(
-		`{"jsonrpc":"2.0","id":"task-get","method":"xworkmate.tasks.get","params":{"sessionId":%q,"threadId":%q,"turnId":%q,"runId":%q,"sessionKey":%q,"artifactScope":%q,"artifactDirectory":%q,"gatewayProviderId":%q,"runtimeBudgetMinutes":%q,"taskLoadClass":%q,"expectedArtifactExtensions":%s,"requiredArtifactExtensions":%s}}`,
+		`{"jsonrpc":"2.0","id":"task-get","method":"xworkmate.tasks.get","params":{"sessionId":%q,"threadId":%q,"turnId":%q,"runId":%q,"appThreadKey":%q,"openclawSessionKey":%q,"artifactScope":%q,"artifactDirectory":%q,"gatewayProviderId":%q,"runtimeBudgetMinutes":%q,"taskLoadClass":%q,"expectedArtifactExtensions":%s,"requiredArtifactExtensions":%s}}`,
 		shared.StringArg(handle, "sessionId", ""),
 		shared.StringArg(handle, "threadId", ""),
 		shared.StringArg(handle, "turnId", ""),
 		shared.StringArg(handle, "runId", ""),
-		shared.StringArg(handle, "sessionKey", ""),
+		shared.StringArg(handle, "appThreadKey", ""),
+		shared.StringArg(handle, "openclawSessionKey", ""),
 		shared.StringArg(handle, "artifactScope", ""),
 		shared.StringArg(handle, "artifactDirectory", ""),
 		shared.StringArg(handle, "resolvedGatewayProviderId", "openclaw"),
@@ -719,7 +720,7 @@ func TestHTTPHandlerGatewayOpenClawFiltersRawGatewayEventsAndKeepsFinalResult(t 
 	if !strings.Contains(fmt.Sprint(result), openClawArtifactDownloadPath) {
 		t.Fatalf("expected normalized artifact download URL in task result, got %#v", result)
 	}
-	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "agent.wait", "xworkmate.artifacts.export", "xworkmate.artifacts.collect-and-snapshot"}) {
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.session.prepare", "chat.send", "agent.wait", "xworkmate.artifacts.export", "xworkmate.artifacts.collect-and-snapshot"}) {
 		t.Fatalf("expected artifact workflow methods to prepare before chat.send, got %#v", got)
 	}
 }

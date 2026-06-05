@@ -324,7 +324,7 @@ func (o *SessionOrchestrator) startOpenClawGatewayTask(
 		}
 	}
 	sessionKey := o.openClawSessionKey(params, turnID)
-	params = withOpenClawWritableWorkspace(params, sessionKey)
+	params = withOpenClawWritableWorkspace(params, openClawAppThreadKey(params))
 	chatParams, rpcErr := openClawChatSendParamsWithSessionKey(params, turnID, sessionKey)
 	if rpcErr != nil {
 		return nil, rpcErr
@@ -333,8 +333,10 @@ func (o *SessionOrchestrator) startOpenClawGatewayTask(
 	artifactSinceUnixMs := time.Now().Add(-1 * time.Second).UnixMilli()
 	preparedArtifact, prepareErr := o.openClawArtifactPrepare(
 		gatewayProvider,
+		params,
 		sessionKey,
 		turnID,
+		artifactContract,
 		notifyWithCollection,
 	)
 	if prepareErr != nil {
@@ -362,12 +364,17 @@ func (o *SessionOrchestrator) startOpenClawGatewayTask(
 		return nil, gatewayRPCError(sendResult.Error, "openclaw chat.send failed")
 	}
 	sendPayload := shared.AsMap(sendResult.Payload)
+	if rpcErr := validateOpenClawAcceptedSessionKey(sendPayload, sessionKey); rpcErr != nil {
+		return nil, rpcErr
+	}
 	runID := strings.TrimSpace(shared.StringArg(sendPayload, "runId", turnID))
 	if runID != turnID {
 		preparedArtifact, prepareErr = o.openClawArtifactPrepare(
 			gatewayProvider,
+			params,
 			sessionKey,
 			runID,
+			artifactContract,
 			notifyWithCollection,
 		)
 		if prepareErr != nil {
@@ -566,22 +573,22 @@ func openClawPreparedArtifactScopeFromPayload(payload map[string]any) *openClawP
 
 func (o *SessionOrchestrator) openClawArtifactPrepare(
 	gatewayProvider string,
+	params map[string]any,
 	sessionKey string,
 	runID string,
+	artifactContract openClawArtifactContract,
 	notify func(map[string]any),
 ) (*openClawPreparedArtifactScope, *shared.RPCError) {
 	sessionKey = strings.TrimSpace(sessionKey)
 	runID = strings.TrimSpace(runID)
 	if sessionKey == "" || runID == "" {
-		return nil, &shared.RPCError{Code: -32602, Message: "openclaw artifact prepare requires sessionKey and runId"}
+		return nil, &shared.RPCError{Code: -32602, Message: "openclaw artifact prepare requires openclawSessionKey and runId"}
 	}
+	prepareParams := openClawSessionPrepareParams(params, sessionKey, runID, artifactContract)
 	prepareResult := o.openClawGatewayRequestWithRetry(
 		gatewayProvider,
-		"xworkmate.artifacts.prepare",
-		map[string]any{
-			"sessionKey": sessionKey,
-			"runId":      runID,
-		},
+		"xworkmate.session.prepare",
+		prepareParams,
 		30*time.Second,
 		notify,
 	)
@@ -593,6 +600,50 @@ func (o *SessionOrchestrator) openClawArtifactPrepare(
 		return nil, &shared.RPCError{Code: -32002, Message: "openclaw artifact prepare returned no scoped artifact directory"}
 	}
 	return prepared, nil
+}
+
+func openClawSessionPrepareParams(params map[string]any, openClawSessionKey string, runID string, artifactContract openClawArtifactContract) map[string]any {
+	appThreadKey := openClawAppThreadKey(params)
+	result := map[string]any{
+		"schemaVersion":      1,
+		"appThreadKey":       appThreadKey,
+		"openclawSessionKey": strings.TrimSpace(openClawSessionKey),
+		"runId":              strings.TrimSpace(runID),
+		"requestId":          strings.TrimSpace(runID),
+		"externalTaskId":     strings.TrimSpace(runID),
+	}
+	if len(artifactContract.ExpectedArtifactDirs) > 0 {
+		result["expectedArtifactDirs"] = append([]string(nil), artifactContract.ExpectedArtifactDirs...)
+	}
+	if sessionID := strings.TrimSpace(shared.StringArg(params, "sessionId", "")); sessionID != "" {
+		result["sessionId"] = sessionID
+	}
+	if threadID := strings.TrimSpace(shared.StringArg(params, "threadId", "")); threadID != "" {
+		result["threadId"] = threadID
+	}
+	return result
+}
+
+func openClawAppThreadKey(params map[string]any) string {
+	if value := strings.TrimSpace(shared.StringArg(params, "appThreadKey", "")); value != "" {
+		return value
+	}
+	metadata := shared.AsMap(params["metadata"])
+	for _, key := range []string{"appThreadKey"} {
+		if value := strings.TrimSpace(shared.StringArg(metadata, key, "")); value != "" {
+			return value
+		}
+	}
+	contract := shared.AsMap(metadata["xworkmateTaskArtifactContract"])
+	if value := strings.TrimSpace(shared.StringArg(contract, "appThreadKey", "")); value != "" {
+		return value
+	}
+	for _, key := range []string{"threadId", "sessionId"} {
+		if value := strings.TrimSpace(shared.StringArg(params, key, "")); value != "" {
+			return value
+		}
+	}
+	return "main"
 }
 
 func applyOpenClawPreparedArtifactToResult(result map[string]any, prepared *openClawPreparedArtifactScope) {
@@ -775,14 +826,14 @@ func openClawChatSendParamsWithSessionKey(
 	return chatParams, nil
 }
 
-func withOpenClawWritableWorkspace(params map[string]any, sessionKey string) map[string]any {
+func withOpenClawWritableWorkspace(params map[string]any, appThreadKey string) map[string]any {
 	workingDirectory := strings.TrimSpace(shared.StringArg(params, "workingDirectory", ""))
 	remoteHint := strings.TrimSpace(shared.StringArg(params, "remoteWorkingDirectoryHint", ""))
 	ownerScoped := firstOwnerScopedWorkspace(workingDirectory, remoteHint)
 	if ownerScoped == "" {
 		return params
 	}
-	writable := openClawWritableWorkspaceForOwnerPath(ownerScoped, sessionKey)
+	writable := openClawWritableWorkspaceForOwnerPath(ownerScoped, appThreadKey)
 	if writable == "" || writable == ownerScoped {
 		return params
 	}
@@ -1161,12 +1212,44 @@ func compactOpenClawTexts(texts []string) []string {
 }
 
 func (o *SessionOrchestrator) openClawSessionKey(params map[string]any, turnID string) string {
-	threadID := strings.TrimSpace(shared.StringArg(params, "threadId", ""))
-	sessionID := strings.TrimSpace(shared.StringArg(params, "sessionId", ""))
-	if o != nil && o.server != nil && o.server.openClawSessions != nil {
-		return o.server.openClawSessions.OpenClawSessionID(threadID, sessionID)
+	if explicit := strings.TrimSpace(shared.StringArg(params, "openclawSessionKey", "")); explicit != "" {
+		return explicit
+	}
+	if appThreadKey := openClawAppThreadKey(params); appThreadKey != "" {
+		return openClawAgentMainSessionKey(appThreadKey)
 	}
 	return fallbackOpenClawSessionKey(params, turnID)
+}
+
+func openClawAgentMainSessionKey(appThreadKey string) string {
+	appThreadKey = strings.TrimSpace(appThreadKey)
+	if appThreadKey == "" {
+		return "main"
+	}
+	return appThreadKey
+}
+
+func validateOpenClawAcceptedSessionKey(payload map[string]any, expectedSessionKey string) *shared.RPCError {
+	actual := strings.TrimSpace(shared.StringArg(payload, "sessionKey", ""))
+	expected := strings.TrimSpace(expectedSessionKey)
+	if actual == "" || expected == "" || actual == expected {
+		return nil
+	}
+	return &shared.RPCError{
+		Code: -32002,
+		Message: fmt.Sprintf(
+			"OPENCLAW_SESSION_MISMATCH: expected %s but OpenClaw accepted %s",
+			expected,
+			actual,
+		),
+		Data: map[string]any{
+			"code":                "OPENCLAW_SESSION_MISMATCH",
+			"expectedSessionKey":  expected,
+			"acceptedSessionKey":  actual,
+			"expectedOpenClawKey": expected,
+			"actualOpenClawKey":   actual,
+		},
+	}
 }
 
 func fallbackOpenClawSessionKey(params map[string]any, turnID string) string {
@@ -1195,12 +1278,12 @@ func (o *SessionOrchestrator) openClawArtifactExport(
 		return nil
 	}
 	exportParams := map[string]any{
-		"sessionKey":     sessionKey,
-		"runId":          strings.TrimSpace(runID),
-		"sinceUnixMs":    sinceUnixMs,
-		"maxFiles":       64,
-		"maxInlineBytes": 0,
-		"includeContent": false,
+		"openclawSessionKey": sessionKey,
+		"runId":              strings.TrimSpace(runID),
+		"sinceUnixMs":        sinceUnixMs,
+		"maxFiles":           64,
+		"maxInlineBytes":     0,
+		"includeContent":     false,
 	}
 	if preparedArtifact != nil && strings.TrimSpace(preparedArtifact.ArtifactScope) != "" {
 		exportParams["artifactScope"] = strings.TrimSpace(preparedArtifact.ArtifactScope)
@@ -1226,10 +1309,10 @@ func (o *SessionOrchestrator) openClawArtifactCollectAndSnapshot(
 		return nil
 	}
 	snapshotParams := map[string]any{
-		"sessionKey":  sessionKey,
-		"runId":       strings.TrimSpace(runID),
-		"sinceUnixMs": sinceUnixMs,
-		"maxFiles":    64,
+		"openclawSessionKey": sessionKey,
+		"runId":              strings.TrimSpace(runID),
+		"sinceUnixMs":        sinceUnixMs,
+		"maxFiles":           64,
 	}
 	if strings.TrimSpace(preparedArtifact.ArtifactScope) != "" {
 		snapshotParams["artifactScope"] = strings.TrimSpace(preparedArtifact.ArtifactScope)
