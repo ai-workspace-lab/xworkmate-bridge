@@ -35,10 +35,10 @@ type InstallApproval struct {
 }
 
 type ResolveResult struct {
-	ResolvedSkills []string
-	Candidates     []Candidate
-	Source         string
-	NeedsInstall   bool
+	ResolvedSkills   []string
+	Candidates       []Candidate
+	Source           string
+	NeedsInstall     bool
 	InstallRequestID string
 }
 
@@ -139,10 +139,10 @@ func Resolve(req ResolveRequest, finder Finder, installer Installer) ResolveResu
 	}
 
 	return ResolveResult{
-		Candidates:        fallback,
-		Source:            "find_skills",
-		NeedsInstall:      len(uninstalled) > 0,
-		InstallRequestID:  installRequestID,
+		Candidates:       fallback,
+		Source:           "find_skills",
+		NeedsInstall:     len(uninstalled) > 0,
+		InstallRequestID: installRequestID,
 	}
 }
 

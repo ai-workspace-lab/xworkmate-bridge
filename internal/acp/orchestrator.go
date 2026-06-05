@@ -693,12 +693,11 @@ func shellSingleQuote(value string) string {
 }
 
 type openClawArtifactContract struct {
-	TaskLoadClass              string
-	ComplexLongChain           bool
-	ExpectedArtifactDirs       []string
-	SourceMessage              string
+	TaskLoadClass        string
+	ComplexLongChain     bool
+	ExpectedArtifactDirs []string
+	SourceMessage        string
 }
-
 
 func openClawArtifactContractForParams(params map[string]any, chatParams map[string]any) openClawArtifactContract {
 	metadata := shared.AsMap(params["metadata"])
@@ -711,10 +710,10 @@ func openClawArtifactContractForParams(params map[string]any, chatParams map[str
 	expectedDirs := normalizeOpenClawDirList(shared.ListArg(metadata, "expectedArtifactDirs"))
 	complex := taskLoadClass == "complex_long_chain_task" || isOpenClawLongArtifactTask(lowerMessage)
 	return openClawArtifactContract{
-		TaskLoadClass:              taskLoadClass,
-		ComplexLongChain:           complex,
-		ExpectedArtifactDirs:       expectedDirs,
-		SourceMessage:              message,
+		TaskLoadClass:        taskLoadClass,
+		ComplexLongChain:     complex,
+		ExpectedArtifactDirs: expectedDirs,
+		SourceMessage:        message,
 	}
 }
 
@@ -758,6 +757,14 @@ func openClawChatSendParamsWithSessionKey(
 	}
 	if expectedDirs, ok := params["expectedArtifactDirs"]; ok {
 		chatParams["expectedArtifactDirs"] = expectedDirs
+	} else if metadata := shared.AsMap(params["metadata"]); len(metadata) > 0 {
+		if expectedDirs, ok := metadata["expectedArtifactDirs"]; ok {
+			chatParams["expectedArtifactDirs"] = expectedDirs
+		} else if contract := shared.AsMap(metadata["xworkmateTaskArtifactContract"]); len(contract) > 0 {
+			if expectedDirs, ok := contract["expectedArtifactDirs"]; ok {
+				chatParams["expectedArtifactDirs"] = expectedDirs
+			}
+		}
 	}
 	attachments := openClawNonEmptyPathAttachments(params)
 	inlineAttachments, rpcErr := materializeOpenClawInlineAttachments(params, turnID)
@@ -1335,7 +1342,6 @@ func applyOpenClawArtifactContractResult(result map[string]any, contract openCla
 		result["taskLoadClass"] = contract.TaskLoadClass
 	}
 }
-
 
 func mergeOpenClawArtifactPayload(result map[string]any, source map[string]any) {
 	if result == nil || len(source) == 0 {

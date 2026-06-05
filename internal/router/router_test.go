@@ -132,8 +132,8 @@ func TestResolveComplexTaskNoLongerPromotesToMultiAgent(t *testing.T) {
 	}
 
 	result := resolver.Resolve(Request{
-		Prompt:              "analyze these files, review the output, and summarize multiple deliverables",
-		AvailableProviders:  []string{"codex"},
+		Prompt:             "analyze these files, review the output, and summarize multiple deliverables",
+		AvailableProviders: []string{"codex"},
 	})
 
 	if result.ResolvedExecutionTarget != ExecutionTargetSingleAgent {

@@ -78,7 +78,7 @@ func newProviderCompat(provider syncedProvider) ProviderCompat {
 		endpoint:   resolveSingleAgentForwardEndpoint(provider),
 		authHeader: provider.AuthorizationHeader,
 		category:   providerCategory(provider.ProviderID),
-		client: shared.NewHTTPClient(5 * time.Minute),
+		client:     shared.NewHTTPClient(5 * time.Minute),
 	}
 	switch provider.ProviderID {
 	case "gemini":

@@ -19,9 +19,9 @@ type rpcClient interface {
 }
 
 type initializeResult struct {
-	ProtocolVersion  int                    `json:"protocolVersion"`
-	AuthMethods      []map[string]any       `json:"authMethods"`
-	AgentCapabilities map[string]any        `json:"agentCapabilities"`
+	ProtocolVersion   int              `json:"protocolVersion"`
+	AuthMethods       []map[string]any `json:"authMethods"`
+	AgentCapabilities map[string]any   `json:"agentCapabilities"`
 }
 
 type stdioRPCClient struct {

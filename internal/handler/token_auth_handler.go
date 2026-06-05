@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"xworkmate-bridge/internal/shared"
 	"xworkmate-bridge/internal/service"
+	"xworkmate-bridge/internal/shared"
 )
 
 type TokenAuthHandler struct {

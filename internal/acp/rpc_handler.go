@@ -203,8 +203,8 @@ func (s *Server) reassociateOpenClawTask(params map[string]any) *session {
 		RemoteWorkspaceRefKind:    strings.TrimSpace(shared.StringArg(params, "remoteWorkspaceRefKind", "")),
 	}
 	contract := openClawArtifactContract{
-		TaskLoadClass:              strings.TrimSpace(shared.StringArg(params, "taskLoadClass", "")),
-		ComplexLongChain:           shared.BoolArg(shared.StringArg(params, "complexLongChain", ""), false),
+		TaskLoadClass:    strings.TrimSpace(shared.StringArg(params, "taskLoadClass", "")),
+		ComplexLongChain: shared.BoolArg(shared.StringArg(params, "complexLongChain", ""), false),
 	}
 	taskLoadClass, budget := openClawTaskRuntimePolicy(params, map[string]any{"sessionKey": sessionKey}, contract)
 	if explicitBudget := shared.IntArg(shared.StringArg(params, "runtimeBudgetMinutes", ""), 0); explicitBudget > 0 {

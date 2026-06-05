@@ -37,7 +37,7 @@ type RoutingResult struct {
 	Status            string   `json:"status"` // available, unavailable
 	UnavailableCode   string   `json:"unavailableCode,omitempty"`
 	UnavailableMsg    string   `json:"unavailableMessage,omitempty"`
-	
+
 	// Enhanced metadata for tests and advanced clients
 	SkillResolutionSource string `json:"skillResolutionSource,omitempty"`
 	NeedsSkillInstall     bool   `json:"needsSkillInstall,omitempty"`

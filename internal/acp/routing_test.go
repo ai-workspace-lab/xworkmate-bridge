@@ -616,7 +616,6 @@ func TestOpenClawAgentWaitTimeoutUsesOneHourForLongPDFImageWork(t *testing.T) {
 	}
 }
 
-
 func TestGatewayRequestForwardsOpenClawSkillsStatus(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
@@ -768,7 +767,6 @@ func TestExecuteSessionTaskGatewayNoDisplayableOutputFails(t *testing.T) {
 		t.Fatalf("expected one artifact export sync even when no displayable text is returned, got %d", gateway.ArtifactExportCount())
 	}
 }
-
 
 func TestExecuteSessionTaskGatewayFailsArtifactContractAfterWaitFailure(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
@@ -949,8 +947,6 @@ func TestExecuteSessionMessageGatewayUsesOpenClawChatSend(t *testing.T) {
 		t.Fatalf("expected connect, artifact prepare, chat.send, agent.wait, then artifact export, got %#v", got)
 	}
 }
-
-
 
 func TestInternalJobsSubmitCompletesAndReportsStats(t *testing.T) {
 	server := NewServer()
@@ -2462,7 +2458,6 @@ func TestExecuteSessionTaskGatewayAlwaysSyncsGatewayArtifactsAfterRun(t *testing
 	}
 }
 
-
 func TestExtractArtifactPayloadsDoesNotScanRemoteDirectoryFallback(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "stale.txt"), []byte("stale"), 0o644); err != nil {
@@ -3311,7 +3306,6 @@ func sameMethods(got []string, want []string) bool {
 	}
 	return true
 }
-
 
 func waitForCondition(t *testing.T, condition func() bool) {
 	t.Helper()

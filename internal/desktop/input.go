@@ -43,9 +43,9 @@ func NewXdotoolInjector(display string) *XdotoolInjector {
 		display = ":0.0"
 	}
 	return &XdotoolInjector{
-		display:  display,
-		width:    1280, // Default fallbacks
-		height:   720,
+		display: display,
+		width:   1280, // Default fallbacks
+		height:  720,
 	}
 }
 
