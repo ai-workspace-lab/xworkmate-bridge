@@ -350,7 +350,7 @@ func TestCodexCompatWaitsForTurnCompletedNotification(t *testing.T) {
 				if err := conn.WriteJSON(map[string]any{
 					"method": "turn/completed",
 					"params": map[string]any{
-						"threadId": "codex-thread-1",
+						"openclawSessionKey": "codex-thread-1", "threadId": "codex-thread-1",
 						"turn":     turn,
 					},
 				}); err != nil {
@@ -618,8 +618,8 @@ func TestProbeOpenClawTaskFailsAfterMaxAllowedSilentDuration(t *testing.T) {
 func TestTerminalOpenClawTaskRemovesInlineAttachmentDirectory(t *testing.T) {
 	workspace := t.TempDir()
 	turnID := "turn-inline-gc"
-	chatParams, rpcErr := openClawChatSendParams(map[string]any{
-		"threadId":         "thread-inline-gc",
+	params := map[string]any{
+		"openclawSessionKey": "thread-inline-gc", "threadId": "thread-inline-gc",
 		"taskPrompt":       "inspect uploaded file",
 		"workingDirectory": workspace,
 		"inlineAttachments": []any{
@@ -629,7 +629,8 @@ func TestTerminalOpenClawTaskRemovesInlineAttachmentDirectory(t *testing.T) {
 				"content":  "bm90ZQ==",
 			},
 		},
-	}, turnID)
+	}
+	chatParams, rpcErr := openClawChatSendParamsWithSessionKey(params, turnID, "thread-inline-gc")
 	if rpcErr != nil {
 		t.Fatalf("expected chat params, got rpc error: %#v", rpcErr)
 	}

@@ -192,7 +192,7 @@ func sessionStart(sessionID string) shared.RPCRequest {
 	return shared.RPCRequest{
 		ID:     sessionID,
 		Method: "session.start",
-		Params: map[string]any{"sessionId": sessionID, "threadId": "thread-" + sessionID},
+		Params: map[string]any{"sessionId": sessionID, "openclawSessionKey": "thread-" + sessionID, "threadId": "thread-" + sessionID},
 	}
 }
 
@@ -200,6 +200,6 @@ func sessionMessage(sessionID string) shared.RPCRequest {
 	return shared.RPCRequest{
 		ID:     sessionID + "-message",
 		Method: "session.message",
-		Params: map[string]any{"sessionId": sessionID, "threadId": "thread-" + sessionID},
+		Params: map[string]any{"sessionId": sessionID, "openclawSessionKey": "thread-" + sessionID, "threadId": "thread-" + sessionID},
 	}
 }

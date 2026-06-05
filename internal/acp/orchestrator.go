@@ -786,12 +786,7 @@ func normalizeOpenClawDirList(values []any) []string {
 	return result
 }
 
-func openClawChatSendParams(
-	params map[string]any,
-	turnID string,
-) (map[string]any, *shared.RPCError) {
-	return openClawChatSendParamsWithSessionKey(params, turnID, fallbackOpenClawSessionKey(params, turnID))
-}
+
 
 func openClawChatSendParamsWithSessionKey(
 	params map[string]any,
@@ -1212,21 +1207,7 @@ func compactOpenClawTexts(texts []string) []string {
 }
 
 func (o *SessionOrchestrator) openClawSessionKey(params map[string]any, turnID string) string {
-	if explicit := strings.TrimSpace(shared.StringArg(params, "openclawSessionKey", "")); explicit != "" {
-		return explicit
-	}
-	if appThreadKey := openClawAppThreadKey(params); appThreadKey != "" {
-		return openClawAgentMainSessionKey(appThreadKey)
-	}
-	return fallbackOpenClawSessionKey(params, turnID)
-}
-
-func openClawAgentMainSessionKey(appThreadKey string) string {
-	appThreadKey = strings.TrimSpace(appThreadKey)
-	if appThreadKey == "" {
-		return "main"
-	}
-	return appThreadKey
+	return strings.TrimSpace(shared.StringArg(params, "openclawSessionKey", ""))
 }
 
 func validateOpenClawAcceptedSessionKey(payload map[string]any, expectedSessionKey string) *shared.RPCError {
@@ -1252,17 +1233,7 @@ func validateOpenClawAcceptedSessionKey(payload map[string]any, expectedSessionK
 	}
 }
 
-func fallbackOpenClawSessionKey(params map[string]any, turnID string) string {
-	for _, key := range []string{"threadId", "sessionId"} {
-		if value := strings.TrimSpace(shared.StringArg(params, key, "")); value != "" {
-			return value
-		}
-	}
-	if trimmed := strings.TrimSpace(turnID); trimmed != "" {
-		return trimmed
-	}
-	return "main"
-}
+
 
 func (o *SessionOrchestrator) openClawArtifactExport(
 	gatewayProvider string,

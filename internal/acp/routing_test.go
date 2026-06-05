@@ -309,7 +309,7 @@ func TestExecuteSessionTaskAutoRoutingRecordsProjectMemory(t *testing.T) {
 		req: shared.RPCRequest{
 			Params: map[string]any{
 				"sessionId":        "session-auto",
-				"threadId":         "thread-auto",
+				"openclawSessionKey": "thread-auto", "threadId": "thread-auto",
 				"provider":         "codex",
 				"taskPrompt":       "create a powerpoint deck for launch",
 				"workingDirectory": workspaceDir,
@@ -379,7 +379,7 @@ func TestExecuteSessionTaskExplicitRoutingDoesNotRecordProjectMemory(t *testing.
 		req: shared.RPCRequest{
 			Params: map[string]any{
 				"sessionId":        "session-explicit",
-				"threadId":         "thread-explicit",
+				"openclawSessionKey": "thread-explicit", "threadId": "thread-explicit",
 				"provider":         "codex",
 				"taskPrompt":       "create a powerpoint deck for launch",
 				"workingDirectory": workspaceDir,
@@ -427,7 +427,7 @@ func TestExecuteSessionTaskExplicitProviderRequiresAdvertisedBridgeProvider(t *t
 			Method: "session.start",
 			Params: map[string]any{
 				"sessionId":  "session-explicit-provider",
-				"threadId":   "thread-explicit-provider",
+				"openclawSessionKey": "thread-explicit-provider", "threadId": "thread-explicit-provider",
 				"taskPrompt": "create a powerpoint deck for launch",
 				"routing": map[string]any{
 					"routingMode":             "explicit",
@@ -459,7 +459,7 @@ func TestExecuteSessionTaskExplicitGatewayUsesResolvedGatewayProvider(t *testing
 			Method: "session.start",
 			Params: map[string]any{
 				"sessionId":  "session-explicit-gateway",
-				"threadId":   "thread-explicit-gateway",
+				"openclawSessionKey": "thread-explicit-gateway", "threadId": "thread-explicit-gateway",
 				"taskPrompt": "search latest news",
 				"routing": map[string]any{
 					"routingMode":                "explicit",
@@ -490,7 +490,7 @@ func TestExecuteSessionTaskGatewayAutoConnectsLocalOpenClaw(t *testing.T) {
 			Method: "session.start",
 			Params: map[string]any{
 				"sessionId":        "session-openclaw",
-				"threadId":         "thread-openclaw",
+				"openclawSessionKey": "thread-openclaw", "threadId": "thread-openclaw",
 				"taskPrompt":       "say pong",
 				"workingDirectory": t.TempDir(),
 				"metadata": map[string]any{
@@ -777,7 +777,7 @@ func TestExecuteSessionTaskGatewayNoDisplayableOutputFails(t *testing.T) {
 			Method: "session.start",
 			Params: map[string]any{
 				"sessionId":        "session-openclaw-no-output",
-				"threadId":         "thread-openclaw-no-output",
+				"openclawSessionKey": "thread-openclaw-no-output", "threadId": "thread-openclaw-no-output",
 				"taskPrompt":       "completed-empty",
 				"workingDirectory": t.TempDir(),
 				"routing": map[string]any{
@@ -822,7 +822,7 @@ func TestExecuteSessionTaskGatewayFailsClosedWhenOpenClawAcceptsDifferentSession
 			Method: "session.start",
 			Params: map[string]any{
 				"sessionId":        "draft:1780669943199412-3",
-				"threadId":         "draft:1780669943199412-3",
+				"openclawSessionKey": "draft:1780669943199412-3", "threadId": "draft:1780669943199412-3",
 				"taskPrompt":       "say pong",
 				"workingDirectory": t.TempDir(),
 				"routing": map[string]any{
@@ -866,7 +866,7 @@ func TestExecuteSessionTaskGatewayFailsArtifactContractAfterWaitFailure(t *testi
 			Method: "session.start",
 			Params: map[string]any{
 				"sessionId":        "session-openclaw-wait-recover",
-				"threadId":         "thread-openclaw-wait-recover",
+				"openclawSessionKey": "thread-openclaw-wait-recover", "threadId": "thread-openclaw-wait-recover",
 				"taskPrompt":       "wait-timeout",
 				"workingDirectory": t.TempDir(),
 				"metadata": map[string]any{
@@ -912,7 +912,7 @@ func TestExecuteSessionTaskGatewayKeepsRunningOnNonTerminalWaitPayload(t *testin
 			Method: "session.start",
 			Params: map[string]any{
 				"sessionId":        "session-openclaw-running-wait",
-				"threadId":         "thread-openclaw-running-wait",
+				"openclawSessionKey": "thread-openclaw-running-wait", "threadId": "thread-openclaw-running-wait",
 				"taskPrompt":       "wait-running",
 				"workingDirectory": t.TempDir(),
 				"metadata": map[string]any{
@@ -960,7 +960,7 @@ func TestExecuteSessionTaskGatewayAgentFailedBeforeReplyReturnsFailureCode(t *te
 			Method: "session.start",
 			Params: map[string]any{
 				"sessionId":        "session-openclaw-agent-failed",
-				"threadId":         "thread-openclaw-agent-failed",
+				"openclawSessionKey": "thread-openclaw-agent-failed", "threadId": "thread-openclaw-agent-failed",
 				"taskPrompt":       "agent failed before reply",
 				"workingDirectory": t.TempDir(),
 				"routing": map[string]any{
@@ -1001,7 +1001,7 @@ func TestExecuteSessionMessageGatewayUsesOpenClawChatSend(t *testing.T) {
 			Method: "session.message",
 			Params: map[string]any{
 				"sessionId":        "session-openclaw",
-				"threadId":         "thread-openclaw",
+				"openclawSessionKey": "thread-openclaw", "threadId": "thread-openclaw",
 				"taskPrompt":       "continue",
 				"workingDirectory": t.TempDir(),
 				"routing": map[string]any{
@@ -1048,7 +1048,7 @@ func TestInternalJobsSubmitCompletesAndReportsStats(t *testing.T) {
 		Params: map[string]any{
 			"providerId":        "opencode",
 			"sessionId":         "job-session",
-			"threadId":          "job-thread",
+			"openclawSessionKey": "job-thread", "threadId": "job-thread",
 			"taskPrompt":        "run async job",
 			"workingDirectory":  t.TempDir(),
 			"timeoutMs":         30_000,
@@ -1108,7 +1108,7 @@ func TestInternalJobWebhookRetriesUntilSuccess(t *testing.T) {
 		Params: map[string]any{
 			"providerId":       "opencode",
 			"sessionId":        "job-webhook-session",
-			"threadId":         "job-webhook-thread",
+			"openclawSessionKey": "job-webhook-thread", "threadId": "job-webhook-thread",
 			"taskPrompt":       "run async job",
 			"workingDirectory": t.TempDir(),
 			"callbackUrl":      callbackServer.URL,
@@ -1279,7 +1279,7 @@ func TestExecuteSessionTaskGatewaySurfacesOpenClawChatSendError(t *testing.T) {
 			Method: "session.start",
 			Params: map[string]any{
 				"sessionId":        "session-openclaw-fail",
-				"threadId":         "thread-openclaw-fail",
+				"openclawSessionKey": "thread-openclaw-fail", "threadId": "thread-openclaw-fail",
 				"taskPrompt":       "fail",
 				"workingDirectory": t.TempDir(),
 				"routing": map[string]any{
@@ -1314,7 +1314,7 @@ func TestExecuteSessionTaskGatewayRetriesOpenClawChatSendSocketClose(t *testing.
 			Method: "session.start",
 			Params: map[string]any{
 				"sessionId":        "session-openclaw-retry",
-				"threadId":         "thread-openclaw-retry",
+				"openclawSessionKey": "thread-openclaw-retry", "threadId": "thread-openclaw-retry",
 				"taskPrompt":       "retry after socket close",
 				"workingDirectory": t.TempDir(),
 				"routing": map[string]any{
@@ -1353,7 +1353,7 @@ func TestExecuteSessionTaskGatewayReturnsStructuredOpenClawSocketCloseAfterRetry
 			Method: "session.start",
 			Params: map[string]any{
 				"sessionId":        "session-openclaw-retry-fail",
-				"threadId":         "thread-openclaw-retry-fail",
+				"openclawSessionKey": "thread-openclaw-retry-fail", "threadId": "thread-openclaw-retry-fail",
 				"taskPrompt":       "retry fails",
 				"workingDirectory": t.TempDir(),
 				"routing": map[string]any{
@@ -1391,7 +1391,7 @@ func TestExecuteSessionTaskGatewaySurfacesOpenClawAgentWaitError(t *testing.T) {
 			Method: "session.start",
 			Params: map[string]any{
 				"sessionId":        "session-openclaw-wait-fail",
-				"threadId":         "thread-openclaw-wait-fail",
+				"openclawSessionKey": "thread-openclaw-wait-fail", "threadId": "thread-openclaw-wait-fail",
 				"taskPrompt":       "wait-error",
 				"workingDirectory": t.TempDir(),
 				"routing": map[string]any{
@@ -1419,7 +1419,7 @@ func TestExecuteSessionTaskGatewaySurfacesOpenClawAgentWaitError(t *testing.T) {
 	}
 	snapshot := server.handleTaskGet(context.Background(), map[string]any{
 		"sessionId": "session-openclaw-wait-fail",
-		"threadId":  "thread-openclaw-wait-fail",
+		"openclawSessionKey": "thread-openclaw-wait-fail", "threadId": "thread-openclaw-wait-fail",
 	}, nil)
 	if got := snapshot["status"]; got != string(TaskStateFailed) {
 		t.Fatalf("expected failed session snapshot, got %#v from %#v", got, snapshot)
@@ -1446,7 +1446,7 @@ func TestSessionCloseReturnsAcceptedAndClosedState(t *testing.T) {
 		Method: "session.close",
 		Params: map[string]any{
 			"sessionId": sessionID,
-			"threadId":  threadID,
+			"openclawSessionKey": threadID, "threadId": threadID,
 		},
 	}, nil)
 	if rpcErr != nil {
@@ -1463,7 +1463,7 @@ func TestSessionCloseReturnsAcceptedAndClosedState(t *testing.T) {
 		Method: "session.close",
 		Params: map[string]any{
 			"sessionId": sessionID,
-			"threadId":  threadID,
+			"openclawSessionKey": threadID, "threadId": threadID,
 		},
 	}, nil)
 	if rpcErr != nil {
@@ -1490,7 +1490,7 @@ func TestExecuteSessionTaskGatewayExportsOpenClawArtifacts(t *testing.T) {
 			Method: "session.start",
 			Params: map[string]any{
 				"sessionId":        "session-openclaw-artifact",
-				"threadId":         "thread-openclaw-artifact",
+				"openclawSessionKey": "thread-openclaw-artifact", "threadId": "thread-openclaw-artifact",
 				"taskPrompt":       "make artifact",
 				"workingDirectory": t.TempDir(),
 				"routing": map[string]any{
@@ -1581,7 +1581,7 @@ func TestExecuteSessionTaskGatewayDoesNotTreatPromptTextAsArtifactContract(t *te
 			Method: "session.start",
 			Params: map[string]any{
 				"sessionId":        "session-openclaw-latest-artifact",
-				"threadId":         "thread-openclaw-latest-artifact",
+				"openclawSessionKey": "thread-openclaw-latest-artifact", "threadId": "thread-openclaw-latest-artifact",
 				"taskPrompt":       "检查 workspace 已有真实制品，输出 artifacts files download。不要生成新文件，只简短说明。",
 				"workingDirectory": t.TempDir(),
 				"routing": map[string]any{
@@ -1633,7 +1633,7 @@ func TestExecuteSessionTaskGatewayExportsWithActualOpenClawRunID(t *testing.T) {
 			Method: "session.start",
 			Params: map[string]any{
 				"sessionId":        "session-openclaw-actual-run",
-				"threadId":         "thread-openclaw-actual-run",
+				"openclawSessionKey": "thread-openclaw-actual-run", "threadId": "thread-openclaw-actual-run",
 				"taskPrompt":       "make artifact",
 				"workingDirectory": t.TempDir(),
 				"routing": map[string]any{
@@ -1710,7 +1710,7 @@ func TestExecuteSessionTaskGatewayDoesNotExportArtifactScopeDeclaredInOutput(t *
 			Method: "session.start",
 			Params: map[string]any{
 				"sessionId":        sessionKey,
-				"threadId":         sessionKey,
+				"openclawSessionKey": sessionKey, "threadId": sessionKey,
 				"taskPrompt":       "declare output artifact path",
 				"workingDirectory": t.TempDir(),
 				"routing": map[string]any{
@@ -1765,7 +1765,7 @@ func TestExecuteSessionTaskGatewayDoesNotExportDraftScopeVariant(t *testing.T) {
 			Method: "session.start",
 			Params: map[string]any{
 				"sessionId":        sessionKey,
-				"threadId":         sessionKey,
+				"openclawSessionKey": sessionKey, "threadId": sessionKey,
 				"taskPrompt":       "plain done",
 				"workingDirectory": t.TempDir(),
 				"routing": map[string]any{
@@ -1803,7 +1803,7 @@ func TestExecuteSessionMessageGatewayDoesNotRewriteClaimedArtifactsWithoutGatewa
 			Method: "session.message",
 			Params: map[string]any{
 				"sessionId":        "session-openclaw-claimed-artifact",
-				"threadId":         "thread-openclaw-claimed-artifact",
+				"openclawSessionKey": "thread-openclaw-claimed-artifact", "threadId": "thread-openclaw-claimed-artifact",
 				"taskPrompt":       "hi hallucinate-files",
 				"workingDirectory": t.TempDir(),
 				"routing": map[string]any{
@@ -1844,7 +1844,7 @@ func TestExecuteSessionMessageGatewayExportsArtifactsWithoutPromptHeuristic(t *t
 			Method: "session.message",
 			Params: map[string]any{
 				"sessionId":        "session-openclaw-message-artifact",
-				"threadId":         "thread-openclaw-message-artifact",
+				"openclawSessionKey": "thread-openclaw-message-artifact", "threadId": "thread-openclaw-message-artifact",
 				"workingDirectory": t.TempDir(),
 				"messages": []any{
 					map[string]any{
@@ -2267,10 +2267,11 @@ func TestOpenClawChatSendParamsPreservesRawPrompt(t *testing.T) {
 		"write a csv dataset file",
 	} {
 		t.Run(prompt, func(t *testing.T) {
-			chatParams, rpcErr := openClawChatSendParams(map[string]any{
-				"threadId":   "thread-artifact-instructions",
+			params := map[string]any{
+				"openclawSessionKey": "thread-artifact-instructions", "threadId": "thread-artifact-instructions",
 				"taskPrompt": prompt,
-			}, "turn-artifact-instructions")
+			}
+			chatParams, rpcErr := openClawChatSendParamsWithSessionKey(params, "turn-artifact-instructions", "thread-artifact-instructions")
 			if rpcErr != nil {
 				t.Fatalf("expected chat params, got rpc error: %#v", rpcErr)
 			}
@@ -2284,8 +2285,8 @@ func TestOpenClawChatSendParamsPreservesRawPrompt(t *testing.T) {
 
 func TestOpenClawChatSendParamsMaterializesInlineAttachments(t *testing.T) {
 	workspace := t.TempDir()
-	chatParams, rpcErr := openClawChatSendParams(map[string]any{
-		"threadId":         "thread-attachments",
+	params := map[string]any{
+		"openclawSessionKey": "thread-attachments", "threadId": "thread-attachments",
 		"taskPrompt":       "inspect uploaded image",
 		"workingDirectory": workspace,
 		"attachments": []any{
@@ -2298,7 +2299,8 @@ func TestOpenClawChatSendParamsMaterializesInlineAttachments(t *testing.T) {
 				"content":  base64.StdEncoding.EncodeToString([]byte("image-bytes")),
 			},
 		},
-	}, "turn-inline-attachments")
+	}
+	chatParams, rpcErr := openClawChatSendParamsWithSessionKey(params, "turn-inline-attachments", "thread-attachments")
 	if rpcErr != nil {
 		t.Fatalf("expected chat params, got rpc error: %#v", rpcErr)
 	}
@@ -2332,8 +2334,8 @@ func TestOpenClawChatSendParamsMaterializesInlineAttachments(t *testing.T) {
 
 func TestOpenClawChatSendParamsMaterializesInlineAttachmentsInRemoteHint(t *testing.T) {
 	remoteWorkspace := t.TempDir()
-	chatParams, rpcErr := openClawChatSendParams(map[string]any{
-		"threadId":                   "thread-remote-attachments",
+	params := map[string]any{
+		"openclawSessionKey": "thread-remote-attachments", "threadId": "thread-remote-attachments",
 		"taskPrompt":                 "inspect uploaded file",
 		"workingDirectory":           "/Users/local/.xworkmate/threads/thread-remote-attachments",
 		"remoteWorkingDirectoryHint": remoteWorkspace,
@@ -2344,7 +2346,8 @@ func TestOpenClawChatSendParamsMaterializesInlineAttachmentsInRemoteHint(t *test
 				"content":  base64.StdEncoding.EncodeToString([]byte("note body")),
 			},
 		},
-	}, "turn-remote-attachments")
+	}
+	chatParams, rpcErr := openClawChatSendParamsWithSessionKey(params, "turn-remote-attachments", "thread-remote-attachments")
 	if rpcErr != nil {
 		t.Fatalf("expected chat params, got rpc error: %#v", rpcErr)
 	}
@@ -2375,7 +2378,7 @@ func TestOpenClawChatSendParamsMapsOwnerScopedWorkspaceToWritableRoot(t *testing
 	ownerWorkspace := "/owners/local/device/demo/threads/draft-1"
 	params := withOpenClawWritableWorkspace(map[string]any{
 		"sessionId":                  "draft-1",
-		"threadId":                   "draft-1",
+		"openclawSessionKey": "draft-1", "threadId": "draft-1",
 		"taskPrompt":                 "write into currentTaskWorkspace: " + ownerWorkspace,
 		"workingDirectory":           ownerWorkspace,
 		"remoteWorkingDirectoryHint": ownerWorkspace,
@@ -2388,7 +2391,7 @@ func TestOpenClawChatSendParamsMapsOwnerScopedWorkspaceToWritableRoot(t *testing
 		},
 	}, "draft-1")
 
-	chatParams, rpcErr := openClawChatSendParams(params, "turn-owner-workspace")
+	chatParams, rpcErr := openClawChatSendParamsWithSessionKey(params, "turn-owner-workspace", "draft-1")
 	if rpcErr != nil {
 		t.Fatalf("expected chat params, got rpc error: %#v", rpcErr)
 	}
@@ -2426,7 +2429,7 @@ func TestExecuteSessionTaskGatewayRejectsOversizedInlineAttachmentBeforeChatSend
 			Method: "session.start",
 			Params: map[string]any{
 				"sessionId":        "session-oversized-attachment",
-				"threadId":         "thread-oversized-attachment",
+				"openclawSessionKey": "thread-oversized-attachment", "threadId": "thread-oversized-attachment",
 				"taskPrompt":       "inspect attachment",
 				"workingDirectory": t.TempDir(),
 				"routing": map[string]any{
@@ -2468,7 +2471,7 @@ func TestExecuteSessionTaskGatewayCollectsOpenClawEventArtifacts(t *testing.T) {
 			Method: "session.start",
 			Params: map[string]any{
 				"sessionId":        "session-openclaw-event-artifact",
-				"threadId":         "thread-openclaw-event-artifact",
+				"openclawSessionKey": "thread-openclaw-event-artifact", "threadId": "thread-openclaw-event-artifact",
 				"taskPrompt":       "event artifact",
 				"workingDirectory": t.TempDir(),
 				"routing": map[string]any{
@@ -2517,7 +2520,7 @@ func TestExecuteSessionTaskGatewayAlwaysSyncsGatewayArtifactsAfterRun(t *testing
 			Method: "session.start",
 			Params: map[string]any{
 				"sessionId":        "session-openclaw-artifact-missing",
-				"threadId":         "thread-openclaw-artifact-missing",
+				"openclawSessionKey": "thread-openclaw-artifact-missing", "threadId": "thread-openclaw-artifact-missing",
 				"taskPrompt":       "say pong",
 				"workingDirectory": t.TempDir(),
 				"routing": map[string]any{
@@ -2564,7 +2567,7 @@ func TestExecuteSessionTaskDefaultsExplicitGatewayToOpenClaw(t *testing.T) {
 			Method: "session.start",
 			Params: map[string]any{
 				"sessionId":  "session-gateway-missing-provider",
-				"threadId":   "thread-gateway-missing-provider",
+				"openclawSessionKey": "thread-gateway-missing-provider", "threadId": "thread-gateway-missing-provider",
 				"taskPrompt": "search latest news",
 				"routing": map[string]any{
 					"routingMode":             "explicit",
@@ -3454,7 +3457,7 @@ func TestExecuteSessionTaskAutoRoutingUsesBridgeProductionProviderOrder(t *testi
 			Method: "session.start",
 			Params: map[string]any{
 				"sessionId":        "session-auto-order",
-				"threadId":         "thread-auto-order",
+				"openclawSessionKey": "thread-auto-order", "threadId": "thread-auto-order",
 				"taskPrompt":       "create a powerpoint deck for launch",
 				"workingDirectory": workspaceDir,
 				"routing": map[string]any{
@@ -3534,7 +3537,7 @@ func TestExecuteSessionTaskKeepsRemoteWorkspaceHintOutOfLocalCWD(t *testing.T) {
 			Method: "session.start",
 			Params: map[string]any{
 				"sessionId":                  "session-remote-hint",
-				"threadId":                   "thread-remote-hint",
+				"openclawSessionKey": "thread-remote-hint", "threadId": "thread-remote-hint",
 				"taskPrompt":                 "say hello",
 				"workingDirectory":           workspaceDir,
 				"remoteWorkingDirectoryHint": "/owners/local/user/demo/threads/main",
@@ -3585,7 +3588,7 @@ func TestExecuteSessionTaskRequiresRouting(t *testing.T) {
 			Method: "session.start",
 			Params: map[string]any{
 				"sessionId":  "session-missing-routing",
-				"threadId":   "thread-missing-routing",
+				"openclawSessionKey": "thread-missing-routing", "threadId": "thread-missing-routing",
 				"taskPrompt": "hello",
 			},
 		},
@@ -3614,7 +3617,7 @@ func TestExecuteSessionMessageMissingProviderStateReturnsContinuationUnavailable
 			Method: "session.message",
 			Params: map[string]any{
 				"sessionId":        "session-without-provider-state",
-				"threadId":         "thread-without-provider-state",
+				"openclawSessionKey": "thread-without-provider-state", "threadId": "thread-without-provider-state",
 				"taskPrompt":       "continue",
 				"workingDirectory": t.TempDir(),
 				"routing": map[string]any{
@@ -3656,7 +3659,7 @@ func TestExecuteSessionTaskComplexRequestNoLongerPromotesToMultiAgent(t *testing
 		req: shared.RPCRequest{
 			Params: map[string]any{
 				"sessionId":        "session-complex",
-				"threadId":         "thread-complex",
+				"openclawSessionKey": "thread-complex", "threadId": "thread-complex",
 				"taskPrompt":       "collect latest news and summarize it into a report for review",
 				"workingDirectory": workspaceDir,
 				"routing": map[string]any{

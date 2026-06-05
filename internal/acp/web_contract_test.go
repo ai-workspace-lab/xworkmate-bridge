@@ -252,7 +252,7 @@ func TestHTTPHandlerGatewayOpenClawReturnsRunningEnvelopeAndDone(t *testing.T) {
 	request, err := http.NewRequest(
 		http.MethodPost,
 		httpServer.URL+"/acp/rpc",
-		strings.NewReader(`{"jsonrpc":"2.0","id":"task-keepalive","method":"session.start","params":{"sessionId":"s1","threadId":"t1","taskPrompt":"Reply pong","workingDirectory":"`+t.TempDir()+`","routing":{"routingMode":"explicit","explicitExecutionTarget":"gateway","preferredGatewayProviderId":"openclaw"}}}`),
+		strings.NewReader(`{"jsonrpc":"2.0","id":"task-keepalive","method":"session.start","params":{"sessionId":"s1","openclawSessionKey":"t1","threadId":"t1","taskPrompt":"Reply pong","workingDirectory":"`+t.TempDir()+`","routing":{"routingMode":"explicit","explicitExecutionTarget":"gateway","preferredGatewayProviderId":"openclaw"}}}`),
 	)
 	if err != nil {
 		t.Fatalf("build request: %v", err)
@@ -347,7 +347,7 @@ func TestHTTPHandlerGatewayOpenClawAdmissionQueuesExcessConcurrentSSE(t *testing
 			request, err := http.NewRequest(
 				http.MethodPost,
 				httpServer.URL+"/acp/rpc",
-				strings.NewReader(`{"jsonrpc":"2.0","id":"task-`+strconv.Itoa(index)+`","method":"session.start","params":{"sessionId":"s`+strconv.Itoa(index)+`","threadId":"t`+strconv.Itoa(index)+`","taskPrompt":"Reply pong","workingDirectory":"`+t.TempDir()+`","routing":{"routingMode":"explicit","explicitExecutionTarget":"gateway","preferredGatewayProviderId":"openclaw"}}}`),
+				strings.NewReader(`{"jsonrpc":"2.0","id":"task-`+strconv.Itoa(index)+`","method":"session.start","params":{"sessionId":"s`+strconv.Itoa(index)+`","openclawSessionKey":"t`+strconv.Itoa(index)+`","threadId":"t`+strconv.Itoa(index)+`","taskPrompt":"Reply pong","workingDirectory":"`+t.TempDir()+`","routing":{"routingMode":"explicit","explicitExecutionTarget":"gateway","preferredGatewayProviderId":"openclaw"}}}`),
 			)
 			if err != nil {
 				results <- result{err: err}
@@ -445,7 +445,8 @@ func TestHTTPHandlerGatewayOpenClawHandlesFiveConcurrentE2ECases(t *testing.T) {
 			defer wg.Done()
 			<-start
 			body := fmt.Sprintf(
-				`{"jsonrpc":"2.0","id":"e2e-%d","method":"session.start","params":{"sessionId":"e2e-s%d","threadId":"e2e-t%d","taskPrompt":%q,"workingDirectory":%q,"routing":{"routingMode":"explicit","explicitExecutionTarget":"gateway","preferredGatewayProviderId":"openclaw"}}}`,
+				`{"jsonrpc":"2.0","id":"e2e-%d","method":"session.start","params":{"sessionId":"e2e-s%d","openclawSessionKey":"e2e-t%d","threadId":"e2e-t%d","taskPrompt":%q,"workingDirectory":%q,"routing":{"routingMode":"explicit","explicitExecutionTarget":"gateway","preferredGatewayProviderId":"openclaw"}}}`,
+				index,
 				index,
 				index,
 				index,
@@ -553,7 +554,7 @@ func TestHTTPHandlerGatewayOpenClawAdmissionRejectsWhenQueueFull(t *testing.T) {
 	firstRequest, err := http.NewRequest(
 		http.MethodPost,
 		httpServer.URL+"/acp/rpc",
-		strings.NewReader(`{"jsonrpc":"2.0","id":"task-active","method":"session.start","params":{"sessionId":"active","threadId":"active","taskPrompt":"Reply pong","workingDirectory":"`+t.TempDir()+`","routing":{"routingMode":"explicit","explicitExecutionTarget":"gateway","preferredGatewayProviderId":"openclaw"}}}`),
+		strings.NewReader(`{"jsonrpc":"2.0","id":"task-active","method":"session.start","params":{"sessionId":"active","openclawSessionKey":"active","threadId":"active","taskPrompt":"Reply pong","workingDirectory":"`+t.TempDir()+`","routing":{"routingMode":"explicit","explicitExecutionTarget":"gateway","preferredGatewayProviderId":"openclaw"}}}`),
 	)
 	if err != nil {
 		t.Fatalf("build first request: %v", err)
@@ -577,7 +578,7 @@ func TestHTTPHandlerGatewayOpenClawAdmissionRejectsWhenQueueFull(t *testing.T) {
 	secondRequest, err := http.NewRequest(
 		http.MethodPost,
 		httpServer.URL+"/acp/rpc",
-		strings.NewReader(`{"jsonrpc":"2.0","id":"task-rejected","method":"session.start","params":{"sessionId":"rejected","threadId":"rejected","taskPrompt":"Reply pong","workingDirectory":"`+t.TempDir()+`","routing":{"routingMode":"explicit","explicitExecutionTarget":"gateway","preferredGatewayProviderId":"openclaw"}}}`),
+		strings.NewReader(`{"jsonrpc":"2.0","id":"task-rejected","method":"session.start","params":{"sessionId":"rejected","openclawSessionKey":"rejected","threadId":"rejected","taskPrompt":"Reply pong","workingDirectory":"`+t.TempDir()+`","routing":{"routingMode":"explicit","explicitExecutionTarget":"gateway","preferredGatewayProviderId":"openclaw"}}}`),
 	)
 	if err != nil {
 		t.Fatalf("build second request: %v", err)
@@ -625,7 +626,7 @@ func TestHTTPHandlerGatewayOpenClawFiltersRawGatewayEventsAndKeepsFinalResult(t 
 	request, err := http.NewRequest(
 		http.MethodPost,
 		httpServer.URL+"/acp/rpc",
-		strings.NewReader(`{"jsonrpc":"2.0","id":"task-filter","method":"session.start","params":{"sessionId":"session-filter","threadId":"thread-filter","taskPrompt":"make artifact","workingDirectory":"`+t.TempDir()+`","routing":{"routingMode":"explicit","explicitExecutionTarget":"gateway","preferredGatewayProviderId":"openclaw"}}}`),
+		strings.NewReader(`{"jsonrpc":"2.0","id":"task-filter","method":"session.start","params":{"sessionId":"session-filter","openclawSessionKey":"thread-filter","threadId":"thread-filter","taskPrompt":"make artifact","workingDirectory":"`+t.TempDir()+`","routing":{"routingMode":"explicit","explicitExecutionTarget":"gateway","preferredGatewayProviderId":"openclaw"}}}`),
 	)
 	if err != nil {
 		t.Fatalf("build request: %v", err)
@@ -739,7 +740,7 @@ func TestHTTPHandlerGatewayOpenClawForcesGatewayRouting(t *testing.T) {
 	request := httptest.NewRequest(
 		http.MethodPost,
 		"http://127.0.0.1/acp/rpc",
-		strings.NewReader(`{"jsonrpc":"2.0","id":"task-1","method":"session.start","params":{"sessionId":"s1","threadId":"t1","taskPrompt":"Reply pong","workingDirectory":"`+t.TempDir()+`","routing":{"routingMode":"explicit","explicitExecutionTarget":"gateway","preferredGatewayProviderId":"openclaw"}}}`),
+		strings.NewReader(`{"jsonrpc":"2.0","id":"task-1","method":"session.start","params":{"sessionId":"s1","openclawSessionKey":"t1","threadId":"t1","taskPrompt":"Reply pong","workingDirectory":"`+t.TempDir()+`","routing":{"routingMode":"explicit","explicitExecutionTarget":"gateway","preferredGatewayProviderId":"openclaw"}}}`),
 	)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer bridge-test-token")
@@ -785,7 +786,7 @@ func TestHTTPHandlerTasksGetReturnsCompletedOpenClawResult(t *testing.T) {
 	startRequest := httptest.NewRequest(
 		http.MethodPost,
 		"http://127.0.0.1/acp/rpc",
-		strings.NewReader(`{"jsonrpc":"2.0","id":"task-1","method":"session.start","params":{"sessionId":"s1","threadId":"t1","taskPrompt":"Reply pong","workingDirectory":"`+t.TempDir()+`","routing":{"routingMode":"explicit","explicitExecutionTarget":"gateway","preferredGatewayProviderId":"openclaw"}}}`),
+		strings.NewReader(`{"jsonrpc":"2.0","id":"task-1","method":"session.start","params":{"sessionId":"s1","openclawSessionKey":"t1","threadId":"t1","taskPrompt":"Reply pong","workingDirectory":"`+t.TempDir()+`","routing":{"routingMode":"explicit","explicitExecutionTarget":"gateway","preferredGatewayProviderId":"openclaw"}}}`),
 	)
 	startRequest.Header.Set("Content-Type", "application/json")
 	startRequest.Header.Set("Authorization", "Bearer bridge-test-token")
@@ -1010,7 +1011,7 @@ func TestHandleRPCRequiresBearerAuthorizationWhenBridgeAuthTokenConfigured(t *te
 	request := httptest.NewRequest(
 		http.MethodPost,
 		"http://127.0.0.1/acp/rpc",
-		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"session.start","params":{"sessionId":"test"}}`),
+		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"session.start","params":{"sessionId":"test","openclawSessionKey":"test","threadId":"test"}}`),
 	)
 	request.Header.Set("Content-Type", "application/json")
 
@@ -1249,7 +1250,7 @@ func TestHandleRPCSessionStartSucceedsWithExplicitProvider(t *testing.T) {
 	request := httptest.NewRequest(
 		http.MethodPost,
 		"http://127.0.0.1/acp/rpc",
-		strings.NewReader(`{"jsonrpc":"2.0","id":"task-1","method":"session.start","params":{"sessionId":"s1","threadId":"t1","taskPrompt":"Reply with exactly pong","workingDirectory":"`+t.TempDir()+`","routing":{"routingMode":"explicit","explicitExecutionTarget":"singleAgent","explicitProviderId":"opencode"}}}`),
+		strings.NewReader(`{"jsonrpc":"2.0","id":"task-1","method":"session.start","params":{"sessionId":"s1","openclawSessionKey":"t1","threadId":"t1","taskPrompt":"Reply with exactly pong","workingDirectory":"`+t.TempDir()+`","routing":{"routingMode":"explicit","explicitExecutionTarget":"singleAgent","explicitProviderId":"opencode"}}}`),
 	)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer bridge-test-token")
