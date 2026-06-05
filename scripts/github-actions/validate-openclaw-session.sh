@@ -89,6 +89,45 @@ for block in open(stream_path, encoding="utf-8").read().split("\n\n"):
         continue
     payloads.append(json.loads(payload))
 
+def terminal_result(payload):
+    if not isinstance(payload, dict):
+        return {}
+    nested = payload.get("result")
+    if isinstance(nested, dict) and str(payload.get("status", "")).lower() in {
+        "completed",
+        "failed",
+        "cancelled",
+        "canceled",
+    }:
+        return nested
+    return payload
+
+
+def output_text_from(payload):
+    if not isinstance(payload, dict):
+        return ""
+    candidates = []
+    stack = [payload]
+    seen = set()
+    while stack:
+        item = stack.pop(0)
+        if not isinstance(item, dict):
+            continue
+        identity = id(item)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        for key in ("output", "message", "summary", "resultSummary", "assistantText", "text"):
+            value = item.get(key)
+            if isinstance(value, str):
+                candidates.append(value)
+        for key in ("result", "payload", "data", "task", "progress", "artifacts"):
+            value = item.get(key)
+            if isinstance(value, dict):
+                stack.append(value)
+    return " ".join(part for part in candidates if part)
+
+
 final = next(
     (item for item in payloads if isinstance(item, dict) and item.get("id") == "validate-openclaw"),
     None,
@@ -98,7 +137,7 @@ if final is None:
 if not payloads or payloads[-1].get("done") is not True:
     raise SystemExit("missing SSE done marker")
 
-result = final.get("result") or final.get("payload") or {}
+result = terminal_result(final.get("result") or final.get("payload") or {})
 if result.get("status") == "running":
     session_id = result.get("sessionId")
     thread_id = result.get("threadId")
@@ -133,7 +172,7 @@ if result.get("status") == "running":
                 poll_result = resp_data.get("result") or {}
                 status = poll_result.get("status")
                 if status in ("completed", "failed", "cancelled"):
-                    result = poll_result
+                    result = terminal_result(poll_result)
                     final["result"] = poll_result
                     break
         except Exception as exc:
@@ -162,12 +201,10 @@ for marker in (
     if marker in final_text:
         raise SystemExit(f"OpenClaw smoke returned runtime error text: {marker}")
 
-output_text = " ".join(
-    str(result.get(key, ""))
-    for key in ("output", "message", "summary", "resultSummary")
-)
+output_text = output_text_from(result)
 if "pong" not in output_text.lower():
-    raise SystemExit(f"OpenClaw smoke did not return pong: {output_text[:500]}")
+    result_preview = json.dumps(result, ensure_ascii=False, sort_keys=True)[:1000]
+    raise SystemExit(f"OpenClaw smoke did not return pong: {output_text[:500]}\nresult preview: {result_preview}")
 
 print("OpenClaw smoke OK: pong received from session contract")
 PY
