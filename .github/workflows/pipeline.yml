@@ -322,3 +322,8 @@ jobs:
         env:
           BRIDGE_AUTH_TOKEN: ${{ env.INTERNAL_SERVICE_TOKEN }}
         run: bash ./scripts/github-actions/verify-public-rpc-contract.sh
+
+      - name: Validate OpenClaw session contract
+        env:
+          BRIDGE_AUTH_TOKEN: ${{ env.INTERNAL_SERVICE_TOKEN }}
+        run: bash ./scripts/github-actions/validate-openclaw-session.sh
