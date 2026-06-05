@@ -3,6 +3,7 @@ set -euo pipefail
 
 BASE_URL="${BRIDGE_SERVER_URL:-https://xworkmate-bridge.svc.plus}"
 AUTH_TOKEN="${BRIDGE_AUTH_TOKEN:-}"
+REQUEST_ORIGIN="${OPENCLAW_SMOKE_ORIGIN:-https://xworkmate.svc.plus}"
 RPC_TIMEOUT_SECONDS="${OPENCLAW_SMOKE_RPC_TIMEOUT_SECONDS:-180}"
 POLL_TIMEOUT_SECONDS="${OPENCLAW_SMOKE_POLL_TIMEOUT_SECONDS:-120}"
 POLL_INTERVAL_SECONDS="${OPENCLAW_SMOKE_POLL_INTERVAL_SECONDS:-2}"
@@ -49,7 +50,7 @@ echo "OpenClaw smoke -> POST ${rpc_url} (session=${session_id})"
 
 curl --http1.1 --fail --silent --show-error --no-buffer --max-time "${RPC_TIMEOUT_SECONDS}" \
   -H "Authorization: Bearer ${AUTH_TOKEN}" \
-  -H "Origin: https://xworkmate-app.svc.plus" \
+  -H "Origin: ${REQUEST_ORIGIN}" \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
   --data "${request_body}" \

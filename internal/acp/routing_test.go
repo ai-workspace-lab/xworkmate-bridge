@@ -492,6 +492,11 @@ func TestExecuteSessionTaskGatewayAutoConnectsLocalOpenClaw(t *testing.T) {
 				"threadId":         "thread-openclaw",
 				"taskPrompt":       "say pong",
 				"workingDirectory": t.TempDir(),
+				"metadata": map[string]any{
+					"xworkmateTaskArtifactContract": map[string]any{
+						"expectedArtifactDirs": []any{"assets/images/", "reports/"},
+					},
+				},
 				"routing": map[string]any{
 					"routingMode":                "explicit",
 					"explicitExecutionTarget":    "gateway",
@@ -527,6 +532,7 @@ func TestExecuteSessionTaskGatewayAutoConnectsLocalOpenClaw(t *testing.T) {
 		"remoteWorkingDirectory",
 		"remoteWorkspaceRefKind",
 		"xworkmateArtifacts",
+		"expectedArtifactDirs",
 	} {
 		if _, ok := chatParams[key]; ok {
 			t.Fatalf("expected chat.send params to omit bridge artifact/workspace field %q, got %#v", key, chatParams)
@@ -560,6 +566,14 @@ func TestExecuteSessionTaskGatewayAutoConnectsLocalOpenClaw(t *testing.T) {
 	}
 	if gateway.ArtifactExportCount() != 1 {
 		t.Fatalf("expected one OpenClaw artifact export sync after run, got %d", gateway.ArtifactExportCount())
+	}
+	exportParams := gateway.LastArtifactExportParams()
+	if got := shared.ListArg(exportParams, "expectedArtifactDirs"); !sameAnyStringSlice(got, []string{"assets/images/", "reports/"}) {
+		t.Fatalf("expected artifact export to receive expectedArtifactDirs from contract, got %#v", exportParams)
+	}
+	snapshotParams := gateway.LastArtifactSnapshotParams()
+	if got := shared.ListArg(snapshotParams, "expectedArtifactDirs"); !sameAnyStringSlice(got, []string{"assets/images/", "reports/"}) {
+		t.Fatalf("expected artifact snapshot to receive expectedArtifactDirs from contract, got %#v", snapshotParams)
 	}
 	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.prepare", "chat.send", "agent.wait", "xworkmate.artifacts.export", "xworkmate.artifacts.collect-and-snapshot"}) {
 		t.Fatalf("expected connect, artifact prepare, chat.send, agent.wait, then artifact export, got %#v", got)
@@ -3301,6 +3315,18 @@ func sameMethods(got []string, want []string) bool {
 	}
 	for index := range got {
 		if got[index] != want[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func sameAnyStringSlice(got []any, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for index := range got {
+		if fmt.Sprint(got[index]) != want[index] {
 			return false
 		}
 	}
