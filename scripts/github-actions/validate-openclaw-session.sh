@@ -34,6 +34,7 @@ request_body="$(cat <<JSON
   "params": {
     "sessionId": "${session_id}",
     "threadId": "${session_id}",
+    "appThreadKey": "${session_id}",
     "taskPrompt": "Reply exactly pong.",
     "workingDirectory": "/tmp",
     "routing": {
