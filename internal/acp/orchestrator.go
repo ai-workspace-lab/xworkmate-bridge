@@ -756,6 +756,9 @@ func openClawChatSendParamsWithSessionKey(
 		"message":        message,
 		"idempotencyKey": turnID,
 	}
+	if expectedDirs, ok := params["expectedArtifactDirs"]; ok {
+		chatParams["expectedArtifactDirs"] = expectedDirs
+	}
 	attachments := openClawNonEmptyPathAttachments(params)
 	inlineAttachments, rpcErr := materializeOpenClawInlineAttachments(params, turnID)
 	if rpcErr != nil {
@@ -1204,6 +1207,9 @@ func (o *SessionOrchestrator) openClawArtifactExport(
 	if preparedArtifact != nil && strings.TrimSpace(preparedArtifact.ArtifactScope) != "" {
 		exportParams["artifactScope"] = strings.TrimSpace(preparedArtifact.ArtifactScope)
 	}
+	if expectedDirs, ok := chatParams["expectedArtifactDirs"]; ok {
+		exportParams["expectedArtifactDirs"] = expectedDirs
+	}
 	payload := o.openClawArtifactExportRequest(gatewayProvider, exportParams, notify)
 	return payload
 }
@@ -1228,6 +1234,9 @@ func (o *SessionOrchestrator) openClawArtifactCollectAndSnapshot(
 	}
 	if strings.TrimSpace(preparedArtifact.ArtifactScope) != "" {
 		snapshotParams["artifactScope"] = strings.TrimSpace(preparedArtifact.ArtifactScope)
+	}
+	if expectedDirs, ok := chatParams["expectedArtifactDirs"]; ok {
+		snapshotParams["expectedArtifactDirs"] = expectedDirs
 	}
 	snapshotResult := o.openClawGatewayRequestWithRetry(
 		gatewayProvider,
