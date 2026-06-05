@@ -2,3 +2,4 @@ build/
 .env
 xworkmate-bridge
 xworkmate-go-core-linux
+repomix-output.xml

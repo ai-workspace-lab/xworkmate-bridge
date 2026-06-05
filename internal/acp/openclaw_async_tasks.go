@@ -75,7 +75,7 @@ func openClawTaskRuntimePolicy(params map[string]any, chatParams map[string]any,
 	}) {
 		return "complex_chain_task", openClawComplexTaskMinutes
 	}
-	if len(contract.RequiredFinalExtensions) > 0 || openClawMessageContainsAny(lower, []string{
+	if len(contract.ExpectedArtifactExtensions) > 0 || openClawMessageContainsAny(lower, []string{
 		"生成文件", "同步生成文件", "产物", "附件", "pdf", "docx", "ppt", "pptx", "markdown", ".md", "png", "jpg", "jpeg", "mp4",
 	}) || len(shared.ListArg(params, "attachments"))+len(shared.ListArg(params, "inlineAttachments")) >= 2 {
 		return "long_task", openClawLongTaskMinutes
@@ -106,9 +106,7 @@ func openClawRunningTaskResult(record *OpenClawTaskRecord) map[string]any {
 	if record.PreparedArtifact != nil {
 		applyOpenClawPreparedArtifactToResult(result, record.PreparedArtifact)
 	}
-	if len(record.ArtifactContract.RequiredFinalExtensions) > 0 {
-		result["requiredArtifactExtensions"] = append([]string(nil), record.ArtifactContract.RequiredFinalExtensions...)
-	}
+
 	if len(record.ArtifactContract.ExpectedArtifactExtensions) > 0 {
 		result["expectedArtifactExtensions"] = append([]string(nil), record.ArtifactContract.ExpectedArtifactExtensions...)
 	}

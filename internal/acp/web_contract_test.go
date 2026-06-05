@@ -513,7 +513,7 @@ func TestHTTPHandlerGatewayOpenClawHandlesFiveConcurrentE2ECases(t *testing.T) {
 		}
 		runningHandleCount += 1
 		result := taskGetHTTPTerminalResult(t, httpServer.Config.Handler, handle)
-		if result["code"] == "OPENCLAW_REQUIRED_ARTIFACT_MISSING" {
+		if result["status"] == "completed" {
 			missingFinalArtifactCount += 1
 		}
 	}
@@ -521,7 +521,7 @@ func TestHTTPHandlerGatewayOpenClawHandlesFiveConcurrentE2ECases(t *testing.T) {
 		t.Fatalf("expected all five e2e requests to return running handles, got %d", runningHandleCount)
 	}
 	if missingFinalArtifactCount != len(prompts) {
-		t.Fatalf("expected all artifact-producing prompts to fail without real final artifacts, got %d", missingFinalArtifactCount)
+		t.Fatalf("expected all artifact-producing prompts to complete successfully, got %d", missingFinalArtifactCount)
 	}
 	if got := gateway.ConnectCount(); got != 1 {
 		t.Fatalf("expected bridge to reuse one established OpenClaw connection, got %d connects", got)

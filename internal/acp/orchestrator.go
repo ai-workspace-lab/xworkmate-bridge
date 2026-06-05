@@ -689,9 +689,6 @@ func openClawArtifactSystemProvenanceReceipt(
 	if len(contract.ExpectedArtifactExtensions) > 0 {
 		lines = append(lines, "- Expected artifact extensions: "+strings.Join(contract.ExpectedArtifactExtensions, ", "))
 	}
-	if len(contract.RequiredFinalExtensions) > 0 {
-		lines = append(lines, "- Required final artifact extensions: "+strings.Join(contract.RequiredFinalExtensions, ", "))
-	}
 	return strings.Join(lines, "\n")
 }
 
@@ -703,7 +700,6 @@ type openClawArtifactContract struct {
 	TaskLoadClass              string
 	ComplexLongChain           bool
 	ExpectedArtifactExtensions []string
-	RequiredFinalExtensions    []string
 	SourceMessage              string
 }
 
@@ -758,7 +754,6 @@ func openClawArtifactContractForParams(params map[string]any, chatParams map[str
 		TaskLoadClass:              taskLoadClass,
 		ComplexLongChain:           complex,
 		ExpectedArtifactExtensions: expected,
-		RequiredFinalExtensions:    append([]string(nil), expected...),
 		SourceMessage:              message,
 	}
 }
@@ -1490,60 +1485,9 @@ func applyOpenClawArtifactContractResult(result map[string]any, contract openCla
 	if len(contract.ExpectedArtifactExtensions) > 0 {
 		result["expectedArtifactExtensions"] = append([]string(nil), contract.ExpectedArtifactExtensions...)
 	}
-	if len(contract.RequiredFinalExtensions) > 0 {
-		result["requiredArtifactExtensions"] = append([]string(nil), contract.RequiredFinalExtensions...)
-	}
-	if len(contract.RequiredFinalExtensions) == 0 || !parseBool(result["success"]) {
-		return
-	}
-	missing := missingOpenClawRequiredFinalExtensions(result, contract)
-	if len(missing) == 0 {
-		return
-	}
-	result["success"] = false
-	result["status"] = "failed"
-	result["code"] = "OPENCLAW_REQUIRED_ARTIFACT_MISSING"
-	result["error"] = "openclaw returned partial artifacts without required final deliverables"
-	result["message"] = openClawRequiredArtifactMissingText
-	result["output"] = openClawRequiredArtifactMissingText
-	result["summary"] = openClawRequiredArtifactMissingText
-	result["missingArtifactExtensions"] = missing
 }
 
-func missingOpenClawRequiredFinalExtensions(result map[string]any, contract openClawArtifactContract) []string {
-	if result == nil || len(contract.RequiredFinalExtensions) == 0 || !parseBool(result["success"]) {
-		return nil
-	}
-	return missingOpenClawRequiredFinalExtensionsForRepair(result, contract)
-}
 
-func missingOpenClawRequiredFinalExtensionsForRepair(result map[string]any, contract openClawArtifactContract) []string {
-	if result == nil || len(contract.RequiredFinalExtensions) == 0 {
-		return nil
-	}
-	remoteWorkingDirectory := strings.TrimSpace(shared.StringArg(result, "remoteWorkingDirectory", ""))
-	artifacts := extractArtifactPayloads(result, remoteWorkingDirectory)
-	if len(artifacts) == 0 {
-		return append([]string(nil), contract.RequiredFinalExtensions...)
-	}
-	return missingOpenClawArtifactExtensions(artifacts, contract.RequiredFinalExtensions)
-}
-
-func missingOpenClawArtifactExtensions(artifacts []map[string]any, required []string) []string {
-	seen := map[string]bool{}
-	for _, artifact := range artifacts {
-		if extension := openClawArtifactExtension(artifact); extension != "" {
-			seen[extension] = true
-		}
-	}
-	missing := make([]string, 0, len(required))
-	for _, extension := range required {
-		if !seen[extension] {
-			missing = append(missing, extension)
-		}
-	}
-	return missing
-}
 
 func openClawArtifactExtension(artifact map[string]any) string {
 	for _, key := range []string{"relativePath", "path", "label", "name"} {

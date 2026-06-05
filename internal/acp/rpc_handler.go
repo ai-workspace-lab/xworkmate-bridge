@@ -201,7 +201,6 @@ func (s *Server) reassociateOpenClawTask(params map[string]any) *session {
 	contract := openClawArtifactContract{
 		TaskLoadClass:              strings.TrimSpace(shared.StringArg(params, "taskLoadClass", "")),
 		ExpectedArtifactExtensions: normalizeOpenClawExtensionList(shared.ListArg(params, "expectedArtifactExtensions")),
-		RequiredFinalExtensions:    normalizeOpenClawExtensionList(shared.ListArg(params, "requiredArtifactExtensions")),
 	}
 	taskLoadClass, budget := openClawTaskRuntimePolicy(params, map[string]any{"sessionKey": sessionKey}, contract)
 	if explicitBudget := shared.IntArg(shared.StringArg(params, "runtimeBudgetMinutes", ""), 0); explicitBudget > 0 {

@@ -87,7 +87,7 @@ func TestReassociateOpenClawTaskDerivesRuntimeBudgetWithoutExplicitBudget(t *tes
 			params: map[string]any{
 				"runId":                      "run-pdf",
 				"artifactScope":              "tasks/main/run-pdf",
-				"requiredArtifactExtensions": []any{"pdf"},
+				"expectedArtifactExtensions": []any{"pdf"},
 			},
 			want: openClawLongTaskMinutes,
 		},

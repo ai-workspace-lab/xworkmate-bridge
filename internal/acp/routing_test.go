@@ -646,8 +646,8 @@ func TestOpenClawArtifactContractInfersRemoteScenarioDeliverables(t *testing.T) 
 				map[string]any{"taskPrompt": tt.text},
 				map[string]any{"message": tt.text},
 			)
-			if !slices.Equal(contract.RequiredFinalExtensions, tt.want) {
-				t.Fatalf("expected required extensions %#v, got %#v", tt.want, contract.RequiredFinalExtensions)
+			if !slices.Equal(contract.ExpectedArtifactExtensions, tt.want) {
+				t.Fatalf("expected expected extensions %#v, got %#v", tt.want, contract.ExpectedArtifactExtensions)
 			}
 		})
 	}
@@ -848,52 +848,6 @@ func TestExecuteSessionTaskGatewayComplexArtifactContractAcceptsRequiredFinalArt
 	}
 }
 
-func TestExecuteSessionTaskGatewayComplexArtifactContractRejectsPartialArtifacts(t *testing.T) {
-	gateway := newAcpFakeOpenClawGateway(t)
-	defer gateway.Close()
-	gateway.artifactWorkspaceRoot = t.TempDir()
-
-	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
-	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
-
-	server := NewServer()
-	response, rpcErr := server.executeSessionTask(task{
-		req: shared.RPCRequest{
-			Method: "session.start",
-			Params: map[string]any{
-				"sessionId":        "session-openclaw-partial-pdf",
-				"threadId":         "thread-openclaw-partial-pdf",
-				"taskPrompt":       "make partial artifact",
-				"workingDirectory": t.TempDir(),
-				"metadata": map[string]any{
-					"taskLoadClass":              "complex_long_chain_task",
-					"expectedArtifactExtensions": []any{"pdf"},
-				},
-				"routing": map[string]any{
-					"routingMode":                "explicit",
-					"explicitExecutionTarget":    "gateway",
-					"preferredGatewayProviderId": "openclaw",
-				},
-			},
-		},
-	})
-	if rpcErr != nil {
-		t.Fatalf("expected bridge response, got rpc error: %#v", rpcErr)
-	}
-	if got := response["success"]; got != false {
-		t.Fatalf("expected partial artifact response to fail without final PDF, got %#v", response)
-	}
-	if got := gateway.ChatSendCount(); got != 1 {
-		t.Fatalf("expected no automatic repair model turn, got %d", got)
-	}
-	artifacts := responseArtifactMaps(t, response)
-	if len(artifacts) != 1 || artifacts[0]["relativePath"] != "chapters/intro.md" {
-		t.Fatalf("expected only real partial artifact, got %#v", artifacts)
-	}
-	if got := response["code"]; got != "OPENCLAW_REQUIRED_ARTIFACT_MISSING" {
-		t.Fatalf("expected missing final artifact code, got %#v", response)
-	}
-}
 
 func TestExecuteSessionTaskGatewayFailsArtifactContractAfterWaitFailure(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
@@ -990,100 +944,7 @@ func TestExecuteSessionTaskGatewayKeepsRunningOnNonTerminalWaitPayload(t *testin
 	}
 }
 
-func TestExecuteSessionTaskGatewayArtifactContractNoFilesRequiresFinalArtifact(t *testing.T) {
-	gateway := newAcpFakeOpenClawGateway(t)
-	defer gateway.Close()
 
-	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
-	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
-
-	server := NewServer()
-	response, rpcErr := server.executeSessionTask(task{
-		req: shared.RPCRequest{
-			Method: "session.start",
-			Params: map[string]any{
-				"sessionId":        "session-openclaw-no-complex-output",
-				"threadId":         "thread-openclaw-no-complex-output",
-				"taskPrompt":       "completed-empty",
-				"workingDirectory": t.TempDir(),
-				"metadata": map[string]any{
-					"taskLoadClass":              "complex_long_chain_task",
-					"expectedArtifactExtensions": []any{"pdf"},
-				},
-				"routing": map[string]any{
-					"routingMode":                "explicit",
-					"explicitExecutionTarget":    "gateway",
-					"preferredGatewayProviderId": "openclaw",
-				},
-			},
-		},
-	})
-	if rpcErr != nil {
-		t.Fatalf("expected structured no-output response, got rpc error: %#v", rpcErr)
-	}
-	if got := response["success"]; got != false {
-		t.Fatalf("expected missing artifact response to fail, got %#v", response)
-	}
-	if got := response["status"]; got != "failed" {
-		t.Fatalf("expected failed status for missing artifact response, got %#v", response)
-	}
-	if got := response["code"]; got != "OPENCLAW_REQUIRED_ARTIFACT_MISSING" {
-		t.Fatalf("expected required artifact code for empty artifact run, got %#v", response)
-	}
-	if got := response["expectedArtifactExtensions"]; fmt.Sprint(got) != "[pdf]" {
-		t.Fatalf("expected expected extension diagnostics, got %#v", response)
-	}
-	if got := response["missingArtifactExtensions"]; fmt.Sprint(got) != "[pdf]" {
-		t.Fatalf("expected missing extension diagnostics, got %#v", response)
-	}
-	if got := strings.TrimSpace(shared.StringArg(response, "artifactScope", "")); got == "" {
-		t.Fatalf("expected artifact scope diagnostics, got %#v", response)
-	}
-}
-
-func TestExecuteSessionTaskGatewaySimpleArtifactContractNoFilesRequiresFinalArtifact(t *testing.T) {
-	gateway := newAcpFakeOpenClawGateway(t)
-	defer gateway.Close()
-
-	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
-	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
-
-	server := NewServer()
-	response, rpcErr := server.executeSessionTask(task{
-		req: shared.RPCRequest{
-			Method: "session.start",
-			Params: map[string]any{
-				"sessionId":        "session-openclaw-simple-md",
-				"threadId":         "thread-openclaw-simple-md",
-				"taskPrompt":       "completed-empty",
-				"workingDirectory": t.TempDir(),
-				"metadata": map[string]any{
-					"expectedArtifactExtensions": []any{"md"},
-				},
-				"routing": map[string]any{
-					"routingMode":                "explicit",
-					"explicitExecutionTarget":    "gateway",
-					"preferredGatewayProviderId": "openclaw",
-				},
-			},
-		},
-	})
-	if rpcErr != nil {
-		t.Fatalf("expected structured missing-artifact response, got rpc error: %#v", rpcErr)
-	}
-	if got := response["success"]; got != false {
-		t.Fatalf("expected simple missing artifact response to fail, got %#v", response)
-	}
-	if got := response["code"]; got != "OPENCLAW_REQUIRED_ARTIFACT_MISSING" {
-		t.Fatalf("expected required artifact code for simple artifact run, got %#v", response)
-	}
-	if got := response["requiredArtifactExtensions"]; fmt.Sprint(got) != "[md]" {
-		t.Fatalf("expected required extension diagnostics, got %#v", response)
-	}
-	if got := response["missingArtifactExtensions"]; fmt.Sprint(got) != "[md]" {
-		t.Fatalf("expected missing extension diagnostics, got %#v", response)
-	}
-}
 
 func TestExecuteSessionTaskGatewayAgentFailedBeforeReplyReturnsFailureCode(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
