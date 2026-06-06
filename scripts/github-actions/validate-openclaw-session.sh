@@ -159,10 +159,16 @@ if not payloads or payloads[-1].get("done") is not True:
 
 result = terminal_result(final.get("result") or final.get("payload") or {})
 if result.get("status") == "running":
-    session_id = result.get("sessionId")
-    thread_id = result.get("threadId")
-    turn_id = result.get("turnId")
     run_id = result.get("runId")
+    app_thread_key = result.get("appThreadKey")
+    openclaw_session_key = result.get("openclawSessionKey")
+
+    if not app_thread_key:
+        raise SystemExit(f"OpenClaw smoke running handle missing appThreadKey: {json.dumps(result, ensure_ascii=False, sort_keys=True)[:1000]}")
+    if not openclaw_session_key:
+        raise SystemExit(f"OpenClaw smoke running handle missing openclawSessionKey: {json.dumps(result, ensure_ascii=False, sort_keys=True)[:1000]}")
+    if not run_id:
+        raise SystemExit(f"OpenClaw smoke running handle missing runId: {json.dumps(result, ensure_ascii=False, sort_keys=True)[:1000]}")
 
     deadline = time.time() + poll_timeout
     while time.time() < deadline:
@@ -171,9 +177,8 @@ if result.get("status") == "running":
             "id": "poll-task",
             "method": "xworkmate.tasks.get",
             "params": {
-                "sessionId": session_id,
-                "threadId": thread_id,
-                "turnId": turn_id,
+                "appThreadKey": app_thread_key,
+                "openclawSessionKey": openclaw_session_key,
                 "runId": run_id,
             },
         }).encode("utf-8")
