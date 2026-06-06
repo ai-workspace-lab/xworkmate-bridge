@@ -384,21 +384,22 @@ func (o *SessionOrchestrator) startOpenClawGatewayTask(
 	taskLoadClass, runtimeBudgetMinutes := openClawTaskRuntimePolicy(params, chatParams, artifactContract)
 	startedAt := time.Now()
 	record := &OpenClawTaskRecord{
-		SessionID:            sessionID,
-		ThreadID:             threadID,
-		TurnID:               turnID,
-		RunID:                runID,
-		SessionKey:           sessionKey,
-		GatewayProviderID:    gatewayProvider,
-		TaskLoadClass:        taskLoadClass,
-		RuntimeBudgetMinutes: runtimeBudgetMinutes,
-		StartedAt:            startedAt,
-		DeadlineAt:           startedAt.Add(time.Duration(runtimeBudgetMinutes) * time.Minute),
-		ProgressStage:        "running",
-		ProgressMessage:      "OpenClaw task accepted",
-		PreparedArtifact:     preparedArtifact,
-		ResolvedModel:        routing.Model,
-		ResolvedSkills:       append([]string(nil), routing.Skills...),
+		SessionID:              sessionID,
+		ThreadID:               threadID,
+		TurnID:                 turnID,
+		RunID:                  runID,
+		SessionKey:             sessionKey,
+		GatewayProviderID:      gatewayProvider,
+		TaskLoadClass:          taskLoadClass,
+		RuntimeBudgetMinutes:   runtimeBudgetMinutes,
+		StartedAt:              startedAt,
+		DeadlineAt:             startedAt.Add(time.Duration(runtimeBudgetMinutes) * time.Minute),
+		ProgressStage:          "running",
+		ProgressMessage:        "OpenClaw task accepted",
+		PreparedArtifact:       preparedArtifact,
+		RequiresArtifactExport: artifactContract.RequiresArtifactExport,
+		ResolvedModel:          routing.Model,
+		ResolvedSkills:         append([]string(nil), routing.Skills...),
 	}
 	sess := o.server.getOrCreateSession(sessionID, threadID)
 	sess.mu.Lock()
@@ -617,6 +618,9 @@ func openClawSessionPrepareParams(params map[string]any, openClawSessionKey stri
 	if len(artifactContract.ExpectedArtifactDirs) > 0 {
 		result["expectedArtifactDirs"] = append([]string(nil), artifactContract.ExpectedArtifactDirs...)
 	}
+	if artifactContract.RequiresArtifactExport {
+		result["requiresArtifactExport"] = true
+	}
 	if workspaceDir := openClawArtifactWorkspaceDir(params); workspaceDir != "" {
 		result["workspaceDir"] = workspaceDir
 	}
@@ -770,10 +774,11 @@ func shellSingleQuote(value string) string {
 }
 
 type openClawArtifactContract struct {
-	TaskLoadClass        string
-	ComplexLongChain     bool
-	ExpectedArtifactDirs []string
-	SourceMessage        string
+	TaskLoadClass          string
+	ComplexLongChain       bool
+	RequiresArtifactExport bool
+	ExpectedArtifactDirs   []string
+	SourceMessage          string
 }
 
 func openClawArtifactContractForParams(params map[string]any, chatParams map[string]any) openClawArtifactContract {
@@ -786,12 +791,14 @@ func openClawArtifactContractForParams(params map[string]any, chatParams map[str
 	lowerMessage := strings.ToLower(message)
 	contract := shared.AsMap(metadata["xworkmateTaskArtifactContract"])
 	expectedDirs := normalizeOpenClawDirList(shared.ListArg(contract, "expectedArtifactDirs"))
+	requiresExport := parseBool(contract["requiresExportBeforeFinalResponse"]) || len(expectedDirs) > 0
 	complex := taskLoadClass == "complex_long_chain_task" || isOpenClawLongArtifactTask(lowerMessage)
 	return openClawArtifactContract{
-		TaskLoadClass:        taskLoadClass,
-		ComplexLongChain:     complex,
-		ExpectedArtifactDirs: expectedDirs,
-		SourceMessage:        message,
+		TaskLoadClass:          taskLoadClass,
+		ComplexLongChain:       complex,
+		RequiresArtifactExport: requiresExport,
+		ExpectedArtifactDirs:   expectedDirs,
+		SourceMessage:          message,
 	}
 }
 

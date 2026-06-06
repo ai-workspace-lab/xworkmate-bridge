@@ -15,21 +15,22 @@ const (
 )
 
 type OpenClawTaskRecord struct {
-	SessionID            string
-	ThreadID             string
-	TurnID               string
-	RunID                string
-	SessionKey           string
-	GatewayProviderID    string
-	TaskLoadClass        string
-	RuntimeBudgetMinutes int
-	StartedAt            time.Time
-	DeadlineAt           time.Time
-	ProgressStage        string
-	ProgressMessage      string
-	PreparedArtifact     *openClawPreparedArtifactScope
-	ResolvedModel        string
-	ResolvedSkills       []string
+	SessionID              string
+	ThreadID               string
+	TurnID                 string
+	RunID                  string
+	SessionKey             string
+	GatewayProviderID      string
+	TaskLoadClass          string
+	RuntimeBudgetMinutes   int
+	StartedAt              time.Time
+	DeadlineAt             time.Time
+	ProgressStage          string
+	ProgressMessage        string
+	PreparedArtifact       *openClawPreparedArtifactScope
+	RequiresArtifactExport bool
+	ResolvedModel          string
+	ResolvedSkills         []string
 }
 
 func openClawTaskRuntimePolicy(params map[string]any, chatParams map[string]any, contract openClawArtifactContract) (string, int) {
@@ -84,6 +85,7 @@ func openClawRunningTaskResult(record *OpenClawTaskRecord) map[string]any {
 		"resolvedGatewayProviderId": record.GatewayProviderID,
 		"taskLoadClass":             record.TaskLoadClass,
 		"runtimeBudgetMinutes":      record.RuntimeBudgetMinutes,
+		"requiresArtifactExport":    record.RequiresArtifactExport,
 		"startedAt":                 record.StartedAt.UTC().Format(time.RFC3339Nano),
 		"deadlineAt":                record.DeadlineAt.UTC().Format(time.RFC3339Nano),
 		"progress":                  openClawTaskProgress(record),

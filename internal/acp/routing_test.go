@@ -598,11 +598,11 @@ func TestExecuteSessionTaskGatewayAutoConnectsLocalOpenClaw(t *testing.T) {
 	if gateway.AgentWaitCount() != 0 {
 		t.Fatalf("expected native task lookup to avoid Bridge-owned agent.wait, got %d", gateway.AgentWaitCount())
 	}
-	if gateway.ArtifactExportCount() != 0 {
-		t.Fatalf("expected native task lookup to avoid Bridge-owned artifact export, got %d", gateway.ArtifactExportCount())
+	if gateway.ArtifactExportCount() != 1 {
+		t.Fatalf("expected empty terminal task lookup to fall back to artifact export, got %d", gateway.ArtifactExportCount())
 	}
-	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.session.prepare", "chat.send", "xworkmate.tasks.get"}) {
-		t.Fatalf("expected connect, prepare, chat.send, then native task lookup, got %#v", got)
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.session.prepare", "chat.send", "xworkmate.tasks.get", "xworkmate.artifacts.export"}) {
+		t.Fatalf("expected connect, prepare, chat.send, native task lookup, then artifact export fallback, got %#v", got)
 	}
 	client := gateway.LastConnectClient()
 	if got := client["id"]; got != "openclaw-macos" {
@@ -2593,7 +2593,7 @@ func TestExecuteSessionTaskGatewayCollectsOpenClawEventArtifacts(t *testing.T) {
 	}
 }
 
-func TestExecuteSessionTaskGatewayAlwaysSyncsGatewayArtifactsAfterRun(t *testing.T) {
+func TestExecuteSessionTaskGatewayKeepsRunningWhenTerminalLookupExportsNoArtifacts(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
 
@@ -2609,6 +2609,11 @@ func TestExecuteSessionTaskGatewayAlwaysSyncsGatewayArtifactsAfterRun(t *testing
 				"threadId":         "thread-openclaw-artifact-missing",
 				"taskPrompt":       "say pong",
 				"workingDirectory": t.TempDir(),
+				"metadata": map[string]any{
+					"xworkmateTaskArtifactContract": map[string]any{
+						"requiresExportBeforeFinalResponse": true,
+					},
+				},
 				"routing": map[string]any{
 					"routingMode":                "explicit",
 					"explicitExecutionTarget":    "gateway",
@@ -2618,16 +2623,74 @@ func TestExecuteSessionTaskGatewayAlwaysSyncsGatewayArtifactsAfterRun(t *testing
 		},
 	})
 	if rpcErr != nil {
-		t.Fatalf("expected gateway text response despite artifact export failure, got rpc error: %#v", rpcErr)
+		t.Fatalf("expected gateway response, got rpc error: %#v", rpcErr)
 	}
-	if got := response["output"]; got != "gateway pong" {
-		t.Fatalf("expected gateway pong output, got %#v", response)
+	if got := response["status"]; got != string(TaskStateRunning) {
+		t.Fatalf("expected empty terminal artifact export to keep task running, got %#v", response)
 	}
-	if gateway.ArtifactExportCount() != 0 {
-		t.Fatalf("expected native task-registry lookup without Bridge artifact export sync, got %d", gateway.ArtifactExportCount())
+	if got := shared.StringArg(shared.AsMap(response["progress"]), "stage", ""); got != "syncing-artifacts" {
+		t.Fatalf("expected syncing-artifacts progress, got %#v", response)
 	}
-	if warnings := shared.ListArg(response, "artifactWarnings"); len(warnings) != 0 {
-		t.Fatalf("expected no artifact warnings when gateway export succeeds empty, got %#v", warnings)
+	if gateway.ArtifactExportCount() != 1 {
+		t.Fatalf("expected artifact export fallback after empty terminal lookup, got %d", gateway.ArtifactExportCount())
+	}
+}
+
+func TestTaskGetBackfillsArtifactScopeFromBridgeSession(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	start, rpcErr := server.handleRequest(shared.RPCRequest{
+		Method: "session.start",
+		Params: map[string]any{
+			"sessionId":        "session-openclaw-scope-backfill",
+			"threadId":         "thread-openclaw-scope-backfill",
+			"taskPrompt":       "say pong",
+			"workingDirectory": t.TempDir(),
+			"metadata": map[string]any{
+				"xworkmateTaskArtifactContract": map[string]any{
+					"requiresExportBeforeFinalResponse": true,
+				},
+			},
+			"routing": map[string]any{
+				"routingMode":                "explicit",
+				"explicitExecutionTarget":    "gateway",
+				"preferredGatewayProviderId": "openclaw",
+			},
+		},
+	}, nil)
+	if rpcErr != nil {
+		t.Fatalf("expected running task handle, got rpc error: %#v", rpcErr)
+	}
+	if got := start["status"]; got != string(TaskStateRunning) {
+		t.Fatalf("expected running start response, got %#v", start)
+	}
+
+	response, rpcErr := server.handleRequest(shared.RPCRequest{
+		Method: "xworkmate.tasks.get",
+		Params: map[string]any{
+			"runId":              shared.StringArg(start, "runId", ""),
+			"appThreadKey":       shared.StringArg(start, "appThreadKey", ""),
+			"openclawSessionKey": shared.StringArg(start, "openclawSessionKey", ""),
+			"includeArtifacts":   true,
+		},
+	}, nil)
+	if rpcErr != nil {
+		t.Fatalf("expected task lookup response, got rpc error: %#v", rpcErr)
+	}
+	if got := response["status"]; got != string(TaskStateRunning) {
+		t.Fatalf("expected empty terminal lookup to remain running, got %#v", response)
+	}
+	exportParams := gateway.LastArtifactExportParams()
+	if got := shared.StringArg(exportParams, "artifactScope", ""); got == "" {
+		t.Fatalf("expected Bridge to backfill artifactScope for export, got %#v", exportParams)
+	}
+	if got, want := shared.StringArg(exportParams, "artifactScope", ""), shared.StringArg(start, "artifactScope", ""); got != want {
+		t.Fatalf("expected export artifactScope %q, got %#v", want, exportParams)
 	}
 }
 

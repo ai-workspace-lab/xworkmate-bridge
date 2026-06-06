@@ -91,6 +91,7 @@ func (s *Server) handleRequest(request shared.RPCRequest, notify func(map[string
 }
 
 func (s *Server) handleTaskGet(ctx context.Context, params map[string]any, notify func(map[string]any)) map[string]any {
+	params = s.taskGetParamsWithSessionScope(params)
 	gatewayProvider := strings.TrimSpace(shared.StringArg(params, "gatewayProviderId", ""))
 	if gatewayProvider == "" {
 		gatewayProvider = strings.TrimSpace(shared.StringArg(params, "resolvedGatewayProviderId", ""))
@@ -114,7 +115,9 @@ func (s *Server) handleTaskGet(ctx context.Context, params map[string]any, notif
 		notify,
 	)
 	if result.OK {
-		return shared.AsMap(result.Payload)
+		payload := shared.AsMap(result.Payload)
+		s.mergeOpenClawTaskGetArtifactExport(payload, params, gatewayProvider, notify)
+		return normalizeOpenClawTaskGetResult(params, payload, gatewayProvider)
 	}
 	message := strings.TrimSpace(shared.StringArg(result.Error, "message", "openclaw native task lookup failed"))
 	code := strings.TrimSpace(shared.StringArg(result.Error, "code", "TASK_LOOKUP_FAILED"))
@@ -124,6 +127,184 @@ func (s *Server) handleTaskGet(ctx context.Context, params map[string]any, notif
 		"code":    code,
 		"message": message,
 	}
+}
+
+func (s *Server) taskGetParamsWithSessionScope(params map[string]any) map[string]any {
+	next := make(map[string]any, len(params)+8)
+	for key, value := range params {
+		next[key] = value
+	}
+	sess := s.findTaskSession(params)
+	if sess == nil {
+		return next
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	if strings.TrimSpace(shared.StringArg(next, "runId", "")) == "" {
+		next["runId"] = sess.task.RunID
+	}
+	if strings.TrimSpace(shared.StringArg(next, "taskId", "")) == "" {
+		next["taskId"] = sess.task.RunID
+	}
+	if strings.TrimSpace(shared.StringArg(next, "gatewayProviderId", "")) == "" {
+		next["gatewayProviderId"] = sess.task.GatewayProviderID
+	}
+	if strings.TrimSpace(shared.StringArg(next, "artifactScope", "")) == "" {
+		next["artifactScope"] = sess.task.ArtifactScope
+	}
+	if strings.TrimSpace(shared.StringArg(next, "artifactDirectory", "")) == "" {
+		next["artifactDirectory"] = sess.task.ArtifactDirectory
+	}
+	if _, ok := next["requiresArtifactExport"]; !ok && sess.openClaw != nil && sess.openClaw.RequiresArtifactExport {
+		next["requiresArtifactExport"] = true
+	}
+	if strings.TrimSpace(shared.StringArg(next, "openclawSessionKey", "")) == "" {
+		next["openclawSessionKey"] = sess.task.SessionKey
+	}
+	if strings.TrimSpace(shared.StringArg(next, "appThreadKey", "")) == "" {
+		next["appThreadKey"] = sess.threadID
+	}
+	return next
+}
+
+func (s *Server) mergeOpenClawTaskGetArtifactExport(payload map[string]any, params map[string]any, gatewayProvider string, notify func(map[string]any)) {
+	if len(payload) == 0 || s == nil || s.orchestrator == nil {
+		return
+	}
+	status := strings.ToLower(strings.TrimSpace(shared.StringArg(payload, "status", "")))
+	if status == string(TaskStateRunning) || status == string(TaskStateFailed) || status == string(TaskStateCancelled) {
+		return
+	}
+	if !openClawTaskGetRequiresArtifactExport(params, payload) {
+		return
+	}
+	success := true
+	if value, ok := payload["success"]; ok {
+		success = parseBool(value)
+	}
+	if !success {
+		return
+	}
+	remoteWorkingDirectory := strings.TrimSpace(shared.StringArg(payload, "remoteWorkingDirectory", ""))
+	if len(extractArtifactPayloads(payload, remoteWorkingDirectory)) > 0 {
+		return
+	}
+	sessionKey := firstNonEmptyString(payload, "openclawSessionKey", "sessionKey")
+	if sessionKey == "" {
+		sessionKey = strings.TrimSpace(shared.StringArg(params, "openclawSessionKey", ""))
+	}
+	runID := firstNonEmptyString(payload, "runId", "taskId")
+	if runID == "" {
+		runID = strings.TrimSpace(shared.StringArg(params, "runId", ""))
+	}
+	artifactScope := firstNonEmptyString(payload, "artifactScope")
+	if artifactScope == "" {
+		artifactScope = strings.TrimSpace(shared.StringArg(params, "artifactScope", ""))
+	}
+	artifactDirectory := firstNonEmptyString(payload, "artifactDirectory")
+	if artifactDirectory == "" {
+		artifactDirectory = strings.TrimSpace(shared.StringArg(params, "artifactDirectory", ""))
+	}
+	if sessionKey == "" || runID == "" || artifactScope == "" || artifactDirectory == "" {
+		return
+	}
+	prepared := &openClawPreparedArtifactScope{
+		RemoteWorkingDirectory: remoteWorkingDirectory,
+		RemoteWorkspaceRefKind: strings.TrimSpace(shared.StringArg(payload, "remoteWorkspaceRefKind", "")),
+		ArtifactScope:          artifactScope,
+		ArtifactDirectory:      artifactDirectory,
+		ScopeKind:              "task",
+	}
+	exportParams := map[string]any{
+		"openclawSessionKey": sessionKey,
+		"runId":              runID,
+		"artifactScope":      artifactScope,
+		"sinceUnixMs":        0,
+		"maxFiles":           64,
+		"maxInlineBytes":     0,
+		"includeContent":     false,
+	}
+	if expectedDirs := shared.ListArg(params, "expectedArtifactDirs"); len(expectedDirs) > 0 {
+		exportParams["expectedArtifactDirs"] = expectedDirs
+	}
+	mergeOpenClawArtifactPayload(payload, s.orchestrator.openClawArtifactExportRequest(gatewayProvider, exportParams, notify))
+	applyOpenClawPreparedArtifactToResult(payload, prepared)
+	s.decorateOpenClawArtifactDownloadURLs(payload, sessionKey, runID)
+	stripOpenClawArtifactInlineContent(payload)
+}
+
+func normalizeOpenClawTaskGetResult(params map[string]any, payload map[string]any, gatewayProvider string) map[string]any {
+	if len(payload) == 0 {
+		return payload
+	}
+	artifactScope := firstNonEmptyString(payload, "artifactScope")
+	if artifactScope == "" {
+		artifactScope = strings.TrimSpace(shared.StringArg(params, "artifactScope", ""))
+	}
+	artifactDirectory := firstNonEmptyString(payload, "artifactDirectory")
+	if artifactDirectory == "" {
+		artifactDirectory = strings.TrimSpace(shared.StringArg(params, "artifactDirectory", ""))
+	}
+	if artifactScope == "" && artifactDirectory == "" {
+		return payload
+	}
+	remoteWorkingDirectory := strings.TrimSpace(shared.StringArg(payload, "remoteWorkingDirectory", ""))
+	if len(extractArtifactPayloads(payload, remoteWorkingDirectory)) > 0 {
+		return payload
+	}
+	status := strings.ToLower(strings.TrimSpace(shared.StringArg(payload, "status", "")))
+	success := true
+	if value, ok := payload["success"]; ok {
+		success = parseBool(value)
+	}
+	if !success || status == string(TaskStateRunning) || status == string(TaskStateFailed) || status == string(TaskStateCancelled) {
+		return payload
+	}
+	if !openClawTaskGetRequiresArtifactExport(params, payload) {
+		return payload
+	}
+	runID := firstNonEmptyString(payload, "runId", "taskId")
+	if runID == "" {
+		runID = strings.TrimSpace(shared.StringArg(params, "runId", ""))
+	}
+	sessionKey := firstNonEmptyString(payload, "openclawSessionKey", "sessionKey")
+	if sessionKey == "" {
+		sessionKey = strings.TrimSpace(shared.StringArg(params, "openclawSessionKey", ""))
+	}
+	payload["success"] = true
+	payload["status"] = string(TaskStateRunning)
+	payload["event"] = string(TaskStateRunning)
+	payload["pending"] = true
+	payload["artifactSyncStatus"] = "syncing"
+	payload["message"] = "OpenClaw task completed; waiting for artifact export."
+	payload["runId"] = runID
+	payload["taskId"] = runID
+	payload["openclawSessionKey"] = sessionKey
+	if strings.TrimSpace(shared.StringArg(payload, "appThreadKey", "")) == "" {
+		payload["appThreadKey"] = strings.TrimSpace(shared.StringArg(params, "appThreadKey", ""))
+	}
+	payload["artifactScope"] = artifactScope
+	payload["artifactDirectory"] = artifactDirectory
+	if strings.TrimSpace(shared.StringArg(payload, "resolvedGatewayProviderId", "")) == "" {
+		payload["resolvedGatewayProviderId"] = gatewayProvider
+	}
+	payload["progress"] = map[string]any{
+		"stage":    "syncing-artifacts",
+		"message":  "Waiting for OpenClaw artifact export.",
+		"terminal": false,
+	}
+	return payload
+}
+
+func openClawTaskGetRequiresArtifactExport(params map[string]any, payload map[string]any) bool {
+	if parseBool(params["requiresArtifactExport"]) || parseBool(payload["requiresArtifactExport"]) {
+		return true
+	}
+	if parseBool(params["requiresExportBeforeFinalResponse"]) || parseBool(payload["requiresExportBeforeFinalResponse"]) {
+		return true
+	}
+	return len(shared.ListArg(params, "expectedArtifactDirs")) > 0 ||
+		len(shared.ListArg(payload, "expectedArtifactDirs")) > 0
 }
 
 func (s *Server) handleTaskCancel(ctx context.Context, params map[string]any, notify func(map[string]any)) map[string]any {
@@ -204,6 +385,9 @@ func openClawTaskLookupParams(params map[string]any) map[string]any {
 		"includeContent",
 		"expectedArtifactDirs",
 		"workspaceDir",
+		"artifactScope",
+		"artifactDirectory",
+		"requiresArtifactExport",
 	} {
 		if value, ok := params[key]; ok {
 			result[key] = value
