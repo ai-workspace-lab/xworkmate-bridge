@@ -2,6 +2,7 @@ name: Pipeline
 
 env:
   VAULT_ADDR: https://vault.svc.plus
+  DEFAULT_TARGET_HOST: jp-xhttp-contabo.svc.plus
 
 on:
   pull_request:
@@ -38,9 +39,6 @@ concurrency:
 defaults:
   run:
     shell: bash
-
-env:
-  DEFAULT_TARGET_HOST: jp-xhttp-contabo.svc.plus
 
 jobs:
   production_state:
