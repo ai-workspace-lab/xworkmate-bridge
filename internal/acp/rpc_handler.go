@@ -117,7 +117,18 @@ func (s *Server) handleTaskGet(ctx context.Context, params map[string]any, notif
 	if result.OK {
 		payload := shared.AsMap(result.Payload)
 		s.mergeOpenClawTaskGetArtifactExport(payload, params, gatewayProvider, notify)
-		return normalizeOpenClawTaskGetResult(params, payload, gatewayProvider)
+		payload = normalizeOpenClawTaskGetResult(params, payload, gatewayProvider)
+		sessionKey := firstNonEmptyString(payload, "openclawSessionKey", "sessionKey")
+		if sessionKey == "" {
+			sessionKey = strings.TrimSpace(shared.StringArg(params, "openclawSessionKey", ""))
+		}
+		runID := firstNonEmptyString(payload, "runId", "taskId")
+		if runID == "" {
+			runID = strings.TrimSpace(shared.StringArg(params, "runId", ""))
+		}
+		s.decorateOpenClawArtifactDownloadURLs(payload, sessionKey, runID)
+		stripOpenClawArtifactInlineContent(payload)
+		return payload
 	}
 	message := strings.TrimSpace(shared.StringArg(result.Error, "message", "openclaw native task lookup failed"))
 	code := strings.TrimSpace(shared.StringArg(result.Error, "code", "TASK_LOOKUP_FAILED"))

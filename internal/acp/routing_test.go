@@ -1600,6 +1600,78 @@ func TestExecuteSessionTaskGatewayExportsOpenClawArtifacts(t *testing.T) {
 	}
 }
 
+func TestExecuteSessionTaskGatewayDecoratesFallbackArtifacts(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	response, rpcErr := server.executeSessionTask(task{
+		req: shared.RPCRequest{
+			Method: "session.start",
+			Params: map[string]any{
+				"sessionId":        "session-openclaw-fallback-artifact",
+				"threadId":         "thread-openclaw-fallback-artifact",
+				"taskPrompt":       "fallback artifact",
+				"workingDirectory": t.TempDir(),
+				"routing": map[string]any{
+					"routingMode":                "explicit",
+					"explicitExecutionTarget":    "gateway",
+					"preferredGatewayProviderId": "openclaw",
+				},
+			},
+		},
+	})
+	if rpcErr != nil {
+		t.Fatalf("expected gateway response, got rpc error: %#v", rpcErr)
+	}
+	artifacts := []map[string]any{}
+	rawArtifacts, ok := response["artifacts"].([]any)
+	if !ok {
+		t.Fatalf("expected artifacts payload, got %#v", response["artifacts"])
+	}
+	for _, item := range rawArtifacts {
+		artifacts = append(artifacts, shared.AsMap(item))
+	}
+	if len(artifacts) != 1 {
+		t.Fatalf("expected one fallback artifact, got %#v", response["artifacts"])
+	}
+	if got := shared.StringArg(artifacts[0], "relativePath", ""); got != "ai-news-2026-06.md" {
+		t.Fatalf("expected fallback artifact relative path, got %#v", artifacts[0])
+	}
+	downloadURL := strings.TrimSpace(shared.StringArg(artifacts[0], "downloadUrl", ""))
+	if downloadURL == "" {
+		t.Fatalf("expected bridge to decorate fallback artifact downloadUrl, got %#v", artifacts[0])
+	}
+	parsedDownloadURL, err := url.Parse(downloadURL)
+	if err != nil {
+		t.Fatalf("parse downloadUrl: %v", err)
+	}
+	if got := parsedDownloadURL.Path; got != openClawArtifactDownloadPath {
+		t.Fatalf("expected bridge artifact download path, got %q from %q", got, downloadURL)
+	}
+	if got := parsedDownloadURL.Query().Get("sessionKey"); got != shared.StringArg(response, "openclawSessionKey", "") {
+		t.Fatalf("expected mapped sessionKey in downloadUrl, got %q", got)
+	}
+	if got := parsedDownloadURL.Query().Get("runId"); got != response["runId"].(string) {
+		t.Fatalf("expected runId in downloadUrl, got %q", got)
+	}
+	if got := parsedDownloadURL.Query().Get("relativePath"); got != "ai-news-2026-06.md" {
+		t.Fatalf("expected artifact relativePath in downloadUrl, got %q", got)
+	}
+	if parsedDownloadURL.Query().Get("sig") == "" {
+		t.Fatalf("expected signed downloadUrl, got %q", downloadURL)
+	}
+	if _, ok := artifacts[0]["content"]; ok {
+		t.Fatalf("expected OpenClaw task response to omit inline artifact content, got %#v", artifacts[0])
+	}
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.session.prepare", "chat.send", "xworkmate.tasks.get"}) {
+		t.Fatalf("expected connect, prepare, chat.send, then native task lookup, got %#v", got)
+	}
+}
+
 func TestExecuteSessionTaskGatewayDoesNotTreatPromptTextAsArtifactContract(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
@@ -3201,6 +3273,18 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 						"artifactScope": artifactScope,
 						"scopeKind":     "task",
 						"downloadUrl":   downloadURL("reports/final.md"),
+					})
+				}
+				if strings.Contains(runMessage, "fallback artifact") {
+					artifacts = append(artifacts, map[string]any{
+						"relativePath":  "ai-news-2026-06.md",
+						"label":         "ai-news-2026-06.md",
+						"contentType":   "text/markdown",
+						"sizeBytes":     5089,
+						"sha256":        "fake-sha256",
+						"artifactScope": artifactScope,
+						"scopeKind":     "task",
+						"artifactRef":   "tasks://fallback/ai-news-2026-06.md",
 					})
 				}
 				if strings.Contains(runMessage, "make pdf artifact") {
