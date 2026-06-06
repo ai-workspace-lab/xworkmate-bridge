@@ -203,9 +203,15 @@ func openClawTaskLookupParams(params map[string]any) map[string]any {
 		"includeArtifacts",
 		"includeContent",
 		"expectedArtifactDirs",
+		"workspaceDir",
 	} {
 		if value, ok := params[key]; ok {
 			result[key] = value
+		}
+	}
+	if strings.TrimSpace(shared.StringArg(result, "workspaceDir", "")) == "" {
+		if workspaceDir := openClawArtifactWorkspaceDir(params); workspaceDir != "" {
+			result["workspaceDir"] = workspaceDir
 		}
 	}
 	return result

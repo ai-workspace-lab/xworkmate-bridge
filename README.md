@@ -62,7 +62,16 @@ The deploy stage checks out:
 - this service repository into `xworkmate-bridge/`
 - the `x-evor/playbooks` repository into `playbooks/`
 
-Then it runs `playbooks/deploy_xworkmate_bridge_vhosts.yml`, which builds the service for `linux/amd64` and deploys it to the target host with Ansible.
+Then it installs the native `linux/amd64` bridge binary with
+`scripts/github-actions/deploy-native-binary.sh`. The native bridge runs as the
+`ubuntu` user's systemd user service:
+
+- binary: `/home/ubuntu/.local/bin/xworkmate-go-core`
+- unit: `/home/ubuntu/.config/systemd/user/xworkmate-bridge.service`
+- restart: `systemctl --user restart xworkmate-bridge.service`
+
+During migration the script performs a one-time stop/disable of the old system
+unit, then deploys and restarts through `ubuntu@<target>`.
 
 ### Validate stage
 

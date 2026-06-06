@@ -272,7 +272,7 @@ OpenClaw 的 `session.message` 复用同一 `sessionId` / `threadId`，继续提
 
 ## 8. 线上环境事实
 
-以下为 2026-05-03 通过 `ssh root@xworkmate-bridge.svc.plus` 核对的部署事实。它们用于 bridge 运维和验证，不属于 APP contract。
+以下为 2026-06-06 通过 `ssh ubuntu@xworkmate-bridge.svc.plus` 核对的部署事实。它们用于 bridge 运维和验证，不属于 APP contract。
 
 ### Caddy
 
@@ -296,7 +296,7 @@ Authorization: Bearer $BRIDGE_AUTH_TOKEN
 
 | Unit / Runtime | Listener | 说明 |
 | --- | --- | --- |
-| `xworkmate-bridge.service` | `127.0.0.1:8787` | Public bridge origin |
+| `~/.config/systemd/user/xworkmate-bridge.service` | `127.0.0.1:8787` | Public bridge origin, runs as `ubuntu`, binary at `/home/ubuntu/.local/bin/xworkmate-go-core` |
 | `acp-codex.service` | `127.0.0.1:9001` | Codex ACP backend |
 | `acp-gemini.service` | `127.0.0.1:8791` | Gemini adapter |
 | `acp-hermes.service` | `127.0.0.1:3920` | Hermes adapter |
@@ -305,7 +305,7 @@ Authorization: Bearer $BRIDGE_AUTH_TOKEN
 
 这些地址只允许 bridge 内部使用。APP 不保存、不展示、不请求这些地址。
 
-验证时 `xworkmate-bridge`、`acp-codex`、`acp-gemini`、`acp-hermes`、`acp-opencode` 均为 `active`；`openclaw-gateway.service` 返回 `inactive`，但 `ss` 显示 `openclaw` 进程仍监听 `127.0.0.1:18789` 和 `[::1]:18789`。因此 APP contract 只记录 `openclaw` 作为 `gatewayProviders` 能力，不把 systemd unit 状态作为 APP 可见状态。
+验证时 `systemctl --user status xworkmate-bridge.service` 为 `active`，系统级 `/etc/systemd/system/xworkmate-bridge.service` 为 `disabled/inactive`。`acp-codex`、`acp-gemini`、`acp-hermes`、`acp-opencode` 仍由现有本机 service 提供。APP contract 只记录 provider/gateway 能力，不把 systemd unit 类型作为 APP 可见状态。
 
 ## 9. 线上验证结果
 

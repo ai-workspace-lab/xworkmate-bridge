@@ -79,6 +79,19 @@ func (s *Server) executeSessionTask(t task) (map[string]any, *shared.RPCError) {
 	}, t.notify)
 }
 
+func TestOpenClawTaskLookupParamsIncludesWorkspaceDir(t *testing.T) {
+	params := openClawTaskLookupParams(map[string]any{
+		"appThreadKey":       "draft:sample-task",
+		"openclawSessionKey": "agent:main:draft:sample-task",
+		"runId":              "turn-sample",
+		"includeArtifacts":   true,
+	})
+
+	if got := shared.StringArg(params, "workspaceDir", ""); got != "~/.openclaw/workspace" {
+		t.Fatalf("expected default OpenClaw workspaceDir, got %#v", params)
+	}
+}
+
 func newExternalSingleAgentProvider(
 	t *testing.T,
 	providerID string,
