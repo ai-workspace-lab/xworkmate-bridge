@@ -77,18 +77,6 @@ func taskGetHTTPTerminalResult(t *testing.T, handler http.Handler, handle map[st
 	}
 }
 
-func jsonArrayString(t *testing.T, values []any) string {
-	t.Helper()
-	if values == nil {
-		return "[]"
-	}
-	encoded, err := json.Marshal(values)
-	if err != nil {
-		t.Fatalf("encode array: %v", err)
-	}
-	return string(encoded)
-}
-
 func TestHTTPHandlerRootAndPingExposeRuntimeVersionInfo(t *testing.T) {
 	t.Setenv("BRIDGE_AUTH_TOKEN", "")
 	t.Setenv("BRIDGE_REVIEW_AUTH_TOKEN", "")

@@ -584,17 +584,6 @@ func cloneMap(source map[string]any) map[string]any {
 	return result
 }
 
-func cloneMapSlice(source []map[string]any) []map[string]any {
-	if source == nil {
-		return nil
-	}
-	result := make([]map[string]any, 0, len(source))
-	for _, item := range source {
-		result = append(result, cloneMap(item))
-	}
-	return result
-}
-
 func parseSkillsCandidates(raw []any) []skills.Candidate {
 	result := make([]skills.Candidate, 0, len(raw))
 	for _, item := range raw {

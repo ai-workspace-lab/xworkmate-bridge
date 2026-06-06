@@ -308,14 +308,12 @@ func (o *SessionOrchestrator) startOpenClawGatewayTask(
 	releaseAdmission func(),
 	notify func(map[string]any),
 ) (map[string]any, *shared.RPCError) {
-	collector := newOpenClawChatCollector()
 	sessionID := strings.TrimSpace(shared.StringArg(params, "sessionId", ""))
 	threadID := strings.TrimSpace(shared.StringArg(params, "threadId", sessionID))
 	if sessionID == "" {
 		sessionID = threadID
 	}
 	notifyWithCollection := func(message map[string]any) {
-		collector.observe(message)
 		if notify == nil {
 			return
 		}
@@ -437,9 +435,8 @@ func (o *SessionOrchestrator) startOpenClawGatewayTask(
 			"progress":             running["progress"],
 		}))
 	}
-	_ = collector
-	return running, nil
-}
+		return running, nil
+	}
 
 func openClawGatewayCompletedResultUpdate(sessionID string, threadID string, turnID string, result map[string]any) map[string]any {
 	success := true
@@ -519,14 +516,6 @@ func logOpenClawArtifactSync(
 		exported,
 		empty,
 	)
-}
-
-func openClawArtifactPayloadCount(payload map[string]any) int {
-	if payload == nil {
-		return 0
-	}
-	remoteWorkingDirectory := strings.TrimSpace(shared.StringArg(payload, "remoteWorkingDirectory", ""))
-	return len(extractArtifactPayloads(payload, remoteWorkingDirectory))
 }
 
 func isSessionTaskMethod(method string) bool {
@@ -1277,50 +1266,6 @@ func (o *SessionOrchestrator) openClawArtifactExport(
 	return payload
 }
 
-func (o *SessionOrchestrator) openClawArtifactCollectAndSnapshot(
-	gatewayProvider string,
-	chatParams map[string]any,
-	artifactContract openClawArtifactContract,
-	runID string,
-	sinceUnixMs int64,
-	preparedArtifact *openClawPreparedArtifactScope,
-	notify func(map[string]any),
-) map[string]any {
-	sessionKey := strings.TrimSpace(shared.StringArg(chatParams, "sessionKey", ""))
-	if sessionKey == "" || strings.TrimSpace(runID) == "" || preparedArtifact == nil {
-		return nil
-	}
-	snapshotParams := map[string]any{
-		"openclawSessionKey": sessionKey,
-		"runId":              strings.TrimSpace(runID),
-		"sinceUnixMs":        sinceUnixMs,
-		"maxFiles":           64,
-	}
-	if strings.TrimSpace(preparedArtifact.ArtifactScope) != "" {
-		snapshotParams["artifactScope"] = strings.TrimSpace(preparedArtifact.ArtifactScope)
-	}
-	if len(artifactContract.ExpectedArtifactDirs) > 0 {
-		snapshotParams["expectedArtifactDirs"] = append([]string(nil), artifactContract.ExpectedArtifactDirs...)
-	}
-	snapshotResult := o.openClawGatewayRequestWithRetry(
-		gatewayProvider,
-		"xworkmate.artifacts.collect-and-snapshot",
-		snapshotParams,
-		30*time.Second,
-		notify,
-	)
-	if snapshotResult.OK {
-		return shared.AsMap(snapshotResult.Payload)
-	}
-	message := strings.TrimSpace(shared.StringArg(snapshotResult.Error, "message", ""))
-	if message == "" {
-		message = "openclaw artifact snapshot unavailable"
-	}
-	return map[string]any{
-		"artifactWarnings": []any{message},
-	}
-}
-
 func (o *SessionOrchestrator) openClawArtifactExportRequest(
 	gatewayProvider string,
 	exportParams map[string]any,
@@ -1342,53 +1287,6 @@ func (o *SessionOrchestrator) openClawArtifactExportRequest(
 	}
 	return map[string]any{
 		"artifactWarnings": []any{message},
-	}
-}
-
-func guardOpenClawNoDisplayableResult(result map[string]any, noDisplayableOutput bool) {
-	if !noDisplayableOutput || result == nil || !parseBool(result["success"]) {
-		return
-	}
-	remoteWorkingDirectory := strings.TrimSpace(shared.StringArg(result, "remoteWorkingDirectory", ""))
-	if len(extractArtifactPayloads(result, remoteWorkingDirectory)) > 0 {
-		return
-	}
-	result["success"] = false
-	result["status"] = "failed"
-	result["code"] = "OPENCLAW_NO_DISPLAYABLE_OUTPUT"
-	result["error"] = "openclaw returned no displayable output"
-	result["message"] = openClawNoDisplayableText
-	result["output"] = openClawNoDisplayableText
-	result["summary"] = openClawNoDisplayableText
-}
-
-func guardOpenClawAgentFailedBeforeReplyResult(result map[string]any) {
-	if result == nil || !parseBool(result["success"]) {
-		return
-	}
-	remoteWorkingDirectory := strings.TrimSpace(shared.StringArg(result, "remoteWorkingDirectory", ""))
-	if len(extractArtifactPayloads(result, remoteWorkingDirectory)) > 0 {
-		return
-	}
-	output := firstNonEmptyString(result, "output", "message", "summary")
-	if !strings.Contains(strings.ToLower(output), "agent failed before reply") {
-		return
-	}
-	result["success"] = false
-	result["status"] = "failed"
-	result["code"] = "OPENCLAW_AGENT_FAILED_BEFORE_REPLY"
-	result["error"] = output
-	result["message"] = output
-	result["output"] = output
-	result["summary"] = output
-}
-
-func applyOpenClawArtifactContractResult(result map[string]any, contract openClawArtifactContract) {
-	if result == nil {
-		return
-	}
-	if strings.TrimSpace(contract.TaskLoadClass) != "" {
-		result["taskLoadClass"] = contract.TaskLoadClass
 	}
 }
 
@@ -1538,71 +1436,6 @@ func firstNonEmptyString(values map[string]any, keys ...string) string {
 	return ""
 }
 
-type openClawChatCollector struct {
-	parts            []string
-	final            string
-	terminal         bool
-	artifactPayloads []map[string]any
-}
-
-func newOpenClawChatCollector() *openClawChatCollector {
-	return &openClawChatCollector{}
-}
-
-func (c *openClawChatCollector) observe(notification map[string]any) {
-	if c == nil {
-		return
-	}
-	event := shared.AsMap(shared.AsMap(notification["params"])["event"])
-	if len(event) == 0 {
-		return
-	}
-	payload := shared.AsMap(event["payload"])
-	if hasArtifactPayload(payload) {
-		c.artifactPayloads = append(c.artifactPayloads, payload)
-	}
-	if strings.TrimSpace(shared.StringArg(event, "event", "")) != "chat.run" {
-		return
-	}
-	if isTerminalGatewayPayload(payload) {
-		c.terminal = true
-	}
-	text := firstNonEmptyString(payload, "assistantText", "text", "message", "output", "summary")
-	if text == "" {
-		return
-	}
-	if isTerminalGatewayPayload(payload) {
-		c.final = text
-		return
-	}
-	c.parts = append(c.parts, text)
-}
-
-func (c *openClawChatCollector) output() string {
-	if c == nil {
-		return ""
-	}
-	if strings.TrimSpace(c.final) != "" {
-		return strings.TrimSpace(c.final)
-	}
-	return strings.TrimSpace(strings.Join(c.parts, ""))
-}
-
-func (c *openClawChatCollector) isTerminal() bool {
-	return c != nil && c.terminal
-}
-
-func (c *openClawChatCollector) artifactPayload() map[string]any {
-	if c == nil || len(c.artifactPayloads) == 0 {
-		return nil
-	}
-	result := map[string]any{}
-	for _, payload := range c.artifactPayloads {
-		mergeOpenClawArtifactPayload(result, payload)
-	}
-	return result
-}
-
 func openClawGatewaySessionUpdate(notification map[string]any, sessionID string, threadID string, turnID string) map[string]any {
 	params := shared.AsMap(notification["params"])
 	event := shared.AsMap(params["event"])
@@ -1635,18 +1468,6 @@ func openClawGatewaySessionUpdate(notification map[string]any, sessionID string,
 		}
 	}
 	return shared.NotificationEnvelope("session.update", update)
-}
-
-func hasArtifactPayload(payload map[string]any) bool {
-	if len(payload) == 0 {
-		return false
-	}
-	for _, key := range []string{"artifacts", "files", "attachments", "remoteWorkingDirectory", "remoteWorkspaceRefKind"} {
-		if _, ok := payload[key]; ok {
-			return true
-		}
-	}
-	return false
 }
 
 func isTerminalGatewayPayload(payload map[string]any) bool {

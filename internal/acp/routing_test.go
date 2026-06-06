@@ -814,6 +814,7 @@ func TestExecuteSessionTaskGatewayFailsClosedWhenOpenClawAcceptsDifferentSession
 
 	if rpcErr == nil {
 		t.Fatalf("expected OpenClaw session mismatch rpc error, got response %#v", response)
+		return
 	}
 	if !strings.Contains(rpcErr.Message, "OPENCLAW_SESSION_MISMATCH") {
 		t.Fatalf("expected structured session mismatch error, got %#v", rpcErr)
