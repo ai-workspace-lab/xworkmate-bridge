@@ -4,12 +4,19 @@ set -euo pipefail
 TARGET_HOST="${1:?target host is required}"
 SSH_KNOWN_HOSTS_PAYLOAD="${2:-}"
 
-test -n "${SINGLE_NODE_VPS_SSH_PRIVATE_KEY:-}"
+if [[ -z "${SINGLE_NODE_VPS_SSH_PRIVATE_KEY:-}" && -z "${SINGLE_NODE_VPS_SSH_PRIVATE_KEY_B64:-}" ]]; then
+  echo "::error::SINGLE_NODE_VPS_SSH_PRIVATE_KEY or SINGLE_NODE_VPS_SSH_PRIVATE_KEY_B64 is required"
+  exit 1
+fi
 
 mkdir -p "${HOME}/.ssh"
 chmod 700 "${HOME}/.ssh"
 
-python3 .github/scripts/normalize-private-key.py normalize > "${HOME}/.ssh/id_rsa"
+if [[ -n "${SINGLE_NODE_VPS_SSH_PRIVATE_KEY_B64:-}" ]]; then
+  printf '%s' "${SINGLE_NODE_VPS_SSH_PRIVATE_KEY_B64}" | base64 -d > "${HOME}/.ssh/id_rsa"
+else
+  python3 .github/scripts/normalize-private-key.py normalize > "${HOME}/.ssh/id_rsa"
+fi
 chmod 600 "${HOME}/.ssh/id_rsa"
 ssh-keygen -y -f "${HOME}/.ssh/id_rsa" >/dev/null
 

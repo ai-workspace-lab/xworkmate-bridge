@@ -223,6 +223,7 @@ jobs:
             kv/data/github-actions/xworkmate-bridge INTERNAL_SERVICE_TOKEN | INTERNAL_SERVICE_TOKEN ;
             kv/data/github-actions/xworkmate-bridge WORKSPACE_REPO_TOKEN | WORKSPACE_REPO_TOKEN ;
             kv/data/github-actions/xworkmate-bridge SINGLE_NODE_VPS_SSH_PRIVATE_KEY | SINGLE_NODE_VPS_SSH_PRIVATE_KEY ;
+            kv/data/github-actions/xworkmate-bridge SINGLE_NODE_VPS_SSH_PRIVATE_KEY_B64 | SINGLE_NODE_VPS_SSH_PRIVATE_KEY_B64 ;
             kv/data/github-actions/xworkmate-bridge SSH_KNOWN_HOSTS | SSH_KNOWN_HOSTS
 
       - name: Export deploy secrets
@@ -282,6 +283,7 @@ jobs:
         working-directory: xworkmate-bridge
         env:
           SINGLE_NODE_VPS_SSH_PRIVATE_KEY: ${{ steps.vault.outputs.SINGLE_NODE_VPS_SSH_PRIVATE_KEY }}
+          SINGLE_NODE_VPS_SSH_PRIVATE_KEY_B64: ${{ steps.vault.outputs.SINGLE_NODE_VPS_SSH_PRIVATE_KEY_B64 }}
           SSH_KNOWN_HOSTS: ${{ steps.vault.outputs.SSH_KNOWN_HOSTS }}
         run: bash ./scripts/github-actions/prepare-ssh.sh "${{ steps.deploy_meta.outputs.target_host }}" "${SSH_KNOWN_HOSTS}"
 
