@@ -2417,8 +2417,79 @@ func TestOpenClawChatSendParamsMapsOwnerScopedWorkspaceToWritableRoot(t *testing
 	}
 }
 
+func TestOpenClawWritableWorkspaceDoesNotDefaultToLegacyTaskArtifacts(t *testing.T) {
+	t.Setenv("OPENCLAW_WRITABLE_WORKSPACE_ROOT", "")
+
+	params := withOpenClawWritableWorkspace(map[string]any{
+		"sessionId":                  "draft-1",
+		"threadId":                   "draft-1",
+		"taskPrompt":                 "write into /owners/local/device/demo/threads/draft-1",
+		"workingDirectory":           "/owners/local/device/demo/threads/draft-1",
+		"remoteWorkingDirectoryHint": "/owners/local/device/demo/threads/draft-1",
+	}, "draft-1")
+
+	if got := shared.StringArg(params, "workingDirectory", ""); strings.Contains(got, "task_artifacts") {
+		t.Fatalf("must not synthesize legacy task_artifacts workspace, got %q", got)
+	}
+	if got := shared.StringArg(params, "remoteWorkingDirectoryHint", ""); strings.Contains(got, "task_artifacts") {
+		t.Fatalf("must not synthesize legacy task_artifacts remote hint, got %q", got)
+	}
+}
+
+func TestOpenClawArtifactWorkspaceDirIgnoresOwnerScopedRemoteHint(t *testing.T) {
+	t.Setenv("OPENCLAW_WORKSPACE_DIR", "")
+
+	got := openClawArtifactWorkspaceDir(map[string]any{
+		"workingDirectory":           "/owners/local/device/demo/threads/draft-1",
+		"remoteWorkingDirectoryHint": "/owners/local/device/demo/threads/draft-1",
+	})
+
+	if got != "~/.openclaw/workspace" {
+		t.Fatalf("expected default OpenClaw workspace root, got %q", got)
+	}
+}
+
+func TestOpenClawPreparedArtifactWorkspaceRewritesOwnerPromptToArtifactDirectory(t *testing.T) {
+	ownerWorkspace := "/owners/local/device/demo/threads/draft-1"
+	artifactDirectory := "/home/ubuntu/.openclaw/workspace/tasks/agent-main-draft-1/turn-1"
+
+	params := withOpenClawPreparedArtifactWorkspace(map[string]any{
+		"taskPrompt": "" +
+			"TaskThread workspace context:\n" +
+			"- remoteWorkspaceHint: " + ownerWorkspace + "\n" +
+			"- currentTaskWorkspace: " + ownerWorkspace + "\n" +
+			"User request:\nwrite a report",
+		"workingDirectory":           ownerWorkspace,
+		"remoteWorkingDirectoryHint": ownerWorkspace,
+		"metadata": map[string]any{
+			"xworkmateTaskArtifactContract": map[string]any{
+				"currentTaskWorkspace": ownerWorkspace,
+				"remoteWorkspaceHint":  ownerWorkspace,
+			},
+		},
+	}, &openClawPreparedArtifactScope{
+		ArtifactDirectory: artifactDirectory,
+		ArtifactScope:     "tasks/agent-main-draft-1/turn-1",
+	})
+
+	if got := shared.StringArg(params, "workingDirectory", ""); got != artifactDirectory {
+		t.Fatalf("expected workingDirectory rewritten to artifact directory, got %q", got)
+	}
+	if got := shared.StringArg(params, "remoteWorkingDirectoryHint", ""); got != artifactDirectory {
+		t.Fatalf("expected remote hint rewritten to artifact directory, got %q", got)
+	}
+	message := shared.StringArg(params, "taskPrompt", "")
+	if strings.Contains(message, ownerWorkspace) {
+		t.Fatalf("prompt must not keep owner-scoped workspace, got %q", message)
+	}
+	if count := strings.Count(message, artifactDirectory); count != 2 {
+		t.Fatalf("expected artifact directory to replace both workspace prompt references, count=%d message=%q", count, message)
+	}
+}
+
 func TestExecuteSessionTaskGatewayRejectsOversizedInlineAttachmentBeforeChatSend(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
+	gateway.artifactWorkspaceRoot = t.TempDir()
 	defer gateway.Close()
 
 	t.Setenv("GATEWAY_RPC_URL", gateway.URL())

@@ -323,11 +323,7 @@ func (o *SessionOrchestrator) startOpenClawGatewayTask(
 	}
 	sessionKey := o.openClawSessionKey(params, turnID)
 	params = withOpenClawWritableWorkspace(params, openClawAppThreadKey(params))
-	chatParams, rpcErr := openClawChatSendParamsWithSessionKey(params, turnID, sessionKey)
-	if rpcErr != nil {
-		return nil, rpcErr
-	}
-	artifactContract := openClawArtifactContractForParams(params, chatParams)
+	artifactContract := openClawArtifactContractForParams(params, nil)
 	preparedArtifact, prepareErr := o.openClawArtifactPrepare(
 		gatewayProvider,
 		params,
@@ -340,6 +336,11 @@ func (o *SessionOrchestrator) startOpenClawGatewayTask(
 		return nil, prepareErr
 	}
 	logOpenClawArtifactSync(gatewayProvider, sessionKey, turnID, "prepare", true, false, false)
+	params = withOpenClawPreparedArtifactWorkspace(params, preparedArtifact)
+	chatParams, rpcErr := openClawChatSendParamsWithSessionKey(params, turnID, sessionKey)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
 	applyOpenClawPreparedArtifactToChatParams(chatParams, preparedArtifact, sessionKey, turnID, artifactContract)
 	sendStarted := time.Now()
 	sendResult := o.openClawGatewayRequestWithRetry(
@@ -623,13 +624,13 @@ func openClawSessionPrepareParams(params map[string]any, openClawSessionKey stri
 }
 
 func openClawArtifactWorkspaceDir(params map[string]any) string {
-	for _, key := range []string{"workspaceDir", "remoteWorkingDirectoryHint", "remoteWorkingDirectory"} {
-		if value := strings.TrimSpace(shared.StringArg(params, key, "")); value != "" {
+	if value := strings.TrimSpace(shared.StringArg(params, "workspaceDir", "")); value != "" {
+		return value
+	}
+	for _, key := range []string{"remoteWorkingDirectoryHint", "remoteWorkingDirectory", "workingDirectory"} {
+		if value := strings.TrimSpace(shared.StringArg(params, key, "")); isOpenClawWorkspacePath(value) {
 			return value
 		}
-	}
-	if workingDirectory := strings.TrimSpace(shared.StringArg(params, "workingDirectory", "")); isOpenClawWorkspacePath(workingDirectory) {
-		return workingDirectory
 	}
 	if configured := strings.TrimSpace(os.Getenv("OPENCLAW_WORKSPACE_DIR")); configured != "" {
 		return configured
@@ -880,6 +881,66 @@ func withOpenClawWritableWorkspace(params map[string]any, appThreadKey string) m
 	return next
 }
 
+func withOpenClawPreparedArtifactWorkspace(params map[string]any, prepared *openClawPreparedArtifactScope) map[string]any {
+	if prepared == nil {
+		return params
+	}
+	artifactDirectory := strings.TrimSpace(prepared.ArtifactDirectory)
+	if artifactDirectory == "" {
+		return params
+	}
+	replacements := openClawWorkspacePromptReplacementValues(params)
+	next := make(map[string]any, len(params)+2)
+	for key, value := range params {
+		next[key] = value
+	}
+	next["workingDirectory"] = artifactDirectory
+	next["remoteWorkingDirectoryHint"] = artifactDirectory
+	for _, key := range []string{"taskPrompt", "prompt", "message"} {
+		value, ok := next[key].(string)
+		if !ok || strings.TrimSpace(value) == "" {
+			continue
+		}
+		next[key] = rewriteOpenClawWorkspaceReferences(value, artifactDirectory, replacements)
+	}
+	return next
+}
+
+func openClawWorkspacePromptReplacementValues(params map[string]any) []string {
+	values := []string{
+		shared.StringArg(params, "workingDirectory", ""),
+		shared.StringArg(params, "remoteWorkingDirectoryHint", ""),
+		shared.StringArg(params, "remoteWorkingDirectory", ""),
+	}
+	metadata := shared.AsMap(params["metadata"])
+	contract := shared.AsMap(metadata["xworkmateTaskArtifactContract"])
+	values = append(values,
+		shared.StringArg(contract, "currentTaskWorkspace", ""),
+		shared.StringArg(contract, "remoteWorkspaceHint", ""),
+	)
+	result := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" || seen[trimmed] {
+			continue
+		}
+		seen[trimmed] = true
+		result = append(result, trimmed)
+	}
+	return result
+}
+
+func rewriteOpenClawWorkspaceReferences(message string, artifactDirectory string, replacements []string) string {
+	result := message
+	for _, value := range replacements {
+		if value != artifactDirectory {
+			result = strings.ReplaceAll(result, value, artifactDirectory)
+		}
+	}
+	return result
+}
+
 func firstOwnerScopedWorkspace(values ...string) string {
 	for _, value := range values {
 		trimmed := strings.TrimSpace(value)
@@ -893,7 +954,7 @@ func firstOwnerScopedWorkspace(values ...string) string {
 func openClawWritableWorkspaceForOwnerPath(ownerPath string, sessionKey string) string {
 	root := strings.TrimSpace(os.Getenv("OPENCLAW_WRITABLE_WORKSPACE_ROOT"))
 	if root == "" {
-		root = "/home/ubuntu/.openclaw/workspace/task_artifacts"
+		return ""
 	}
 	root = strings.TrimRight(filepath.Clean(root), string(os.PathSeparator))
 	if root == "" || root == "." || root == string(os.PathSeparator) {
