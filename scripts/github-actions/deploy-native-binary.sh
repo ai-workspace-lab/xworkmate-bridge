@@ -18,6 +18,8 @@ MIGRATE_SYSTEM_SERVICE="${MIGRATE_SYSTEM_SERVICE:-true}"
 SYSTEM_MIGRATION_USER="${SYSTEM_MIGRATION_USER:-root}"
 STALE_DROPIN="${STALE_DROPIN:-/etc/systemd/system/xworkmate-bridge.service.d/10-hotfix-openclaw-artifacts.conf}"
 DEPLOY_NATIVE_SKIP_PROC_CHECK="${DEPLOY_NATIVE_SKIP_PROC_CHECK:-false}"
+SYSTEMD_SYSTEM_DIR="${SYSTEMD_SYSTEM_DIR:-/etc/systemd/system}"
+SYSTEM_SERVICE_UNIT_PATH="${SYSTEM_SERVICE_UNIT_PATH:-${SYSTEMD_SYSTEM_DIR}/${SYSTEM_SERVICE_NAME}}"
 
 if [[ ! "${TARGET_HOST}" =~ ^[A-Za-z0-9._-]+$ ]]; then
   echo "invalid target host: ${TARGET_HOST}" >&2
@@ -47,10 +49,31 @@ print(value.replace("\\", "\\\\").replace('"', '\\"'))
 PY
 }
 
-AUTH_TOKEN_LINE=""
-if [[ -n "${BRIDGE_AUTH_TOKEN:-}" ]]; then
-  AUTH_TOKEN_LINE="Environment=\"BRIDGE_AUTH_TOKEN=$(escape_systemd_env "${BRIDGE_AUTH_TOKEN}")\""
+resolve_token_from_unit() {
+  local unit_path="$1"
+  local key="$2"
+  sed -n "s/^Environment=\"${key}=\\(.*\\)\"$/\\1/p" "${unit_path}" 2>/dev/null | head -n 1
+}
+
+REMOTE_SYSTEM_SERVICE_UNIT_CONTENT="$(ssh -o BatchMode=yes "${SYSTEM_MIGRATION_USER}@${TARGET_HOST}" "cat '${SYSTEM_SERVICE_UNIT_PATH}' 2>/dev/null || true" 2>/dev/null || true)"
+
+if [[ -z "${BRIDGE_AUTH_TOKEN:-}" && -n "${REMOTE_SYSTEM_SERVICE_UNIT_CONTENT}" ]]; then
+  BRIDGE_AUTH_TOKEN="$(printf '%s\n' "${REMOTE_SYSTEM_SERVICE_UNIT_CONTENT}" | resolve_token_from_unit /dev/stdin "BRIDGE_AUTH_TOKEN")"
+  if [[ -n "${BRIDGE_AUTH_TOKEN}" ]]; then
+    echo "recovered BRIDGE_AUTH_TOKEN from ${SYSTEM_SERVICE_UNIT_PATH} on ${TARGET_HOST}" >&2
+  fi
 fi
+
+if [[ -z "${BRIDGE_AUTH_TOKEN:-}" ]]; then
+  echo "::error::BRIDGE_AUTH_TOKEN is required: pass it via env, -e xworkmate_bridge_auth_token=, or keep the existing system service unit at ${SYSTEM_SERVICE_UNIT_PATH}" >&2
+  exit 1
+fi
+
+if [[ -z "${BRIDGE_REVIEW_AUTH_TOKEN:-}" && -n "${REMOTE_SYSTEM_SERVICE_UNIT_CONTENT}" ]]; then
+  BRIDGE_REVIEW_AUTH_TOKEN="$(printf '%s\n' "${REMOTE_SYSTEM_SERVICE_UNIT_CONTENT}" | resolve_token_from_unit /dev/stdin "BRIDGE_REVIEW_AUTH_TOKEN")"
+fi
+
+AUTH_TOKEN_LINE="Environment=\"BRIDGE_AUTH_TOKEN=$(escape_systemd_env "${BRIDGE_AUTH_TOKEN}")\""
 
 REVIEW_TOKEN_LINE=""
 if [[ -n "${BRIDGE_REVIEW_AUTH_TOKEN:-}" ]]; then
@@ -78,7 +101,7 @@ fi
 scp -q "${BINARY_PATH}" "${DEPLOY_USER}@${TARGET_HOST}:${REMOTE_TMP}"
 
 ssh "${DEPLOY_USER}@${TARGET_HOST}" \
-  "EXPECTED_COMMIT='${EXPECTED_COMMIT}' REMOTE_TMP='${REMOTE_TMP}' REMOTE_BINARY='${REMOTE_BINARY}' REMOTE_WORKING_DIR='${REMOTE_WORKING_DIR}' BRIDGE_CONFIG_PATH='${BRIDGE_CONFIG_PATH}' SERVICE_NAME='${SERVICE_NAME}' SERVICE_LISTEN_ADDR='${SERVICE_LISTEN_ADDR}' USER_SYSTEMD_DIR='${USER_SYSTEMD_DIR}' SYSTEM_SERVICE_NAME='${SYSTEM_SERVICE_NAME}' UNIT_ENV_LINES_B64='${UNIT_ENV_LINES_B64}' DEPLOY_NATIVE_SKIP_PROC_CHECK='${DEPLOY_NATIVE_SKIP_PROC_CHECK}' bash -s" <<'REMOTE'
+  "EXPECTED_COMMIT='${EXPECTED_COMMIT}' REMOTE_TMP='${REMOTE_TMP}' REMOTE_BINARY='${REMOTE_BINARY}' REMOTE_WORKING_DIR='${REMOTE_WORKING_DIR}' BRIDGE_CONFIG_PATH='${BRIDGE_CONFIG_PATH}' SERVICE_NAME='${SERVICE_NAME}' SERVICE_LISTEN_ADDR='${SERVICE_LISTEN_ADDR}' USER_SYSTEMD_DIR='${USER_SYSTEMD_DIR}' SYSTEM_SERVICE_NAME='${SYSTEM_SERVICE_NAME}' SYSTEM_SERVICE_UNIT_PATH='${SYSTEM_SERVICE_UNIT_PATH}' UNIT_ENV_LINES_B64='${UNIT_ENV_LINES_B64}' DEPLOY_NATIVE_SKIP_PROC_CHECK='${DEPLOY_NATIVE_SKIP_PROC_CHECK}' bash -s" <<'REMOTE'
 set -euo pipefail
 
 mkdir -p "$(dirname "${REMOTE_BINARY}")" "${USER_SYSTEMD_DIR}"
@@ -103,6 +126,9 @@ existing_env="$(
   {
     systemctl --user show -p Environment --value "${SERVICE_NAME}" 2>/dev/null || true
     systemctl show -p Environment --value "${SYSTEM_SERVICE_NAME}" 2>/dev/null || true
+    if [[ -f "${SYSTEM_SERVICE_UNIT_PATH}" ]]; then
+      sed -n 's/^Environment="\(BRIDGE_AUTH_TOKEN=[^"]*\|BRIDGE_REVIEW_AUTH_TOKEN=[^"]*\)"$/\1/p' "${SYSTEM_SERVICE_UNIT_PATH}"
+    fi
   } | sed '/^$/d' | head -n 1
 )"
 unit_env_lines="$(
