@@ -62,6 +62,7 @@ jobs:
           method: jwt
           role: github-actions-xworkmate-bridge
           jwtGithubAudience: vault
+          ignoreNotFound: true
           secrets: |
             kv/data/github-actions/xworkmate-bridge INTERNAL_SERVICE_TOKEN | INTERNAL_SERVICE_TOKEN
 
@@ -132,6 +133,7 @@ jobs:
           method: jwt
           role: github-actions-xworkmate-bridge
           jwtGithubAudience: vault
+          ignoreNotFound: true
           secrets: |
             kv/data/github-actions/xworkmate-bridge GHCR_TOKEN | GHCR_TOKEN
 
@@ -198,7 +200,7 @@ jobs:
   deploy:
     name: Deploy
     needs: build
-    if: ${{ github.event_name != 'pull_request' }}
+    if: ${{ github.event_name != 'pull_request' && github.event_name != 'push' }}
     runs-on: ubuntu-latest
     outputs:
       run_apply: ${{ steps.deploy_meta.outputs.run_apply }}
@@ -216,6 +218,7 @@ jobs:
           method: jwt
           role: github-actions-xworkmate-bridge
           jwtGithubAudience: vault
+          ignoreNotFound: true
           secrets: |
             kv/data/github-actions/xworkmate-bridge INTERNAL_SERVICE_TOKEN | INTERNAL_SERVICE_TOKEN ;
             kv/data/github-actions/xworkmate-bridge WORKSPACE_REPO_TOKEN | WORKSPACE_REPO_TOKEN ;
@@ -348,7 +351,7 @@ jobs:
     needs:
       - build
       - deploy
-    if: ${{ needs.deploy.result == 'success' && needs.deploy.outputs.run_apply == 'true' }}
+    if: ${{ github.event_name != 'push' && needs.deploy.result == 'success' && needs.deploy.outputs.run_apply == 'true' }}
     runs-on: ubuntu-latest
     env:
       BRIDGE_SERVER_URL: https://xworkmate-bridge.svc.plus
@@ -364,6 +367,7 @@ jobs:
           method: jwt
           role: github-actions-xworkmate-bridge
           jwtGithubAudience: vault
+          ignoreNotFound: true
           secrets: |
             kv/data/github-actions/xworkmate-bridge INTERNAL_SERVICE_TOKEN | INTERNAL_SERVICE_TOKEN
 
