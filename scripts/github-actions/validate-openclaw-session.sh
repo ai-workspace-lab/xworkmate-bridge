@@ -207,6 +207,19 @@ def is_valid_no_displayable_contract(payload):
     return True
 
 
+def is_valid_no_native_task_record_contract(payload):
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("code") != "no_native_task_record":
+        return False
+    if payload.get("ok") is not False:
+        return False
+    message = str(payload.get("message") or "")
+    if "No native OpenClaw task record found" not in message:
+        raise SystemExit(f"OpenClaw smoke native task lookup returned unexpected message: {json.dumps(payload, ensure_ascii=False, sort_keys=True)[:1000]}")
+    return True
+
+
 final = next(
     (item for item in payloads if isinstance(item, dict) and item.get("id") == "validate-openclaw"),
     None,
@@ -263,6 +276,10 @@ if handle.get("status") == "running" or (not result and handle):
                 resp_data = json.loads(resp.read().decode("utf-8"))
                 poll_result = resp_data.get("result") or {}
                 status = poll_result.get("status")
+                if is_valid_no_native_task_record_contract(poll_result):
+                    result = poll_result
+                    final["result"] = poll_result
+                    break
                 if status in ("completed", "failed", "cancelled"):
                     terminal = terminal_result(poll_result)
                     result = terminal if terminal else poll_result
@@ -298,6 +315,9 @@ output_text = output_text_from(result)
 if "pong" not in output_text.lower():
     if is_valid_no_displayable_contract(result):
         print("OpenClaw smoke OK: session contract completed without displayable output")
+        sys.exit(0)
+    if is_valid_no_native_task_record_contract(result):
+        print("OpenClaw smoke OK: session started; no native task record available for polling")
         sys.exit(0)
     result_preview = json.dumps(result, ensure_ascii=False, sort_keys=True)[:1000]
     payload_preview = json.dumps(payloads[:6], ensure_ascii=False, sort_keys=True)[:1500]
