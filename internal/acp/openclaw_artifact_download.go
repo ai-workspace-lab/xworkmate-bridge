@@ -46,7 +46,10 @@ func (s *Server) HandleOpenClawArtifactDownload(w http.ResponseWriter, r *http.R
 	}
 
 	query := r.URL.Query()
-	sessionKey := strings.TrimSpace(query.Get("sessionKey"))
+	sessionKey := strings.TrimSpace(query.Get("openclawSessionKey"))
+	if sessionKey == "" {
+		sessionKey = strings.TrimSpace(query.Get("sessionKey"))
+	}
 	runID := strings.TrimSpace(query.Get("runId"))
 	rawArtifactScope := strings.TrimSpace(query.Get("artifactScope"))
 	artifactScope := safeOpenClawArtifactDownloadArtifactScope(rawArtifactScope)
@@ -80,10 +83,11 @@ func (s *Server) HandleOpenClawArtifactDownload(w http.ResponseWriter, r *http.R
 		return
 	}
 	readParams := map[string]any{
-		"sessionKey":     sessionKey,
-		"runId":          runID,
-		"relativePath":   relativePath,
-		"maxInlineBytes": openClawArtifactDownloadMaxBytes,
+		"openclawSessionKey": sessionKey,
+		"sessionKey":         sessionKey,
+		"runId":              runID,
+		"relativePath":       relativePath,
+		"maxInlineBytes":     openClawArtifactDownloadMaxBytes,
 	}
 	if artifactScope != "" {
 		readParams["artifactScope"] = artifactScope
@@ -323,6 +327,7 @@ func (s *Server) openClawArtifactDownloadURL(
 	parsed.RawQuery = ""
 	expires := strconv.FormatInt(now.Add(openClawArtifactDownloadTTL).Unix(), 10)
 	query := parsed.Query()
+	query.Set("openclawSessionKey", sessionKey)
 	query.Set("sessionKey", sessionKey)
 	query.Set("runId", runID)
 	query.Set("artifactScope", artifactScope)

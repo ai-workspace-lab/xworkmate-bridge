@@ -2064,6 +2064,13 @@ func TestHTTPHandlerOpenClawArtifactDownloadReadsViaGateway(t *testing.T) {
 	if downloadURL == "" {
 		t.Fatal("expected signed download URL")
 	}
+	parsedDownloadURL, err := url.Parse(downloadURL)
+	if err != nil {
+		t.Fatalf("parse downloadUrl: %v", err)
+	}
+	if got := parsedDownloadURL.Query().Get("openclawSessionKey"); got != "thread-openclaw-artifact" {
+		t.Fatalf("expected openclawSessionKey in downloadUrl, got %q", got)
+	}
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, downloadURL, nil)
 	request.Header.Set("Authorization", "Bearer bridge-token")
@@ -2080,6 +2087,10 @@ func TestHTTPHandlerOpenClawArtifactDownloadReadsViaGateway(t *testing.T) {
 	}
 	if gateway.ArtifactReadCount() != 1 {
 		t.Fatalf("expected one OpenClaw artifact read request, got %d", gateway.ArtifactReadCount())
+	}
+	readParams := gateway.LastArtifactReadParams()
+	if got := shared.StringArg(readParams, "openclawSessionKey", ""); got != "thread-openclaw-artifact" {
+		t.Fatalf("expected OpenClaw artifact read to use openclawSessionKey, got %#v", readParams)
 	}
 	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.artifacts.read"}) {
 		t.Fatalf("expected connect, then artifact read, got %#v", got)
@@ -2873,6 +2884,7 @@ type acpFakeOpenClawGateway struct {
 	lastArtifactPrepareParams  atomic.Value
 	lastArtifactSnapshotParams atomic.Value
 	lastArtifactExportParams   atomic.Value
+	lastArtifactReadParams     atomic.Value
 	lastAgentWaitParams        atomic.Value
 	mu                         sync.Mutex
 	methods                    []string
@@ -3554,8 +3566,22 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 			case "xworkmate.artifacts.read":
 				fake.artifactReadCount.Add(1)
 				params := shared.AsMap(frame["params"])
+				fake.lastArtifactReadParams.Store(params)
 				relativePath := strings.TrimSpace(shared.StringArg(params, "relativePath", ""))
 				artifactScope := strings.TrimSpace(shared.StringArg(params, "artifactScope", ""))
+				sessionKey := strings.TrimSpace(shared.StringArg(params, "openclawSessionKey", ""))
+				if sessionKey == "" {
+					_ = conn.WriteJSON(map[string]any{
+						"type": "res",
+						"id":   id,
+						"ok":   false,
+						"error": map[string]any{
+							"code":    "OPENCLAW_ARTIFACT_READ_FAILED",
+							"message": "openclawSessionKey required",
+						},
+					})
+					continue
+				}
 				if fake.consumeArtifactReadFailure() {
 					_ = conn.WriteJSON(map[string]any{
 						"type": "res",
@@ -3588,7 +3614,7 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 					"ok":   true,
 					"payload": map[string]any{
 						"runId":                  strings.TrimSpace(shared.StringArg(params, "runId", "")),
-						"sessionKey":             strings.TrimSpace(shared.StringArg(params, "openclawSessionKey", "")),
+						"sessionKey":             sessionKey,
 						"remoteWorkingDirectory": "/remote/openclaw/workspace",
 						"remoteWorkspaceRefKind": "remotePath",
 						"artifactScope":          artifactScope,
@@ -3797,6 +3823,14 @@ func (f *acpFakeOpenClawGateway) ArtifactExportCount() int {
 
 func (f *acpFakeOpenClawGateway) ArtifactReadCount() int {
 	return int(f.artifactReadCount.Load())
+}
+
+func (f *acpFakeOpenClawGateway) LastArtifactReadParams() map[string]any {
+	value := f.lastArtifactReadParams.Load()
+	if value == nil {
+		return nil
+	}
+	return shared.AsMap(value)
 }
 
 func (f *acpFakeOpenClawGateway) FailNextArtifactReads(count int) {
