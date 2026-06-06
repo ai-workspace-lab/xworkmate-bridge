@@ -742,6 +742,54 @@ func TestGatewayRequestSkillsStatusAutoConnectsOpenClaw(t *testing.T) {
 	}
 }
 
+func TestExecuteSessionTaskGatewayFallsBackWhenPrepareUnsupported(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	gateway.unsupportedSessionPrepare.Store(true)
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	response, rpcErr := server.executeSessionTask(task{
+		req: shared.RPCRequest{
+			Method: "session.start",
+			Params: map[string]any{
+				"sessionId":        "session-openclaw-legacy-prepare",
+				"threadId":         "thread-openclaw-legacy-prepare",
+				"taskPrompt":       "say pong",
+				"workingDirectory": t.TempDir(),
+				"routing": map[string]any{
+					"routingMode":                "explicit",
+					"explicitExecutionTarget":    "gateway",
+					"preferredGatewayProviderId": "openclaw",
+				},
+			},
+		},
+	})
+	if rpcErr != nil {
+		t.Fatalf("expected legacy prepare fallback response, got rpc error: %#v", rpcErr)
+	}
+	if got := response["output"]; got != "gateway pong" {
+		t.Fatalf("expected gateway pong output after legacy prepare fallback, got %#v", response)
+	}
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.session.prepare", "chat.send", "xworkmate.tasks.get"}) {
+		t.Fatalf("expected legacy prepare attempt to continue through chat/send and native task lookup, got %#v", got)
+	}
+	chatParams := gateway.LastChatSendParams()
+	receipt := strings.TrimSpace(shared.StringArg(chatParams, "systemProvenanceReceipt", ""))
+	sessionKey := shared.StringArg(chatParams, "sessionKey", "")
+	runID := shared.StringArg(chatParams, "idempotencyKey", "")
+	for _, expected := range []string{
+		"artifactDirectory: /home/ubuntu/.openclaw/workspace/tasks/" + sessionKey + "/" + runID,
+		"artifactScope: tasks/" + sessionKey + "/" + runID,
+	} {
+		if !strings.Contains(receipt, expected) {
+			t.Fatalf("expected fallback provenance receipt to include %q, got %q", expected, receipt)
+		}
+	}
+}
+
 func TestExecuteSessionTaskGatewayNoDisplayableOutputFails(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
@@ -2616,6 +2664,7 @@ type acpFakeOpenClawGateway struct {
 	artifactWorkspaceRoot      string
 	alternateRunID             string
 	alternateSessionKey        string
+	unsupportedSessionPrepare  atomic.Bool
 }
 
 func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
@@ -2754,6 +2803,18 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 				fake.artifactPrepareCount.Add(1)
 				params := shared.AsMap(frame["params"])
 				fake.lastArtifactPrepareParams.Store(params)
+				if fake.unsupportedSessionPrepare.Load() {
+					_ = conn.WriteJSON(map[string]any{
+						"type": "res",
+						"id":   id,
+						"ok":   false,
+						"error": map[string]any{
+							"code":    "INVALID_REQUEST",
+							"message": "unknown method: xworkmate.session.prepare",
+						},
+					})
+					continue
+				}
 				runID := strings.TrimSpace(shared.StringArg(params, "runId", "fake-run"))
 				sessionKey := strings.TrimSpace(shared.StringArg(params, "openclawSessionKey", "main"))
 				artifactScope := "tasks/" + sessionKey + "/" + runID

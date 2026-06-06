@@ -435,8 +435,8 @@ func (o *SessionOrchestrator) startOpenClawGatewayTask(
 			"progress":             running["progress"],
 		}))
 	}
-		return running, nil
-	}
+	return running, nil
+}
 
 func openClawGatewayCompletedResultUpdate(sessionID string, threadID string, turnID string, result map[string]any) map[string]any {
 	success := true
@@ -579,6 +579,17 @@ func (o *SessionOrchestrator) openClawArtifactPrepare(
 		notify,
 	)
 	if !prepareResult.OK {
+		if openClawPrepareUnsupported(prepareResult.Error) {
+			prepared := openClawLegacyPreparedArtifactScope(params, sessionKey, runID)
+			log.Printf(
+				"level=warn component=openclaw_gateway event=session_prepare_legacy_fallback provider=%q sessionId=%q runId=%q artifactScope=%q",
+				gatewayProvider,
+				sessionKey,
+				runID,
+				prepared.ArtifactScope,
+			)
+			return prepared, nil
+		}
 		return nil, gatewayRPCError(prepareResult.Error, "openclaw artifact prepare failed")
 	}
 	prepared := openClawPreparedArtifactScopeFromPayload(shared.AsMap(prepareResult.Payload))
@@ -586,6 +597,48 @@ func (o *SessionOrchestrator) openClawArtifactPrepare(
 		return nil, &shared.RPCError{Code: -32002, Message: "openclaw artifact prepare returned no scoped artifact directory"}
 	}
 	return prepared, nil
+}
+
+func openClawPrepareUnsupported(errorPayload map[string]any) bool {
+	code := strings.ToUpper(strings.TrimSpace(shared.StringArg(errorPayload, "code", "")))
+	message := strings.ToLower(strings.TrimSpace(shared.StringArg(errorPayload, "message", "")))
+	if !strings.Contains(message, "xworkmate.session.prepare") {
+		return false
+	}
+	return code == "INVALID_REQUEST" ||
+		code == "METHOD_NOT_FOUND" ||
+		code == "UNKNOWN_METHOD" ||
+		strings.Contains(message, "unknown method") ||
+		strings.Contains(message, "method not found")
+}
+
+func openClawLegacyPreparedArtifactScope(params map[string]any, sessionKey string, runID string) *openClawPreparedArtifactScope {
+	sessionKey = strings.TrimSpace(sessionKey)
+	runID = strings.TrimSpace(runID)
+	artifactScope := "tasks/" + sessionKey + "/" + runID
+	workspaceRoot := openClawLegacyArtifactWorkspaceRoot(params)
+	return &openClawPreparedArtifactScope{
+		RemoteWorkingDirectory:    workspaceRoot,
+		RemoteWorkspaceRefKind:    "remotePath",
+		ArtifactScope:             artifactScope,
+		ArtifactDirectory:         filepath.Join(workspaceRoot, filepath.FromSlash(artifactScope)),
+		RelativeArtifactDirectory: artifactScope,
+		ScopeKind:                 "task",
+	}
+}
+
+func openClawLegacyArtifactWorkspaceRoot(params map[string]any) string {
+	for _, key := range []string{"remoteWorkingDirectoryHint", "remoteWorkingDirectory"} {
+		value := strings.TrimSpace(shared.StringArg(params, key, ""))
+		if value == "" {
+			continue
+		}
+		cleaned := filepath.Clean(value)
+		if strings.HasPrefix(cleaned, "/home/ubuntu/.openclaw/workspace") {
+			return strings.TrimRight(cleaned, string(os.PathSeparator))
+		}
+	}
+	return "/home/ubuntu/.openclaw/workspace"
 }
 
 func openClawSessionPrepareParams(params map[string]any, openClawSessionKey string, runID string, artifactContract openClawArtifactContract) map[string]any {
