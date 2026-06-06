@@ -1,5 +1,8 @@
 name: Pipeline
 
+env:
+  VAULT_ADDR: https://vault.svc.plus
+
 on:
   pull_request:
     branches: [main]
@@ -26,6 +29,7 @@ on:
 permissions:
   contents: read
   packages: write
+  id-token: write
 
 concurrency:
   group: pipeline-${{ github.ref }}
@@ -51,11 +55,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      - name: Load Vault secrets
+        id: vault
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        uses: hashicorp/vault-action@v2
+        with:
+          url: ${{ env.VAULT_ADDR }}
+          method: jwt
+          role: github-actions-xworkmate-bridge
+          jwtGithubAudience: vault
+          secrets: |
+            kv/data/github-actions/xworkmate-bridge INTERNAL_SERVICE_TOKEN | INTERNAL_SERVICE_TOKEN
+
+      - name: Export bridge auth token
+        if: ${{ steps.vault.outcome == 'success' }}
+        run: echo "BRIDGE_AUTH_TOKEN=${{ steps.vault.outputs.INTERNAL_SERVICE_TOKEN }}" >> "$GITHUB_ENV"
+
       - name: Probe current production bridge
         id: production_state
         env:
           BRIDGE_SERVER_URL: https://xworkmate-bridge.svc.plus
-          BRIDGE_AUTH_TOKEN: ${{ secrets.INTERNAL_SERVICE_TOKEN }}
         run: |
           while IFS='=' read -r key value; do
             echo "${key}=${value}" >> "$GITHUB_OUTPUT"
@@ -106,6 +125,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      - name: Load Vault secrets
+        id: vault
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: hashicorp/vault-action@v2
+        with:
+          url: ${{ env.VAULT_ADDR }}
+          method: jwt
+          role: github-actions-xworkmate-bridge
+          jwtGithubAudience: vault
+          secrets: |
+            kv/data/github-actions/xworkmate-bridge GHCR_TOKEN | GHCR_TOKEN
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
 
@@ -118,7 +149,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ vars.GHCR_USERNAME || github.repository_owner }}
-          password: ${{ secrets.GHCR_TOKEN || github.token }}
+          password: ${{ steps.vault.outputs.GHCR_TOKEN || github.token }}
 
       - name: Resolve service image ref
         id: service_ref
@@ -173,21 +204,37 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       run_apply: ${{ steps.deploy_meta.outputs.run_apply }}
-    env:
-      INTERNAL_SERVICE_TOKEN: ${{ github.event_name == 'workflow_dispatch' && inputs.internal_service_token || secrets.INTERNAL_SERVICE_TOKEN }}
-      GHCR_USERNAME: ${{ vars.GHCR_USERNAME || github.repository_owner }}
-      GHCR_PASSWORD: ${{ secrets.GHCR_TOKEN || github.token }}
     steps:
       - name: Checkout service repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           path: xworkmate-bridge
 
+      - name: Load Vault secrets
+        id: vault
+        uses: hashicorp/vault-action@v2
+        with:
+          url: ${{ env.VAULT_ADDR }}
+          method: jwt
+          role: github-actions-xworkmate-bridge
+          jwtGithubAudience: vault
+          secrets: |
+            kv/data/github-actions/xworkmate-bridge INTERNAL_SERVICE_TOKEN | INTERNAL_SERVICE_TOKEN ;
+            kv/data/github-actions/xworkmate-bridge WORKSPACE_REPO_TOKEN | WORKSPACE_REPO_TOKEN ;
+            kv/data/github-actions/xworkmate-bridge SINGLE_NODE_VPS_SSH_PRIVATE_KEY | SINGLE_NODE_VPS_SSH_PRIVATE_KEY ;
+            kv/data/github-actions/xworkmate-bridge SSH_KNOWN_HOSTS | SSH_KNOWN_HOSTS
+
+      - name: Export deploy secrets
+        run: |
+          {
+            echo "BRIDGE_AUTH_TOKEN=${{ github.event_name == 'workflow_dispatch' && inputs.internal_service_token || steps.vault.outputs.INTERNAL_SERVICE_TOKEN }}"
+          } >> "$GITHUB_ENV"
+
       - name: Checkout playbooks repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: x-evor/playbooks
-          token: ${{ secrets.WORKSPACE_REPO_TOKEN || github.token }}
+          token: ${{ steps.vault.outputs.WORKSPACE_REPO_TOKEN || github.token }}
           path: playbooks
 
       - name: Download build image ref artifact
@@ -233,8 +280,8 @@ jobs:
       - name: Prepare runner SSH access
         working-directory: xworkmate-bridge
         env:
-          SINGLE_NODE_VPS_SSH_PRIVATE_KEY: ${{ secrets.SINGLE_NODE_VPS_SSH_PRIVATE_KEY }}
-          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          SINGLE_NODE_VPS_SSH_PRIVATE_KEY: ${{ steps.vault.outputs.SINGLE_NODE_VPS_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ steps.vault.outputs.SSH_KNOWN_HOSTS }}
         run: bash ./scripts/github-actions/prepare-ssh.sh "${{ steps.deploy_meta.outputs.target_host }}" "${SSH_KNOWN_HOSTS}"
 
       - name: Install native bridge binary on target
@@ -246,7 +293,6 @@ jobs:
         working-directory: playbooks
         env:
           ANSIBLE_CONFIG: ./ansible.cfg
-          BRIDGE_AUTH_TOKEN: ${{ env.INTERNAL_SERVICE_TOKEN }}
         run: |
           CHECK_MODE_FLAG=""
           if [[ "${{ steps.deploy_meta.outputs.run_apply }}" != "true" ]]; then
@@ -308,22 +354,29 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BRIDGE_SERVER_URL: https://xworkmate-bridge.svc.plus
-      INTERNAL_SERVICE_TOKEN: ${{ secrets.INTERNAL_SERVICE_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      - name: Load Vault secrets
+        id: vault
+        uses: hashicorp/vault-action@v2
+        with:
+          url: ${{ env.VAULT_ADDR }}
+          method: jwt
+          role: github-actions-xworkmate-bridge
+          jwtGithubAudience: vault
+          secrets: |
+            kv/data/github-actions/xworkmate-bridge INTERNAL_SERVICE_TOKEN | INTERNAL_SERVICE_TOKEN
+
+      - name: Export bridge auth token
+        run: echo "BRIDGE_AUTH_TOKEN=${{ steps.vault.outputs.INTERNAL_SERVICE_TOKEN }}" >> "$GITHUB_ENV"
+
       - name: Validate deployed endpoints
-        env:
-          BRIDGE_AUTH_TOKEN: ${{ env.INTERNAL_SERVICE_TOKEN }}
         run: bash ./scripts/github-actions/validate-deploy.sh "$(git rev-parse --short HEAD)" "${BRIDGE_SERVER_URL}"
 
       - name: Validate public ACP contract
-        env:
-          BRIDGE_AUTH_TOKEN: ${{ env.INTERNAL_SERVICE_TOKEN }}
         run: bash ./scripts/github-actions/verify-public-rpc-contract.sh
 
       - name: Validate OpenClaw session contract
-        env:
-          BRIDGE_AUTH_TOKEN: ${{ env.INTERNAL_SERVICE_TOKEN }}
         run: bash ./scripts/github-actions/validate-openclaw-session.sh
