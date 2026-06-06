@@ -534,6 +534,15 @@ func TestExecuteSessionTaskGatewayAutoConnectsLocalOpenClaw(t *testing.T) {
 	if _, ok := prepareParams["sessionKey"]; ok {
 		t.Fatalf("expected prepare params to omit legacy sessionKey, got %#v", prepareParams)
 	}
+	if _, ok := prepareParams["sessionId"]; ok {
+		t.Fatalf("expected prepare params to omit app sessionId, got %#v", prepareParams)
+	}
+	if _, ok := prepareParams["threadId"]; ok {
+		t.Fatalf("expected prepare params to omit app threadId, got %#v", prepareParams)
+	}
+	if got := shared.StringArg(prepareParams, "workspaceDir", ""); got != "~/.openclaw/workspace" {
+		t.Fatalf("expected bridge to supply OpenClaw workspaceDir, got %#v", prepareParams)
+	}
 	if got := shared.ListArg(prepareParams, "expectedArtifactDirs"); !sameAnyStringSlice(got, []string{"assets/images/", "reports/"}) {
 		t.Fatalf("expected prepare expectedArtifactDirs from app contract, got %#v", prepareParams)
 	}
@@ -742,7 +751,7 @@ func TestGatewayRequestSkillsStatusAutoConnectsOpenClaw(t *testing.T) {
 	}
 }
 
-func TestExecuteSessionTaskGatewayFallsBackWhenPrepareUnsupported(t *testing.T) {
+func TestExecuteSessionTaskGatewayFailsWhenPrepareUnsupported(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	gateway.unsupportedSessionPrepare.Store(true)
 	defer gateway.Close()
@@ -767,26 +776,15 @@ func TestExecuteSessionTaskGatewayFallsBackWhenPrepareUnsupported(t *testing.T) 
 			},
 		},
 	})
-	if rpcErr != nil {
-		t.Fatalf("expected legacy prepare fallback response, got rpc error: %#v", rpcErr)
+	if rpcErr == nil {
+		t.Fatalf("expected prepare error without legacy fallback, got response: %#v", response)
+		return
 	}
-	if got := response["output"]; got != "gateway pong" {
-		t.Fatalf("expected gateway pong output after legacy prepare fallback, got %#v", response)
+	if rpcErr.Code != -32002 || !strings.Contains(rpcErr.Message, "unknown method: xworkmate.session.prepare") {
+		t.Fatalf("expected surfaced prepare unsupported error, got %#v", rpcErr)
 	}
-	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.session.prepare", "chat.send", "xworkmate.tasks.get"}) {
-		t.Fatalf("expected legacy prepare attempt to continue through chat/send and native task lookup, got %#v", got)
-	}
-	chatParams := gateway.LastChatSendParams()
-	receipt := strings.TrimSpace(shared.StringArg(chatParams, "systemProvenanceReceipt", ""))
-	sessionKey := shared.StringArg(chatParams, "sessionKey", "")
-	runID := shared.StringArg(chatParams, "idempotencyKey", "")
-	for _, expected := range []string{
-		"artifactDirectory: /home/ubuntu/.openclaw/workspace/tasks/" + sessionKey + "/" + runID,
-		"artifactScope: tasks/" + sessionKey + "/" + runID,
-	} {
-		if !strings.Contains(receipt, expected) {
-			t.Fatalf("expected fallback provenance receipt to include %q, got %q", expected, receipt)
-		}
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.session.prepare"}) {
+		t.Fatalf("expected bridge to stop before chat.send when prepare is unsupported, got %#v", got)
 	}
 }
 

@@ -215,6 +215,11 @@ if final is None:
     raise SystemExit("missing final OpenClaw result envelope")
 if not payloads or payloads[-1].get("done") is not True:
     raise SystemExit("missing SSE done marker")
+if isinstance(final.get("error"), dict) and final["error"]:
+    error = final["error"]
+    message = error.get("message") or json.dumps(error, ensure_ascii=False, sort_keys=True)
+    preview = json.dumps(final, ensure_ascii=False, sort_keys=True)[:1500]
+    raise SystemExit(f"OpenClaw smoke RPC error: {message}\nenvelope preview: {preview}")
 
 result = terminal_result(final.get("result") or final.get("payload") or {})
 handle = result
