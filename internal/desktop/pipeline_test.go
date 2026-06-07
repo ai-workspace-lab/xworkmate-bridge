@@ -23,6 +23,8 @@ func TestBuildGStreamerUsesBrowserFriendlyH264(t *testing.T) {
 	joined := strings.Join(args, " ")
 	for _, expected := range []string{
 		"video/x-raw,format=I420",
+		"width=1280",
+		"height=720",
 		"x264enc",
 		"tune=zerolatency",
 		"key-int-max=30",
@@ -34,6 +36,18 @@ func TestBuildGStreamerUsesBrowserFriendlyH264(t *testing.T) {
 		if !strings.Contains(joined, expected) {
 			t.Fatalf("expected GStreamer args to contain %q, got %s", expected, joined)
 		}
+	}
+}
+
+func TestNormalizeVideoDimensionUsesEvenValues(t *testing.T) {
+	if got := normalizeVideoDimension(1353, 1280); got != 1352 {
+		t.Fatalf("expected odd dimension to be rounded down to 1352, got %d", got)
+	}
+	if got := normalizeVideoDimension(0, 720); got != 720 {
+		t.Fatalf("expected fallback for zero dimension, got %d", got)
+	}
+	if got := normalizeVideoDimension(1, 720); got != 720 {
+		t.Fatalf("expected fallback for too-small dimension, got %d", got)
 	}
 }
 

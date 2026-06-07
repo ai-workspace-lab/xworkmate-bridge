@@ -20,6 +20,32 @@ func normalizeRTPPort(port int) int {
 	return port
 }
 
+func normalizeVideoDimension(value, fallback int) int {
+	if value <= 0 {
+		value = fallback
+	}
+	if value%2 != 0 {
+		value--
+	}
+	if value < 2 {
+		return fallback
+	}
+	return value
+}
+
+func normalizePipelineConfig(cfg PipelineConfig) PipelineConfig {
+	cfg.Port = normalizeRTPPort(cfg.Port)
+	cfg.Width = normalizeVideoDimension(cfg.Width, 1280)
+	cfg.Height = normalizeVideoDimension(cfg.Height, 720)
+	if cfg.FPS <= 0 {
+		cfg.FPS = 30
+	}
+	if cfg.Bitrate <= 0 {
+		cfg.Bitrate = 2000
+	}
+	return cfg
+}
+
 // PipelineManager manages the screen capture process lifecycle
 type PipelineManager struct {
 	cmd       *exec.Cmd
@@ -58,19 +84,7 @@ func (pm *PipelineManager) Start(cfg PipelineConfig) error {
 			cfg.Display = ":0.0"
 		}
 	}
-	cfg.Port = normalizeRTPPort(cfg.Port)
-	if cfg.Width <= 0 {
-		cfg.Width = 1280
-	}
-	if cfg.Height <= 0 {
-		cfg.Height = 720
-	}
-	if cfg.FPS <= 0 {
-		cfg.FPS = 30
-	}
-	if cfg.Bitrate <= 0 {
-		cfg.Bitrate = 2000
-	}
+	cfg = normalizePipelineConfig(cfg)
 
 	tool, args, err := pm.resolvePipeline(cfg)
 	if err != nil {
@@ -172,13 +186,18 @@ func (pm *PipelineManager) hasExecutable(name string) bool {
 }
 
 func (pm *PipelineManager) buildGStreamer(cfg PipelineConfig) (string, []string, error) {
+	cfg = normalizePipelineConfig(cfg)
 	var pipelineParts []string
 
 	// 1. Capture Source (X11)
 	pipelineParts = append(pipelineParts, fmt.Sprintf("ximagesrc display-name=%s", cfg.Display))
-	pipelineParts = append(pipelineParts, "video/x-raw,framerate=30/1")
+	pipelineParts = append(pipelineParts, fmt.Sprintf("video/x-raw,framerate=%d/1", cfg.FPS))
 	pipelineParts = append(pipelineParts, "videoconvert")
-	pipelineParts = append(pipelineParts, "video/x-raw,format=I420")
+	pipelineParts = append(pipelineParts, "videoscale")
+	pipelineParts = append(
+		pipelineParts,
+		fmt.Sprintf("video/x-raw,format=I420,width=%d,height=%d,framerate=%d/1", cfg.Width, cfg.Height, cfg.FPS),
+	)
 
 	// 2. Encoder
 	encoderStr := "x264enc speed-preset=ultrafast tune=zerolatency bitrate=" + fmt.Sprintf("%d", cfg.Bitrate) + " byte-stream=true key-int-max=30"
@@ -211,6 +230,7 @@ func (pm *PipelineManager) buildGStreamer(cfg PipelineConfig) (string, []string,
 }
 
 func (pm *PipelineManager) buildFFmpeg(cfg PipelineConfig) (string, []string, error) {
+	cfg = normalizePipelineConfig(cfg)
 	args := []string{
 		"-f", "x11grab",
 		"-draw_mouse", "1",
