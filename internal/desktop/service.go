@@ -11,6 +11,7 @@ import (
 type DesktopSession struct {
 	SessionID string
 	Port      int
+	Config    PipelineConfig
 	Pipeline  *PipelineManager
 	Injector  *XdotoolInjector
 	WebRTC    *WebRTCServer
@@ -72,24 +73,34 @@ func (s *Service) StartSession(sessionID string, cfg PipelineConfig, iceServers 
 		return nil, fmt.Errorf("failed to start RTP receiver: %w", err)
 	}
 
-	// 3. Initialize screen capture pipeline
-	pipeline := NewPipelineManager()
-	if err := pipeline.Start(cfg); err != nil {
-		webrtcSrv.Close()
-		_ = injector.Close()
-		return nil, fmt.Errorf("failed to start capture pipeline: %w", err)
-	}
-
 	sess := &DesktopSession{
 		SessionID: sessionID,
 		Port:      cfg.Port,
-		Pipeline:  pipeline,
+		Config:    cfg,
+		Pipeline:  NewPipelineManager(),
 		Injector:  injector,
 		WebRTC:    webrtcSrv,
 	}
 
 	s.sessions[sessionID] = sess
 	return sess, nil
+}
+
+func (s *Service) StartCapture(sessionID string) error {
+	sess, err := s.GetSession(sessionID)
+	if err != nil {
+		return err
+	}
+	if sess.Pipeline == nil {
+		sess.Pipeline = NewPipelineManager()
+	}
+	if sess.Pipeline.IsRunning() {
+		return nil
+	}
+	if err := sess.Pipeline.Start(sess.Config); err != nil {
+		return fmt.Errorf("failed to start capture pipeline: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) GetSession(sessionID string) (*DesktopSession, error) {

@@ -491,6 +491,10 @@ func (s *Server) handleDesktopMethod(ctx context.Context, method string, params 
 			srv.StopSession(sessionID)
 			return nil, &shared.RPCError{Code: -32002, Message: fmt.Sprintf("failed to process SDP offer: %v", err)}
 		}
+		if err := srv.StartCapture(sessionID); err != nil {
+			srv.StopSession(sessionID)
+			return nil, &shared.RPCError{Code: -32004, Message: fmt.Sprintf("failed to start desktop capture: %v", err)}
+		}
 
 		return map[string]any{
 			"sessionId": sessionID,
