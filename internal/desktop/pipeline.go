@@ -178,9 +178,10 @@ func (pm *PipelineManager) buildGStreamer(cfg PipelineConfig) (string, []string,
 	pipelineParts = append(pipelineParts, fmt.Sprintf("ximagesrc display-name=%s", cfg.Display))
 	pipelineParts = append(pipelineParts, "video/x-raw,framerate=30/1")
 	pipelineParts = append(pipelineParts, "videoconvert")
+	pipelineParts = append(pipelineParts, "video/x-raw,format=I420")
 
 	// 2. Encoder
-	encoderStr := "x264enc speed-preset=ultrafast tune=zerolatency bitrate=" + fmt.Sprintf("%d", cfg.Bitrate)
+	encoderStr := "x264enc speed-preset=ultrafast tune=zerolatency bitrate=" + fmt.Sprintf("%d", cfg.Bitrate) + " byte-stream=true key-int-max=30"
 	if cfg.UseGPU {
 		// Detect if nvcodec is present by calling gst-inspect-1.0 or simply attempting it.
 		// We'll default to nvh264enc.
@@ -189,6 +190,7 @@ func (pm *PipelineManager) buildGStreamer(cfg PipelineConfig) (string, []string,
 	pipelineParts = append(pipelineParts, encoderStr)
 
 	// 3. Payload and Sink
+	pipelineParts = append(pipelineParts, "video/x-h264,profile=baseline")
 	pipelineParts = append(pipelineParts, "rtph264pay config-interval=1 pt=96")
 	pipelineParts = append(pipelineParts, fmt.Sprintf("udpsink host=127.0.0.1 port=%d sync=false async=false", cfg.Port))
 
@@ -224,12 +226,16 @@ func (pm *PipelineManager) buildFFmpeg(cfg PipelineConfig) (string, []string, er
 			"-preset", "llhp", // low latency high quality
 			"-tune", "zerolatency",
 			"-g", "30",
+			"-pix_fmt", "yuv420p",
 		)
 	} else {
 		args = append(args,
 			"-c:v", "libx264",
 			"-preset", "ultrafast",
 			"-tune", "zerolatency",
+			"-profile:v", "baseline",
+			"-pix_fmt", "yuv420p",
+			"-x264-params", "repeat-headers=1",
 			"-g", "30",
 		)
 	}

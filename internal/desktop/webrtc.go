@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/pion/webrtc/v4"
 )
@@ -17,6 +20,19 @@ type WebRTCServer struct {
 	inputInjector  *XdotoolInjector
 	mu             sync.Mutex
 	isClosed       bool
+	rtpPackets     uint64
+	rtpBytes       uint64
+	rtpWriteErrors uint64
+}
+
+func desktopWebRTCDiagnosticsEnabled() bool {
+	value := os.Getenv("XWORKMATE_DESKTOP_WEBRTC_DEBUG")
+	switch value {
+	case "0", "false", "FALSE", "off", "OFF", "no", "NO":
+		return false
+	default:
+		return true
+	}
 }
 
 func NewWebRTCServer(injector *XdotoolInjector) (*WebRTCServer, error) {
@@ -107,6 +123,36 @@ func (w *WebRTCServer) StartRTPReceiver(port int) error {
 	go func() {
 		buf := make([]byte, 2048)
 		log.Printf("WebRTC RTP receiver listening on UDP %s", addr)
+		statsDone := make(chan struct{})
+		if desktopWebRTCDiagnosticsEnabled() {
+			statsTicker := time.NewTicker(5 * time.Second)
+			defer statsTicker.Stop()
+			defer close(statsDone)
+			go func() {
+				var lastPackets uint64
+				var lastBytes uint64
+				for {
+					select {
+					case <-statsTicker.C:
+						packets := atomic.LoadUint64(&w.rtpPackets)
+						bytes := atomic.LoadUint64(&w.rtpBytes)
+						errors := atomic.LoadUint64(&w.rtpWriteErrors)
+						log.Printf(
+							"WebRTC RTP stats: packets=%d bytes=%d packetDelta=%d byteDelta=%d writeErrors=%d",
+							packets,
+							bytes,
+							packets-lastPackets,
+							bytes-lastBytes,
+							errors,
+						)
+						lastPackets = packets
+						lastBytes = bytes
+					case <-statsDone:
+						return
+					}
+				}
+			}()
+		}
 		for {
 			n, _, err := conn.ReadFrom(buf)
 			if err != nil {
@@ -118,6 +164,8 @@ func (w *WebRTCServer) StartRTPReceiver(port int) error {
 				}
 				break
 			}
+			atomic.AddUint64(&w.rtpPackets, 1)
+			atomic.AddUint64(&w.rtpBytes, uint64(n))
 
 			// Forward packet directly to WebRTC track (zero-copy)
 			w.mu.Lock()
@@ -126,6 +174,7 @@ func (w *WebRTCServer) StartRTPReceiver(port int) error {
 
 			if track != nil {
 				if _, err := track.Write(buf[:n]); err != nil {
+					atomic.AddUint64(&w.rtpWriteErrors, 1)
 					log.Printf("Failed to write RTP packet to track: %v", err)
 				}
 			}
@@ -214,4 +263,10 @@ func (w *WebRTCServer) Close() {
 	if pc != nil {
 		_ = pc.Close()
 	}
+	log.Printf(
+		"WebRTC RTP final stats: packets=%d bytes=%d writeErrors=%d",
+		atomic.LoadUint64(&w.rtpPackets),
+		atomic.LoadUint64(&w.rtpBytes),
+		atomic.LoadUint64(&w.rtpWriteErrors),
+	)
 }
