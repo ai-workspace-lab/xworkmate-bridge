@@ -33,6 +33,10 @@
 - [Remote Agent Local Workspace Test Matrix](./testing/remote-agent-local-workspace-test-matrix.md)
 - [Gemini ACP Adapter Notes](./gemini-acp-adapter.md)
 
+### 5. Runbook
+
+- [WebRTC Remote Desktop White Screen Runbook](./runbooks/webrtc-remote-desktop-white-screen-runbook.md)
+
 ## 文档组织原则
 
 - `docs/api-reference.md` 是对外运行契约的唯一真相来源。

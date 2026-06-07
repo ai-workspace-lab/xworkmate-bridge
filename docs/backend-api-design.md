@@ -292,6 +292,18 @@ Caddy 层要求：
 Authorization: Bearer $BRIDGE_AUTH_TOKEN
 ```
 
+如果配置了 Apple review / beta token，Caddy 层也必须接受：
+
+```http
+Authorization: Bearer $BRIDGE_REVIEW_AUTH_TOKEN
+```
+
+验证标准：
+
+- 无 token：`401`
+- 主 token：`200`
+- review token：`200`
+
 ### Systemd / Local Listeners
 
 | Unit / Runtime | Listener | 说明 |

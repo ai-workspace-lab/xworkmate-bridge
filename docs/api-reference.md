@@ -50,6 +50,7 @@
 - `/api/ping`、`/acp`、`/acp/rpc` 在任一 bridge token 非空时都要求 bearer header
 - `BRIDGE_AUTH_TOKEN` 与 `BRIDGE_REVIEW_AUTH_TOKEN` 都为空时默认放行
 - token 非空时，接受裸 token 或 `Bearer <token>`
+- 线上 Caddy 入口必须与 bridge origin 保持同一 token set：主 `BRIDGE_AUTH_TOKEN` 与可选 `BRIDGE_REVIEW_AUTH_TOKEN` 都应放行；无 token 仍返回 `401`
 - `xworkmate-app` 生产 Origin 固定为 `https://xworkmate.svc.plus`
 
 ## 3.1 Lightweight Distributed Task Forwarding
