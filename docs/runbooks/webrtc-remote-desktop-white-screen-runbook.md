@@ -133,6 +133,28 @@ ssh ubuntu@xworkmate-bridge.svc.plus '
 
 - 问题在 Flutter renderer / track attach / view lifecycle / stale stream。
 
+### 5. Bridge RTP 增长，但同一 `sessionId` 被反复 stop/start
+
+判断：
+
+- Bridge 日志里 `WebRTC RTP stats` 持续增长，`writeErrors=0`
+- 同一时间段频繁出现：
+
+```text
+Stopping Remote Desktop session: remote-desktop-session
+Starting Remote Desktop session: remote-desktop-session
+Closing WebRTC server...
+```
+
+- 本机同时存在多个 `XWorkmate` 进程，或快速断开 / 重连 / 重开窗口
+- APP 仍停在 `WebRTC 已连接，正在等待远程桌面首帧...`
+
+说明：
+
+- 问题不是编码器或公网 RTP 发送层，而是客户端会话抢占 / stale PeerConnection。
+- APP 旧版本固定使用 `remote-desktop-session`，多个 app 实例或重连会互相关闭同一个远端 desktop session。被抢占的客户端可能还短暂保持 `connected` 状态，但远端 RTP pipeline 已经被新 offer 替换，表现为等待首帧。
+- 修复方式是 APP 每个 DesktopView / PeerConnection 使用唯一 desktop session id，并且 video-only desktop offer 不再声明无用 audio recvonly transceiver。
+
 ## 本次修复结论
 
 本次真实根因不是单纯网络延迟，而是两段串联问题：
@@ -144,6 +166,12 @@ ssh ubuntu@xworkmate-bridge.svc.plus '
 
 3. Caddy 公网入口曾只放行主 `BRIDGE_AUTH_TOKEN`，未放行 user service 中的 `BRIDGE_REVIEW_AUTH_TOKEN`。因此 `review@svc.plus` 会看到 `Bridge token expired or rejected`，并且无法发起 `xworkmate.desktop.offer`。
 
+2026-06-08 复发排查结论：
+
+4. Bridge 运行版本 `v1.0-beta2` / commit `0a0d04f` 的 H.264 和 RTP 发送链路是健康的：远端日志确认 `format=(string)I420`、`profile=(string)baseline`、`profile-level-id=(string)42c01f`，并且 `WebRTC RTP stats` 持续增长、`writeErrors=0`。
+5. 本机同时运行了多个 `XWorkmate` 进程，且 APP 侧仍使用固定 `sessionId='remote-desktop-session'`。远端日志在同一时间段反复出现同一个 session 的 stop/start，说明新连接抢占并关闭旧 PeerConnection / capture pipeline。这个链路会让被抢占的 APP 视图停在“WebRTC 已连接，正在等待远程桌面首帧...”，属于客户端会话生命周期问题。
+6. 同步修复 APP：为每个 DesktopView 生成唯一 `remote-desktop-*` session id，并将 desktop SDP offer 简化为 video recvonly，避免 video-only Bridge 被无用 audio m-line 干扰。
+
 修复后的稳定策略：
 
 - 强制把 capture 输出转换到 `I420`
@@ -153,6 +181,8 @@ ssh ubuntu@xworkmate-bridge.svc.plus '
 - `x264enc` 启用 `zerolatency`
 - Bridge 定期输出 RTP stats
 - APP 在等待首帧时输出 inbound video stats
+- APP 每个远程桌面视图使用唯一 desktop session id，避免多实例 / 重连抢占同一个 Bridge session
+- APP desktop offer 只声明 video recvonly transceiver，避免无用 audio m-line 增加协商不确定性
 - Caddy 公网入口同时放行主 token 与 review token，并验证无 token 仍为 `401`
 - 只保留 user service 作为当前 bridge origin，避免 system service 与 user service 抢占 `127.0.0.1:8787`
 
@@ -171,6 +201,12 @@ APP 诊断：
 - `/Users/shenlan/workspaces/ai-workspace-lab/xworkmate-app/lib/features/desktop/desktop_client.dart`
 - `/Users/shenlan/workspaces/ai-workspace-lab/xworkmate-app/lib/features/desktop/desktop_view.dart`
 - `/Users/shenlan/workspaces/ai-workspace-lab/xworkmate-app/test/features/desktop/desktop_client_test.dart`
+
+2026-06-08 复发修复 APP 落点：
+
+- `desktop_client.dart`：新增唯一 desktop session id helper；desktop offer 只添加 video recvonly transceiver。
+- `desktop_view.dart`：不再硬编码 `remote-desktop-session`。
+- `desktop_client_test.dart`：覆盖并行 app 实例生成不同 session id。
 
 ## 期望日志
 
