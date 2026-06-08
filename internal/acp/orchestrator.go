@@ -398,6 +398,8 @@ func (o *SessionOrchestrator) startOpenClawGatewayTask(
 		ProgressMessage:        "OpenClaw task accepted",
 		PreparedArtifact:       preparedArtifact,
 		RequiresArtifactExport: artifactContract.RequiresArtifactExport,
+		ExpectedArtifactDirs:   append([]string(nil), artifactContract.ExpectedArtifactDirs...),
+		RequiredArtifactExts:   append([]string(nil), artifactContract.RequiredArtifactExts...),
 		ResolvedModel:          routing.Model,
 		ResolvedSkills:         append([]string(nil), routing.Skills...),
 	}
@@ -621,6 +623,9 @@ func openClawSessionPrepareParams(params map[string]any, openClawSessionKey stri
 	if artifactContract.RequiresArtifactExport {
 		result["requiresArtifactExport"] = true
 	}
+	if len(artifactContract.RequiredArtifactExts) > 0 {
+		result["requiredArtifactExtensions"] = append([]string(nil), artifactContract.RequiredArtifactExts...)
+	}
 	if workspaceDir := openClawArtifactWorkspaceDir(params); workspaceDir != "" {
 		result["workspaceDir"] = workspaceDir
 	}
@@ -778,6 +783,7 @@ type openClawArtifactContract struct {
 	ComplexLongChain       bool
 	RequiresArtifactExport bool
 	ExpectedArtifactDirs   []string
+	RequiredArtifactExts   []string
 	SourceMessage          string
 }
 
@@ -793,11 +799,19 @@ func openClawArtifactContractForParams(params map[string]any, chatParams map[str
 	expectedDirs := normalizeOpenClawDirList(shared.ListArg(contract, "expectedArtifactDirs"))
 	requiresExport := parseBool(contract["requiresExportBeforeFinalResponse"]) || len(expectedDirs) > 0
 	complex := taskLoadClass == "complex_long_chain_task" || isOpenClawLongArtifactTask(lowerMessage)
+	requiredExts := normalizeOpenClawArtifactExtList(shared.ListArg(metadata, "requiredArtifactExtensions"))
+	if len(requiredExts) == 0 {
+		requiredExts = normalizeOpenClawArtifactExtList(shared.ListArg(metadata, "expectedArtifactExtensions"))
+	}
+	if len(requiredExts) == 0 {
+		requiredExts = inferOpenClawRequiredArtifactExts(lowerMessage)
+	}
 	return openClawArtifactContract{
 		TaskLoadClass:          taskLoadClass,
 		ComplexLongChain:       complex,
 		RequiresArtifactExport: requiresExport,
 		ExpectedArtifactDirs:   expectedDirs,
+		RequiredArtifactExts:   requiredExts,
 		SourceMessage:          message,
 	}
 }
@@ -817,6 +831,39 @@ func normalizeOpenClawDirList(values []any) []string {
 		result = append(result, dir)
 	}
 	return result
+}
+
+func normalizeOpenClawArtifactExtList(values []any) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	result := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		ext := strings.ToLower(strings.TrimSpace(fmt.Sprint(value)))
+		ext = strings.TrimPrefix(ext, ".")
+		if ext == "" || strings.Contains(ext, "/") || strings.Contains(ext, "\\") || seen[ext] {
+			continue
+		}
+		seen[ext] = true
+		result = append(result, ext)
+	}
+	return result
+}
+
+func inferOpenClawRequiredArtifactExts(lowerMessage string) []string {
+	switch {
+	case openClawMessageContainsAny(lowerMessage, []string{"pdf", "输出 pdf", "生成 pdf"}):
+		return []string{"pdf"}
+	case openClawMessageContainsAny(lowerMessage, []string{"视频", "video", "mp4", "渲染"}):
+		return []string{"mp4"}
+	case openClawMessageContainsAny(lowerMessage, []string{"图片", "图像", "png", "jpg", "jpeg", "webp", "生成图"}):
+		return []string{"png", "jpg", "jpeg", "webp"}
+	case openClawMessageContainsAny(lowerMessage, []string{"markdown", "md文件", ".md", "文案", "资讯"}):
+		return []string{"md"}
+	default:
+		return nil
+	}
 }
 
 func openClawChatSendParams(

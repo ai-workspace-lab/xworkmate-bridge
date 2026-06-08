@@ -169,6 +169,12 @@ func (s *Server) taskGetParamsWithSessionScope(params map[string]any) map[string
 	if _, ok := next["requiresArtifactExport"]; !ok && sess.openClaw != nil && sess.openClaw.RequiresArtifactExport {
 		next["requiresArtifactExport"] = true
 	}
+	if _, ok := next["expectedArtifactDirs"]; !ok && sess.openClaw != nil && len(sess.openClaw.ExpectedArtifactDirs) > 0 {
+		next["expectedArtifactDirs"] = append([]string(nil), sess.openClaw.ExpectedArtifactDirs...)
+	}
+	if _, ok := next["requiredArtifactExtensions"]; !ok && sess.openClaw != nil && len(sess.openClaw.RequiredArtifactExts) > 0 {
+		next["requiredArtifactExtensions"] = append([]string(nil), sess.openClaw.RequiredArtifactExts...)
+	}
 	if strings.TrimSpace(shared.StringArg(next, "openclawSessionKey", "")) == "" {
 		next["openclawSessionKey"] = sess.task.SessionKey
 	}
@@ -197,9 +203,6 @@ func (s *Server) mergeOpenClawTaskGetArtifactExport(payload map[string]any, para
 		return
 	}
 	remoteWorkingDirectory := strings.TrimSpace(shared.StringArg(payload, "remoteWorkingDirectory", ""))
-	if len(extractArtifactPayloads(payload, remoteWorkingDirectory)) > 0 {
-		return
-	}
 	sessionKey := firstNonEmptyString(payload, "openclawSessionKey", "sessionKey")
 	if sessionKey == "" {
 		sessionKey = strings.TrimSpace(shared.StringArg(params, "openclawSessionKey", ""))
@@ -235,10 +238,15 @@ func (s *Server) mergeOpenClawTaskGetArtifactExport(payload map[string]any, para
 		"maxInlineBytes":     0,
 		"includeContent":     false,
 	}
-	if expectedDirs := shared.ListArg(params, "expectedArtifactDirs"); len(expectedDirs) > 0 {
+	if expectedDirs := openClawTaskGetExpectedArtifactDirs(params, payload); len(expectedDirs) > 0 {
 		exportParams["expectedArtifactDirs"] = expectedDirs
 	}
-	mergeOpenClawArtifactPayload(payload, s.orchestrator.openClawArtifactExportRequest(gatewayProvider, exportParams, notify))
+	exportPayload := s.orchestrator.openClawArtifactExportRequest(gatewayProvider, exportParams, notify)
+	if openClawArtifactExportPayloadAuthoritative(exportPayload) {
+		replaceOpenClawArtifactPayload(payload, exportPayload)
+	} else {
+		mergeOpenClawArtifactPayload(payload, exportPayload)
+	}
 	applyOpenClawPreparedArtifactToResult(payload, prepared)
 	s.decorateOpenClawArtifactDownloadURLs(payload, sessionKey, runID)
 	stripOpenClawArtifactInlineContent(payload)
@@ -260,7 +268,9 @@ func normalizeOpenClawTaskGetResult(params map[string]any, payload map[string]an
 		return payload
 	}
 	remoteWorkingDirectory := strings.TrimSpace(shared.StringArg(payload, "remoteWorkingDirectory", ""))
-	if len(extractArtifactPayloads(payload, remoteWorkingDirectory)) > 0 {
+	artifacts := extractArtifactPayloads(payload, remoteWorkingDirectory)
+	requiredExts := openClawTaskGetRequiredArtifactExtensions(params, payload)
+	if len(artifacts) > 0 && openClawArtifactsSatisfyRequiredExtensions(artifacts, requiredExts) {
 		return payload
 	}
 	status := strings.ToLower(strings.TrimSpace(shared.StringArg(payload, "status", "")))
@@ -296,6 +306,9 @@ func normalizeOpenClawTaskGetResult(params map[string]any, payload map[string]an
 	}
 	payload["artifactScope"] = artifactScope
 	payload["artifactDirectory"] = artifactDirectory
+	if len(requiredExts) > 0 {
+		payload["requiredArtifactExtensions"] = append([]string(nil), requiredExts...)
+	}
 	if strings.TrimSpace(shared.StringArg(payload, "resolvedGatewayProviderId", "")) == "" {
 		payload["resolvedGatewayProviderId"] = gatewayProvider
 	}
@@ -315,7 +328,93 @@ func openClawTaskGetRequiresArtifactExport(params map[string]any, payload map[st
 		return true
 	}
 	return len(shared.ListArg(params, "expectedArtifactDirs")) > 0 ||
-		len(shared.ListArg(payload, "expectedArtifactDirs")) > 0
+		len(shared.ListArg(payload, "expectedArtifactDirs")) > 0 ||
+		len(shared.ListArg(params, "requiredArtifactExtensions")) > 0 ||
+		len(shared.ListArg(payload, "requiredArtifactExtensions")) > 0
+}
+
+func openClawTaskGetExpectedArtifactDirs(params map[string]any, payload map[string]any) []any {
+	seen := map[string]bool{}
+	result := []any{}
+	for _, values := range [][]any{
+		shared.ListArg(params, "expectedArtifactDirs"),
+		shared.ListArg(payload, "expectedArtifactDirs"),
+	} {
+		for _, value := range values {
+			item := strings.TrimSpace(fmt.Sprint(value))
+			if item == "" || seen[item] {
+				continue
+			}
+			seen[item] = true
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+func openClawArtifactExportPayloadAuthoritative(payload map[string]any) bool {
+	if len(payload) == 0 {
+		return false
+	}
+	if strings.TrimSpace(shared.StringArg(payload, "remoteWorkingDirectory", "")) != "" {
+		return true
+	}
+	if strings.TrimSpace(shared.StringArg(payload, "artifactScope", "")) != "" {
+		return true
+	}
+	_, hasArtifacts := payload["artifacts"]
+	_, hasFiles := payload["files"]
+	_, hasAttachments := payload["attachments"]
+	return hasArtifacts || hasFiles || hasAttachments
+}
+
+func replaceOpenClawArtifactPayload(result map[string]any, source map[string]any) {
+	if result == nil {
+		return
+	}
+	for _, key := range []string{"artifacts", "files", "attachments"} {
+		delete(result, key)
+	}
+	mergeOpenClawArtifactPayload(result, source)
+}
+
+func openClawTaskGetRequiredArtifactExtensions(params map[string]any, payload map[string]any) []string {
+	return normalizeOpenClawArtifactExtList(openClawTaskGetMergedList(params, payload, "requiredArtifactExtensions"))
+}
+
+func openClawTaskGetMergedList(params map[string]any, payload map[string]any, key string) []any {
+	seen := map[string]bool{}
+	result := []any{}
+	for _, values := range [][]any{
+		shared.ListArg(params, key),
+		shared.ListArg(payload, key),
+	} {
+		for _, value := range values {
+			item := strings.TrimSpace(fmt.Sprint(value))
+			if item == "" || seen[item] {
+				continue
+			}
+			seen[item] = true
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+func openClawArtifactsSatisfyRequiredExtensions(artifacts []map[string]any, requiredExts []string) bool {
+	if len(requiredExts) == 0 {
+		return true
+	}
+	for _, artifact := range artifacts {
+		relativePath := strings.ToLower(strings.TrimSpace(shared.StringArg(artifact, "relativePath", "")))
+		for _, ext := range requiredExts {
+			normalized := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(ext)), ".")
+			if normalized != "" && strings.HasSuffix(relativePath, "."+normalized) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *Server) handleTaskCancel(ctx context.Context, params map[string]any, notify func(map[string]any)) map[string]any {

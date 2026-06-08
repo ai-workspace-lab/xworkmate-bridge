@@ -29,6 +29,8 @@ type OpenClawTaskRecord struct {
 	ProgressMessage        string
 	PreparedArtifact       *openClawPreparedArtifactScope
 	RequiresArtifactExport bool
+	ExpectedArtifactDirs   []string
+	RequiredArtifactExts   []string
 	ResolvedModel          string
 	ResolvedSkills         []string
 }
@@ -92,6 +94,12 @@ func openClawRunningTaskResult(record *OpenClawTaskRecord) map[string]any {
 	}
 	if record.PreparedArtifact != nil {
 		applyOpenClawPreparedArtifactToResult(result, record.PreparedArtifact)
+	}
+	if len(record.ExpectedArtifactDirs) > 0 {
+		result["expectedArtifactDirs"] = append([]string(nil), record.ExpectedArtifactDirs...)
+	}
+	if len(record.RequiredArtifactExts) > 0 {
+		result["requiredArtifactExtensions"] = append([]string(nil), record.RequiredArtifactExts...)
 	}
 	return result
 }

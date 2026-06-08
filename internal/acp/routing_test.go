@@ -1925,6 +1925,56 @@ func TestExecuteSessionMessageGatewayDoesNotRewriteClaimedArtifactsWithoutGatewa
 	}
 }
 
+func TestExecuteSessionMessageGatewayVerifiesClaimedArtifactsWhenExportRequired(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	response, rpcErr := server.executeSessionTask(task{
+		req: shared.RPCRequest{
+			Method: "session.message",
+			Params: map[string]any{
+				"sessionId":        "session-openclaw-claimed-required-artifact",
+				"threadId":         "thread-openclaw-claimed-required-artifact",
+				"taskPrompt":       "fallback artifact hallucinate-files",
+				"workingDirectory": t.TempDir(),
+				"metadata": map[string]any{
+					"xworkmateTaskArtifactContract": map[string]any{
+						"requiresExportBeforeFinalResponse": true,
+						"expectedArtifactDirs":              []any{"exports/"},
+					},
+				},
+				"routing": map[string]any{
+					"routingMode":                "explicit",
+					"explicitExecutionTarget":    "gateway",
+					"preferredGatewayProviderId": "openclaw",
+				},
+			},
+		},
+	})
+	if rpcErr != nil {
+		t.Fatalf("expected gateway response, got rpc error: %#v", rpcErr)
+	}
+	if got := response["status"]; got != string(TaskStateRunning) {
+		t.Fatalf("expected required but unverified artifact claim to stay syncing, got %#v", response)
+	}
+	if artifacts := extractArtifactPayloads(response, shared.StringArg(response, "remoteWorkingDirectory", "")); len(artifacts) != 0 {
+		t.Fatalf("expected bridge to remove unverified native artifact claims, got %#v", artifacts)
+	}
+	if got := shared.StringArg(shared.AsMap(response["progress"]), "stage", ""); got != "syncing-artifacts" {
+		t.Fatalf("expected syncing-artifacts progress, got %#v", response)
+	}
+	if gateway.ArtifactExportCount() != 1 {
+		t.Fatalf("expected Bridge artifact export verification, got %d", gateway.ArtifactExportCount())
+	}
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.session.prepare", "chat.send", "xworkmate.tasks.get", "xworkmate.artifacts.export"}) {
+		t.Fatalf("expected connect, prepare, chat.send, task lookup, then artifact export, got %#v", got)
+	}
+}
+
 func TestExecuteSessionMessageGatewayExportsArtifactsWithoutPromptHeuristic(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	defer gateway.Close()
