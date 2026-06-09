@@ -97,9 +97,8 @@ func (xi *XdotoolInjector) Start() error {
 // Inject sends a command to the persistent xdotool process
 func (xi *XdotoolInjector) Inject(event InputEvent) error {
 	xi.mu.Lock()
-	defer xi.mu.Unlock()
-
 	if !xi.isStarted || xi.stdin == nil {
+		xi.mu.Unlock()
 		return fmt.Errorf("injector is not running")
 	}
 
@@ -110,6 +109,7 @@ func (xi *XdotoolInjector) Inject(event InputEvent) error {
 		xi.moveMu.Lock()
 		xi.pendingMove = &event
 		xi.moveMu.Unlock()
+		xi.mu.Unlock()
 		return nil
 
 	case "mouse_down":
@@ -135,6 +135,7 @@ func (xi *XdotoolInjector) Inject(event InputEvent) error {
 		}
 
 	default:
+		xi.mu.Unlock()
 		return fmt.Errorf("unsupported input type: %s", event.Type)
 	}
 
@@ -144,14 +145,22 @@ func (xi *XdotoolInjector) Inject(event InputEvent) error {
 			// Try to restart if pipe is broken
 			log.Printf("xdotool write error: %v. Attempting to restart injector.", err)
 			xi.isStarted = false
-			_ = xi.stdin.Close()
+			if xi.stdin != nil {
+				_ = xi.stdin.Close()
+			}
+			xi.stdin = nil
+			xi.cmd = nil
+			xi.mu.Unlock()
 			if restartErr := xi.Start(); restartErr == nil {
+				xi.mu.Lock()
 				_, _ = xi.stdin.Write([]byte(cmdStr))
+				xi.mu.Unlock()
 			}
 			return err
 		}
 	}
 
+	xi.mu.Unlock()
 	return nil
 }
 
