@@ -155,6 +155,25 @@ Closing WebRTC server...
 - APP 旧版本固定使用 `remote-desktop-session`，多个 app 实例或重连会互相关闭同一个远端 desktop session。被抢占的客户端可能还短暂保持 `connected` 状态，但远端 RTP pipeline 已经被新 offer 替换，表现为等待首帧。
 - 修复方式是 APP 每个 DesktopView / PeerConnection 使用唯一 desktop session id，并且 video-only desktop offer 不再声明无用 audio recvonly transceiver。
 
+### 6. 画面已稳定，但远程桌面操作不流畅
+
+判断：
+
+- 视频区域能显示远程桌面，白屏明显缓解
+- Bridge 端 `WebRTC RTP stats` 连续增长，`writeErrors=0`
+- APP 操作表现为鼠标跟手性差、点击延迟、拖动不顺、键盘输入偶发滞后
+- Bridge 日志中没有 `Capture pipeline exited with error`，也没有明显 RTP write error
+
+说明：
+
+- 此时不要继续优先怀疑 H.264 profile 或 RTP 发送层。应转向输入链路排查：
+  - APP `PointerHoverEvent` / `PointerMoveEvent` 是否把每个移动事件都发到 data channel
+  - WebRTC data channel 是否出现 `bufferedAmount` 堆积
+  - Bridge data channel 收到的 input 事件是否能及时写入 persistent `xdotool`
+  - `xdotool` stdin 写失败后的恢复路径是否会卡住 injector
+- 鼠标移动是可丢弃的高频状态事件，应以“最新位置优先”为原则；点击、键盘、滚轮是关键动作，不能因背压被丢弃。
+- 修复方式是 APP 对 mouse move 做节流 / 去重 / 背压丢弃，Bridge 修复 xdotool 写失败后的恢复死锁。
+
 ## 本次修复结论
 
 本次真实根因不是单纯网络延迟，而是两段串联问题：
@@ -172,6 +191,13 @@ Closing WebRTC server...
 5. 本机同时运行了多个 `XWorkmate` 进程，且 APP 侧仍使用固定 `sessionId='remote-desktop-session'`。远端日志在同一时间段反复出现同一个 session 的 stop/start，说明新连接抢占并关闭旧 PeerConnection / capture pipeline。这个链路会让被抢占的 APP 视图停在“WebRTC 已连接，正在等待远程桌面首帧...”，属于客户端会话生命周期问题。
 6. 同步修复 APP：为每个 DesktopView 生成唯一 `remote-desktop-*` session id，并将 desktop SDP offer 简化为 video recvonly，避免 video-only Bridge 被无用 audio m-line 干扰。
 
+2026-06-09 操作不流畅排查结论：
+
+7. 白屏缓解后，远端日志显示视频发送链路仍然稳定：`WebRTC RTP stats` 每 5 秒约 1100-1200 包，`byteDelta` 约 0.95MB，`writeErrors=0`，没有新的 H.264 profile / I420 / RTP 发送异常。
+8. 操作不流畅的高概率链路转移到输入通道：APP 侧鼠标 hover / move 事件过密，容易把 data channel 塞成旧轨迹队列；Bridge 侧虽然已有 16ms mouse move worker，但 APP 仍会持续发送大量可丢弃的中间位置。
+9. 还发现 Bridge `xdotool` stdin 写失败恢复路径存在风险：旧代码持有 injector mutex 时调用 `Start()`，`Start()` 会再次获取同一把锁。一旦 xdotool pipe 异常，输入注入可能死锁，表现为画面仍动但远程操作卡住。
+10. 同步修复 APP 与 Bridge：APP 对 mouse move 做 16ms 节流、坐标去重、data channel 背压时只丢弃 mouse move；Bridge 修复 xdotool 写失败后的无锁重启路径。
+
 修复后的稳定策略：
 
 - 强制把 capture 输出转换到 `I420`
@@ -183,6 +209,9 @@ Closing WebRTC server...
 - APP 在等待首帧时输出 inbound video stats
 - APP 每个远程桌面视图使用唯一 desktop session id，避免多实例 / 重连抢占同一个 Bridge session
 - APP desktop offer 只声明 video recvonly transceiver，避免无用 audio m-line 增加协商不确定性
+- APP mouse move 事件按约 60fps 节流并去重，点击前强制同步最新坐标
+- APP data channel 发生背压时只丢弃过期 `mouse_move`，不丢 `mouse_down` / `mouse_up` / `key_*` / `scroll`
+- Bridge persistent `xdotool` 写失败时必须释放 mutex 后再重启 injector，避免输入链路死锁
 - Caddy 公网入口同时放行主 token 与 review token，并验证无 token 仍为 `401`
 - 只保留 user service 作为当前 bridge origin，避免 system service 与 user service 抢占 `127.0.0.1:8787`
 
@@ -199,14 +228,23 @@ Bridge：
 APP 诊断：
 
 - `/Users/shenlan/workspaces/ai-workspace-lab/xworkmate-app/lib/features/desktop/desktop_client.dart`
+- `/Users/shenlan/workspaces/ai-workspace-lab/xworkmate-app/lib/features/desktop/desktop_input_handler.dart`
 - `/Users/shenlan/workspaces/ai-workspace-lab/xworkmate-app/lib/features/desktop/desktop_view.dart`
 - `/Users/shenlan/workspaces/ai-workspace-lab/xworkmate-app/test/features/desktop/desktop_client_test.dart`
+- `/Users/shenlan/workspaces/ai-workspace-lab/xworkmate-app/test/features/desktop/desktop_input_handler_test.dart`
 
 2026-06-08 复发修复 APP 落点：
 
 - `desktop_client.dart`：新增唯一 desktop session id helper；desktop offer 只添加 video recvonly transceiver。
 - `desktop_view.dart`：不再硬编码 `remote-desktop-session`。
 - `desktop_client_test.dart`：覆盖并行 app 实例生成不同 session id。
+
+2026-06-09 操作流畅度修复落点：
+
+- APP `desktop_input_handler.dart`：mouse move / hover 按 16ms 节流，重复坐标去重，点击前强制发送最新坐标。
+- APP `desktop_client.dart`：data channel `bufferedAmount` 超过阈值时只丢弃过期 `mouse_move`。
+- APP `desktop_input_handler_test.dart` / `desktop_client_test.dart`：覆盖节流、去重、点击前坐标同步与背压丢弃策略。
+- Bridge `internal/desktop/input.go`：修复 xdotool stdin 写失败后恢复路径的 mutex 重入死锁。
 
 ## 期望日志
 
@@ -406,6 +444,66 @@ APP 在等待首帧时会定期打印 inbound video stats 摘要。
 - `framesDecoded > 0`
   - 编码与网络基本通，继续查 renderer / stale stream / attach。
 
+## 操作流畅度链路判读
+
+当画面已经出来，但远程桌面操作不跟手时，按下面顺序排查。
+
+### 1. 先确认视频链路不是主因
+
+远端日志应满足：
+
+```text
+WebRTC RTP stats: packets=... packetDelta=1100 byteDelta=950000 writeErrors=0
+WebRTC RTP stats: packets=... packetDelta=1100 byteDelta=950000 writeErrors=0
+```
+
+判读：
+
+- `packetDelta` 和 `byteDelta` 连续增长，且 `writeErrors=0`
+  - 视频 capture / encoder / RTP 写入 WebRTC track 基本健康。
+- `packetDelta` 大幅抖动、连续归零或 `writeErrors > 0`
+  - 先回到 RTP / encoder / PeerConnection 层排查，不要先改输入。
+
+### 2. 再看 APP 输入事件是否过密
+
+高频鼠标移动属于状态同步，不应排队传输所有中间点。APP 侧应满足：
+
+- `mouse_move` / hover 约 16ms 最多发送一次
+- 同一归一化坐标重复移动不发送
+- `mouse_down` 前强制发送最新坐标，保证点击命中
+- data channel `bufferedAmount` 过高时只丢弃 `mouse_move`
+- `mouse_down`、`mouse_up`、`key_down`、`key_up`、`scroll` 不因背压丢弃
+
+判读：
+
+- 鼠标轨迹延迟但点击最终准确，通常是旧 `mouse_move` 事件排队。
+- 点击也延迟或丢失，要查 data channel 状态、Bridge input injector、xdotool 写入。
+
+### 3. 再看 Bridge input injector
+
+Bridge 侧输入链路是：
+
+```text
+APP Pointer/Key event -> WebRTC data channel -> Bridge OnDataChannel -> XdotoolInjector.Inject -> persistent xdotool stdin -> X11
+```
+
+重点日志：
+
+```text
+Data channel 'input'-'...' opened
+xdotool write error: ...
+xdotool mousemove write error: ...
+```
+
+判读：
+
+- 有 `Data channel opened`，但操作没反应：
+  - 优先查 xdotool 是否写失败、DISPLAY 是否解析正确、X11 session 是否仍可注入。
+- 出现 `xdotool write error` 后操作完全卡住：
+  - 检查 Bridge 是否包含 2026-06-09 的修复：写失败后释放 mutex，再调用 `Start()` 重启 injector。
+- 没有 xdotool 错误，RTP 也健康，但操作仍延迟：
+  - 优先查 APP data channel 背压与 mouse move 发送频率。
+
 ## 现场验证模板
 
 ### 一次健康验证应满足
@@ -441,6 +539,14 @@ WebRTC RTP stats: packets=4496 ...
 ```text
 WebRTC RTP final stats: packets=9470 bytes=7962965 writeErrors=0
 ```
+
+5. 操作流畅度验证：
+
+- 鼠标快速移动 10 秒，远端指针应跟随最新位置，不应明显执行旧轨迹。
+- 快速点击按钮 / 菜单，点击前坐标应准确同步，不应出现点击偏移。
+- 连续输入文本，键盘事件不应因为鼠标 move 背压被丢弃。
+- Bridge 日志不应出现新的 `xdotool write error` 或 `xdotool mousemove write error`。
+- 如果远端日志中 RTP 持续健康但操作仍卡，继续抓 APP data channel `bufferedAmount` 与 input event 发送频率。
 
 ## 常见问题
 
