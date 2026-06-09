@@ -13,6 +13,11 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
+const (
+	desktopReliableInputChannelLabel = "input"
+	desktopMoveInputChannelLabel     = "input-move"
+)
+
 type WebRTCServer struct {
 	peerConnection *webrtc.PeerConnection
 	videoTrack     *webrtc.TrackLocalStaticRTP
@@ -88,24 +93,34 @@ func (w *WebRTCServer) InitPeerConnection(iceServers []string) error {
 	// Handle Data Channel for inputs
 	pc.OnDataChannel(func(d *webrtc.DataChannel) {
 		log.Printf("Data channel '%s'-'%d' opened", d.Label(), d.ID())
-		if d.Label() == "input" {
-			d.OnMessage(func(msg webrtc.DataChannelMessage) {
-				var event InputEvent
-				if err := json.Unmarshal(msg.Data, &event); err != nil {
-					log.Printf("Failed to unmarshal input event: %v", err)
-					return
-				}
-				if err := w.inputInjector.Inject(event); err != nil {
-					log.Printf("Failed to inject input event: %v", err)
-				}
-			})
+		label := d.Label()
+		if !isDesktopInputDataChannelLabel(label) {
+			return
 		}
+		d.OnMessage(func(msg webrtc.DataChannelMessage) {
+			var event InputEvent
+			if err := json.Unmarshal(msg.Data, &event); err != nil {
+				log.Printf("Failed to unmarshal input event: %v", err)
+				return
+			}
+			if label == desktopMoveInputChannelLabel && event.Type != "mouse_move" {
+				log.Printf("Ignoring non-mouse_move input event on %s channel: %s", label, event.Type)
+				return
+			}
+			if err := w.inputInjector.Inject(event); err != nil {
+				log.Printf("Failed to inject input event: %v", err)
+			}
+		})
 	})
 
 	w.peerConnection = pc
 	w.videoTrack = videoTrack
 
 	return nil
+}
+
+func isDesktopInputDataChannelLabel(label string) bool {
+	return label == desktopReliableInputChannelLabel || label == desktopMoveInputChannelLabel
 }
 
 // StartRTPReceiver listens on local UDP port for GStreamer RTP stream and forwards to WebRTC video track
