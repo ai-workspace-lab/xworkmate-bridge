@@ -471,12 +471,14 @@ WebRTC RTP stats: packets=... packetDelta=1100 byteDelta=950000 writeErrors=0
 - `mouse_move` / hover 约 16ms 最多发送一次
 - 同一归一化坐标重复移动不发送
 - `mouse_down` 前强制发送最新坐标，保证点击命中
-- data channel `bufferedAmount` 过高时只丢弃 `mouse_move`
+- `mouse_move` 走独立 `input-move` data channel，配置为 unordered + 短 packet lifetime
+- 点击、键盘、滚轮走可靠有序 `input` data channel
+- `input-move` channel `bufferedAmount` 过高时只丢弃 `mouse_move`
 - `mouse_down`、`mouse_up`、`key_down`、`key_up`、`scroll` 不因背压丢弃
 
 判读：
 
-- 鼠标轨迹延迟但点击最终准确，通常是旧 `mouse_move` 事件排队。
+- 鼠标轨迹延迟但点击最终准确，通常是 `input-move` 背压或 Bridge 侧 mouse move coalescing 积压。
 - 点击也延迟或丢失，要查 data channel 状态、Bridge input injector、xdotool 写入。
 
 ### 3. 再看 Bridge input injector
@@ -484,13 +486,14 @@ WebRTC RTP stats: packets=... packetDelta=1100 byteDelta=950000 writeErrors=0
 Bridge 侧输入链路是：
 
 ```text
-APP Pointer/Key event -> WebRTC data channel -> Bridge OnDataChannel -> XdotoolInjector.Inject -> persistent xdotool stdin -> X11
+APP Pointer/Key event -> WebRTC input/input-move data channel -> Bridge OnDataChannel -> XdotoolInjector.Inject -> persistent xdotool stdin -> X11
 ```
 
 重点日志：
 
 ```text
 Data channel 'input'-'...' opened
+Data channel 'input-move'-'...' opened
 xdotool write error: ...
 xdotool mousemove write error: ...
 ```
