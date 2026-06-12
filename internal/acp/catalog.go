@@ -13,13 +13,6 @@ type CapabilityCatalog struct {
 	ProviderProbeSummary      []any `json:"providerProbeSummary"`
 }
 
-func (c *CapabilityCatalog) Update(providers []any, targets []any) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.ProviderCatalog = providers
-	c.AvailableExecutionTargets = targets
-}
-
 func (c *CapabilityCatalog) Get() map[string]any {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

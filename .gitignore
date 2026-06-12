@@ -1,4 +1,5 @@
 build/
+dist/
 .env
 xworkmate-bridge
 xworkmate-go-core-linux
