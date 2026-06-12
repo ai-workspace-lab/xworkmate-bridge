@@ -1780,7 +1780,6 @@ func (o *SessionOrchestrator) normalizeResult(sess *session, result map[string]a
 	if routing.TargetID == "gateway" && successSource == "absent" {
 		remoteWorkingDirectory := strings.TrimSpace(shared.StringArg(result, "remoteWorkingDirectory", ""))
 		if output == "" && len(extractArtifactPayloads(result, remoteWorkingDirectory)) == 0 {
-			success = false
 			result["success"] = false
 			result["status"] = string(TaskStateFailed)
 			result["code"] = "OPENCLAW_TERMINAL_WITHOUT_EVIDENCE"
