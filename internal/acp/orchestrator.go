@@ -894,7 +894,6 @@ func openClawChatSendParamsWithSessionKey(
 	}
 	attachments = append(attachments, inlineAttachments...)
 	if len(attachments) > 0 {
-		chatParams["attachments"] = attachments
 		chatParams["message"] = shared.AugmentPromptWithAttachments(
 			message,
 			map[string]any{"attachments": attachments},
