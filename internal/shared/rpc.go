@@ -92,22 +92,3 @@ func NotificationEnvelope(method string, params map[string]any) map[string]any {
 		"seq":     0,
 	}
 }
-
-func ToolTextResult(id any, content string) map[string]any {
-	result := map[string]any{
-		"content": []map[string]any{
-			{"type": "text", "text": content},
-		},
-	}
-	return ResultEnvelope(id, result)
-}
-
-func ToolErrorResult(id any, err error) map[string]any {
-	result := map[string]any{
-		"content": []map[string]any{
-			{"type": "text", "text": fmt.Sprintf("Error: %v", err)},
-		},
-		"isError": true,
-	}
-	return ResultEnvelope(id, result)
-}

@@ -342,30 +342,6 @@ func HandleChatTool(arguments map[string]any) (string, error) {
 	return CallOpenAICompatible(baseURL, apiKey, model, messages)
 }
 
-func HandleClaudeReviewTool(arguments map[string]any) (string, error) {
-	prompt := strings.TrimSpace(StringArg(arguments, "prompt", ""))
-	if prompt == "" {
-		return "", errors.New("prompt is required")
-	}
-	model := strings.TrimSpace(
-		StringArg(arguments, "model", EnvOrDefault("CLAUDE_REVIEW_MODEL", "")),
-	)
-	system := strings.TrimSpace(
-		StringArg(arguments, "system", EnvOrDefault("CLAUDE_REVIEW_SYSTEM", "")),
-	)
-	tools := strings.TrimSpace(
-		StringArg(arguments, "tools", EnvOrDefault("CLAUDE_REVIEW_TOOLS", "")),
-	)
-	timeout := IntArg(EnvOrDefault("CLAUDE_REVIEW_TIMEOUT_SEC", "600"), 600)
-	return RunClaudeReview(
-		prompt,
-		model,
-		system,
-		tools,
-		time.Duration(timeout)*time.Second,
-	)
-}
-
 func CallOpenAICompatible(
 	baseURL,
 	apiKey,
