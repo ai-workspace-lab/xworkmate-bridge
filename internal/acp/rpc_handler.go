@@ -116,8 +116,9 @@ func (s *Server) handleTaskGet(ctx context.Context, params map[string]any, notif
 	)
 	if result.OK {
 		payload := shared.AsMap(result.Payload)
+		activeOpenClawTask := s.activeOpenClawTaskRecord(params)
 		s.mergeOpenClawTaskGetArtifactExport(payload, params, gatewayProvider, notify)
-		payload = normalizeOpenClawTaskGetResult(params, payload, gatewayProvider)
+		payload = normalizeOpenClawTaskGetResult(params, payload, gatewayProvider, activeOpenClawTask)
 		sessionKey := firstNonEmptyString(payload, "openclawSessionKey", "sessionKey")
 		if sessionKey == "" {
 			sessionKey = strings.TrimSpace(shared.StringArg(params, "openclawSessionKey", ""))
@@ -241,6 +242,9 @@ func (s *Server) mergeOpenClawTaskGetArtifactExport(payload map[string]any, para
 	if expectedDirs := openClawTaskGetExpectedArtifactDirs(params, payload); len(expectedDirs) > 0 {
 		exportParams["expectedArtifactDirs"] = expectedDirs
 	}
+	if requiredExts := openClawTaskGetRequiredArtifactExtensions(params, payload); len(requiredExts) > 0 {
+		exportParams["requiredArtifactExtensions"] = append([]string(nil), requiredExts...)
+	}
 	exportPayload := s.orchestrator.openClawArtifactExportRequest(gatewayProvider, exportParams, notify)
 	if openClawArtifactExportPayloadAuthoritative(exportPayload) {
 		replaceOpenClawArtifactPayload(payload, exportPayload)
@@ -252,7 +256,24 @@ func (s *Server) mergeOpenClawTaskGetArtifactExport(payload map[string]any, para
 	stripOpenClawArtifactInlineContent(payload)
 }
 
-func normalizeOpenClawTaskGetResult(params map[string]any, payload map[string]any, gatewayProvider string) map[string]any {
+func (s *Server) activeOpenClawTaskRecord(params map[string]any) *OpenClawTaskRecord {
+	sess := s.findTaskSession(params)
+	if sess == nil {
+		return nil
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	if sess.task.State != TaskStateRunning {
+		return nil
+	}
+	if sess.openClaw == nil {
+		return nil
+	}
+	record := *sess.openClaw
+	return &record
+}
+
+func normalizeOpenClawTaskGetResult(params map[string]any, payload map[string]any, gatewayProvider string, activeRecord *OpenClawTaskRecord) map[string]any {
 	if len(payload) == 0 {
 		return payload
 	}
@@ -270,6 +291,13 @@ func normalizeOpenClawTaskGetResult(params map[string]any, payload map[string]an
 	remoteWorkingDirectory := strings.TrimSpace(shared.StringArg(payload, "remoteWorkingDirectory", ""))
 	artifacts := extractArtifactPayloads(payload, remoteWorkingDirectory)
 	requiredExts := openClawTaskGetRequiredArtifactExtensions(params, payload)
+	if openClawUnknownArtifactEvidence(payload, artifacts) {
+		return adjudicateOpenClawUnknownArtifactEvidence(params, payload, gatewayProvider, activeRecord, artifacts, requiredExts, artifactScope, artifactDirectory)
+	}
+	applyOpenClawConstraintDeliveryStatus(payload)
+	if strings.TrimSpace(shared.StringArg(payload, "status", "")) == "partially_delivered" {
+		return payload
+	}
 	if len(artifacts) > 0 && openClawArtifactsSatisfyRequiredExtensions(artifacts, requiredExts) {
 		return payload
 	}
@@ -318,6 +346,87 @@ func normalizeOpenClawTaskGetResult(params map[string]any, payload map[string]an
 		"terminal": false,
 	}
 	return payload
+}
+
+func openClawUnknownArtifactEvidence(payload map[string]any, artifacts []map[string]any) bool {
+	if strings.ToLower(strings.TrimSpace(shared.StringArg(payload, "status", ""))) != "unknown" {
+		return false
+	}
+	evidence := strings.ToLower(strings.TrimSpace(shared.StringArg(payload, "evidence", "")))
+	if evidence == "artifacts_present" {
+		return true
+	}
+	return parseBool(payload["artifactsPresent"]) ||
+		shared.IntArg(shared.StringArg(payload, "artifactCount", ""), 0) > 0 ||
+		len(artifacts) > 0
+}
+
+func adjudicateOpenClawUnknownArtifactEvidence(
+	params map[string]any,
+	payload map[string]any,
+	gatewayProvider string,
+	activeRecord *OpenClawTaskRecord,
+	artifacts []map[string]any,
+	requiredExts []string,
+	artifactScope string,
+	artifactDirectory string,
+) map[string]any {
+	if openClawTaskRecordStillActive(activeRecord) {
+		running := openClawRunningTaskResult(activeRecord)
+		running["artifactEvidence"] = "artifacts_present"
+		if strings.TrimSpace(shared.StringArg(running, "resolvedGatewayProviderId", "")) == "" {
+			running["resolvedGatewayProviderId"] = gatewayProvider
+		}
+		return running
+	}
+	runID := firstNonEmptyString(payload, "runId", "taskId")
+	if runID == "" {
+		runID = strings.TrimSpace(shared.StringArg(params, "runId", ""))
+	}
+	sessionKey := firstNonEmptyString(payload, "openclawSessionKey", "sessionKey")
+	if sessionKey == "" {
+		sessionKey = strings.TrimSpace(shared.StringArg(params, "openclawSessionKey", ""))
+	}
+	if len(requiredExts) > 0 && openClawArtifactsSatisfyRequiredExtensions(artifacts, requiredExts) {
+		payload["success"] = true
+		payload["successSource"] = "inferred"
+		payload["status"] = string(TaskStateCompleted)
+		payload["event"] = string(TaskStateCompleted)
+		payload["pending"] = false
+	} else {
+		payload["success"] = false
+		payload["status"] = string(TaskStateFailed)
+		payload["event"] = string(TaskStateFailed)
+		payload["pending"] = false
+		payload["code"] = "OPENCLAW_TERMINAL_WITHOUT_EVIDENCE"
+		payload["error"] = "OPENCLAW_TERMINAL_WITHOUT_EVIDENCE"
+		payload["message"] = "OPENCLAW_TERMINAL_WITHOUT_EVIDENCE"
+		if len(requiredExts) > 0 {
+			payload["missingRequiredExtensions"] = openClawMissingRequiredExtensions(artifacts, requiredExts)
+		}
+	}
+	payload["runId"] = runID
+	payload["taskId"] = runID
+	payload["openclawSessionKey"] = sessionKey
+	if strings.TrimSpace(shared.StringArg(payload, "appThreadKey", "")) == "" {
+		payload["appThreadKey"] = strings.TrimSpace(shared.StringArg(params, "appThreadKey", ""))
+	}
+	payload["artifactScope"] = artifactScope
+	payload["artifactDirectory"] = artifactDirectory
+	if len(requiredExts) > 0 {
+		payload["requiredArtifactExtensions"] = append([]string(nil), requiredExts...)
+	}
+	if strings.TrimSpace(shared.StringArg(payload, "resolvedGatewayProviderId", "")) == "" {
+		payload["resolvedGatewayProviderId"] = gatewayProvider
+	}
+	return payload
+}
+
+func openClawTaskRecordStillActive(record *OpenClawTaskRecord) bool {
+	if record == nil {
+		return false
+	}
+	return record.DeadlineAt.IsZero() || time.Now().Before(record.DeadlineAt)
 }
 
 func openClawTaskGetRequiresArtifactExport(params map[string]any, payload map[string]any) bool {
@@ -405,16 +514,29 @@ func openClawArtifactsSatisfyRequiredExtensions(artifacts []map[string]any, requ
 	if len(requiredExts) == 0 {
 		return true
 	}
-	for _, artifact := range artifacts {
-		relativePath := strings.ToLower(strings.TrimSpace(shared.StringArg(artifact, "relativePath", "")))
-		for _, ext := range requiredExts {
-			normalized := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(ext)), ".")
-			if normalized != "" && strings.HasSuffix(relativePath, "."+normalized) {
-				return true
+	return len(openClawMissingRequiredExtensions(artifacts, requiredExts)) == 0
+}
+
+func openClawMissingRequiredExtensions(artifacts []map[string]any, requiredExts []string) []any {
+	missing := make([]any, 0)
+	for _, ext := range requiredExts {
+		normalized := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(ext)), ".")
+		if normalized == "" {
+			continue
+		}
+		found := false
+		for _, artifact := range artifacts {
+			relativePath := strings.ToLower(strings.TrimSpace(shared.StringArg(artifact, "relativePath", "")))
+			if strings.HasSuffix(relativePath, "."+normalized) {
+				found = true
+				break
 			}
 		}
+		if !found {
+			missing = append(missing, normalized)
+		}
 	}
-	return false
+	return missing
 }
 
 func (s *Server) handleTaskCancel(ctx context.Context, params map[string]any, notify func(map[string]any)) map[string]any {

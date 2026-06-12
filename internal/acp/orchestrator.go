@@ -1416,6 +1416,9 @@ func (o *SessionOrchestrator) openClawArtifactExport(
 	if len(artifactContract.ExpectedArtifactDirs) > 0 {
 		exportParams["expectedArtifactDirs"] = append([]string(nil), artifactContract.ExpectedArtifactDirs...)
 	}
+	if len(artifactContract.RequiredArtifactExts) > 0 {
+		exportParams["requiredArtifactExtensions"] = append([]string(nil), artifactContract.RequiredArtifactExts...)
+	}
 	payload := o.openClawArtifactExportRequest(gatewayProvider, exportParams, notify)
 	return payload
 }
@@ -1478,6 +1481,38 @@ func mergeOpenClawArtifactPayload(result map[string]any, source map[string]any) 
 			result[key] = merged
 		}
 	}
+	if value, ok := source["constraintSatisfied"]; ok {
+		result["constraintSatisfied"] = parseBool(value)
+	}
+	if _, ok := source["missingRequiredExtensions"]; ok {
+		result["missingRequiredExtensions"] = appendStringList(result["missingRequiredExtensions"], source["missingRequiredExtensions"])
+	}
+}
+
+func appendStringList(existing any, incoming any) []any {
+	seen := map[string]bool{}
+	merged := make([]any, 0)
+	add := func(value any) {
+		item := strings.TrimSpace(fmt.Sprint(value))
+		if item == "" || seen[item] {
+			return
+		}
+		seen[item] = true
+		merged = append(merged, item)
+	}
+	for _, values := range []any{existing, incoming} {
+		switch typed := values.(type) {
+		case []any:
+			for _, item := range typed {
+				add(item)
+			}
+		case []string:
+			for _, item := range typed {
+				add(item)
+			}
+		}
+	}
+	return merged
 }
 
 func appendArtifactList(existing any, incoming any) []any {
@@ -1499,6 +1534,22 @@ func appendArtifactList(existing any, incoming any) []any {
 		}
 	}
 	return merged
+}
+
+func applyOpenClawConstraintDeliveryStatus(result map[string]any) {
+	if result == nil || !parseBool(result["success"]) {
+		return
+	}
+	if value, ok := result["constraintSatisfied"]; !ok || parseBool(value) {
+		return
+	}
+	switch strings.ToLower(strings.TrimSpace(shared.StringArg(result, "status", ""))) {
+	case string(TaskStateRunning), string(TaskStateFailed), string(TaskStateCancelled):
+		return
+	default:
+		result["status"] = "partially_delivered"
+		result["artifactSyncStatus"] = "partial"
+	}
 }
 
 func gatewayRPCError(errorPayload map[string]any, fallback string) *shared.RPCError {
@@ -1712,7 +1763,12 @@ func (o *SessionOrchestrator) normalizeResult(sess *session, result map[string]a
 	delete(result, openClawArtifactExportAttemptedField)
 
 	successValue, hasSuccess := result["success"]
-	success := !hasSuccess || parseBool(successValue)
+	successSource := "explicit"
+	success := parseBool(successValue)
+	if !hasSuccess {
+		successSource = "absent"
+		success = true
+	}
 
 	output := strings.TrimSpace(shared.StringArg(result, "output", ""))
 	if output == "" {
@@ -1720,6 +1776,20 @@ func (o *SessionOrchestrator) normalizeResult(sess *session, result map[string]a
 	}
 	if output == "" && success {
 		output = strings.TrimSpace(shared.StringArg(result, "message", ""))
+	}
+	if routing.TargetID == "gateway" && successSource == "absent" {
+		remoteWorkingDirectory := strings.TrimSpace(shared.StringArg(result, "remoteWorkingDirectory", ""))
+		if output == "" && len(extractArtifactPayloads(result, remoteWorkingDirectory)) == 0 {
+			success = false
+			result["success"] = false
+			result["status"] = string(TaskStateFailed)
+			result["code"] = "OPENCLAW_TERMINAL_WITHOUT_EVIDENCE"
+			result["error"] = "OPENCLAW_TERMINAL_WITHOUT_EVIDENCE"
+			result["message"] = "OPENCLAW_TERMINAL_WITHOUT_EVIDENCE"
+		} else {
+			result["success"] = true
+			result["successSource"] = "inferred"
+		}
 	}
 
 	sess.mu.Lock()
@@ -1735,7 +1805,12 @@ func (o *SessionOrchestrator) normalizeResult(sess *session, result map[string]a
 		result["status"] = "completed"
 	}
 	if !hasSuccess {
-		result["success"] = true
+		if _, ok := result["success"]; !ok {
+			result["success"] = true
+		}
+	}
+	if !parseBool(result["success"]) && strings.TrimSpace(shared.StringArg(result, "status", "")) == string(TaskStateCompleted) {
+		result["status"] = string(TaskStateFailed)
 	}
 	result["resolvedExecutionTarget"] = routing.TargetID
 	result["resolvedProviderId"] = routing.ProviderID
@@ -1762,6 +1837,7 @@ func (o *SessionOrchestrator) normalizeResult(sess *session, result map[string]a
 		sess.task.UpdatedAt = time.Now()
 		sess.mu.Unlock()
 	}
+	applyOpenClawConstraintDeliveryStatus(result)
 
 	artifactRecord := buildArtifactRecord(sess, result, output)
 	if artifactRecord.RemoteWorkingDirectory != "" {
