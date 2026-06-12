@@ -2549,6 +2549,13 @@ func TestOpenClawChatSendParamsVideoInlineImagesUsePromptPathsOnly(t *testing.T)
 		"threadId":         "thread-video-attachments",
 		"taskPrompt":       "制作视频",
 		"workingDirectory": workspace,
+		"attachments": []any{
+			map[string]any{
+				"name":        "01-single-machine.png",
+				"description": "image/png",
+				"path":        "/Users/shenlan/Pictures/01-single-machine.png",
+			},
+		},
 		"inlineAttachments": []any{
 			map[string]any{
 				"name":     "01-single-machine.png",
@@ -2598,6 +2605,9 @@ func TestOpenClawChatSendParamsVideoInlineImagesUsePromptPathsOnly(t *testing.T)
 	}
 	if !strings.Contains(message, "制作视频") {
 		t.Fatalf("expected message to preserve video prompt, got %q", message)
+	}
+	if strings.Contains(message, "/Users/shenlan/Pictures/01-single-machine.png") {
+		t.Fatalf("OpenClaw message must use materialized remote paths, got %q", message)
 	}
 }
 
