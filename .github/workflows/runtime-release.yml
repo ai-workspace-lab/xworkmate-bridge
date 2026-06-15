@@ -1,0 +1,101 @@
+name: Build XWorkmate Bridge Runtime Release
+
+on:
+  push:
+    branches: [main, release/**]
+    paths:
+      - "**/*.go"
+      - go.mod
+      - go.sum
+      - .github/workflows/runtime-release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: xworkmate-bridge-runtime-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build linux-${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build runtime asset
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          root="dist/runtime/xworkmate-bridge"
+          mkdir -p "${root}/bin" dist/assets
+          CGO_ENABLED=0 GOOS=linux GOARCH="${TARGET_ARCH}" \
+            go build -buildvcs=false -trimpath \
+            -ldflags "-X main.buildCommit=${GITHUB_SHA}" \
+            -o "${root}/bin/xworkmate-go-core" .
+          cat > "${root}/manifest.json" <<JSON
+          {
+            "component": "xworkmate-bridge",
+            "commit": "${GITHUB_SHA}",
+            "os": "linux",
+            "arch": "${TARGET_ARCH}",
+            "binary": "bin/xworkmate-go-core"
+          }
+          JSON
+          tar -czf "dist/assets/xworkmate-bridge-linux-${TARGET_ARCH}.tar.gz" \
+            -C dist/runtime xworkmate-bridge
+          (
+            cd dist/assets
+            sha256sum -- ./*.tar.gz | sed 's# \./# #' > "SHA256SUMS-${TARGET_ARCH}"
+          )
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xworkmate-bridge-linux-${{ matrix.arch }}
+          path: |
+            dist/assets/*.tar.gz
+            dist/assets/SHA256SUMS-*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: xworkmate-bridge-linux-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="runtime-${GITHUB_SHA::12}"
+          cat dist/SHA256SUMS-* | sort -u > dist/SHA256SUMS
+          rm -f dist/SHA256SUMS-*
+          if gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${tag}" dist/*.tar.gz dist/SHA256SUMS \
+              --repo "${GITHUB_REPOSITORY}" --clobber
+          else
+            gh release create "${tag}" dist/*.tar.gz dist/SHA256SUMS \
+              --repo "${GITHUB_REPOSITORY}" \
+              --target "${GITHUB_SHA}" \
+              --title "XWorkmate Bridge runtime ${GITHUB_SHA::12}" \
+              --notes "Prebuilt Linux bridge binaries. No target-host Go build is required."
+          fi

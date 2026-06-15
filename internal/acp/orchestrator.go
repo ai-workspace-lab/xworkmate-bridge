@@ -894,7 +894,6 @@ func openClawChatSendParamsWithSessionKey(
 	}
 	attachments = append(attachments, inlineAttachments...)
 	if len(attachments) > 0 {
-		chatParams["attachments"] = attachments
 		chatParams["message"] = shared.AugmentPromptWithAttachments(
 			message,
 			map[string]any{"attachments": attachments},
@@ -1026,17 +1025,28 @@ func openClawNonEmptyPathAttachments(params map[string]any) []any {
 	if len(rawAttachments) == 0 {
 		return nil
 	}
+	inlineAttachmentNames := map[string]bool{}
+	for _, raw := range shared.ListArg(params, "inlineAttachments") {
+		name := strings.TrimSpace(shared.StringArg(shared.AsMap(raw), "name", ""))
+		if name != "" {
+			inlineAttachmentNames[name] = true
+		}
+	}
 	attachments := make([]any, 0, len(rawAttachments))
 	for _, raw := range rawAttachments {
 		attachment := shared.AsMap(raw)
 		if len(attachment) == 0 {
 			continue
 		}
+		name := strings.TrimSpace(shared.StringArg(attachment, "name", "attachment"))
+		if inlineAttachmentNames[name] {
+			continue
+		}
 		if strings.TrimSpace(shared.StringArg(attachment, "path", "")) == "" {
 			continue
 		}
 		attachments = append(attachments, map[string]any{
-			"name":        strings.TrimSpace(shared.StringArg(attachment, "name", "attachment")),
+			"name":        name,
 			"description": strings.TrimSpace(shared.StringArg(attachment, "description", "")),
 			"path":        strings.TrimSpace(shared.StringArg(attachment, "path", "")),
 		})

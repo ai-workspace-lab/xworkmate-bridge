@@ -613,6 +613,75 @@ func TestExecuteSessionTaskGatewayAutoConnectsLocalOpenClaw(t *testing.T) {
 	}
 }
 
+func TestExecuteSessionTaskOpenClawVideoWithInlineImagesReturnsArtifact(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+	gateway.artifactWorkspaceRoot = t.TempDir()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	response, rpcErr := server.executeSessionTask(task{
+		req: shared.RPCRequest{
+			Method: "session.start",
+			Params: map[string]any{
+				"sessionId":        "session-video-attachments",
+				"threadId":         "thread-video-attachments",
+				"taskPrompt":       "制作视频：使用附件图片生成 final.mp4 视频制品",
+				"workingDirectory": t.TempDir(),
+				"attachments": []any{
+					map[string]any{"name": "01-frame.png", "description": "image/png", "path": ""},
+					map[string]any{"name": "02-frame.png", "description": "image/png", "path": ""},
+				},
+				"inlineAttachments": []any{
+					map[string]any{
+						"name":     "01-frame.png",
+						"mimeType": "image/png",
+						"content":  base64.StdEncoding.EncodeToString([]byte("image-1")),
+					},
+					map[string]any{
+						"name":     "02-frame.png",
+						"mimeType": "image/png",
+						"content":  base64.StdEncoding.EncodeToString([]byte("image-2")),
+					},
+				},
+				"routing": map[string]any{
+					"routingMode":                "explicit",
+					"explicitExecutionTarget":    "gateway",
+					"preferredGatewayProviderId": "openclaw",
+				},
+			},
+		},
+	})
+	if rpcErr != nil {
+		t.Fatalf("expected gateway response, got rpc error: %#v", rpcErr)
+	}
+	chatParams := gateway.LastChatSendParams()
+	if _, ok := chatParams["attachments"]; ok {
+		t.Fatalf("chat.send params must not forward attachments; use message paths instead, got %#v", chatParams)
+	}
+	if message := shared.StringArg(chatParams, "message", ""); !strings.Contains(message, "01-frame.png") || !strings.Contains(message, "02-frame.png") {
+		t.Fatalf("expected chat.send message to include materialized image paths, got %q", message)
+	}
+	artifacts := shared.ListArg(response, "artifacts")
+	if len(artifacts) == 0 {
+		t.Fatalf("expected video artifact output, got %#v", response)
+	}
+	foundVideo := false
+	for _, raw := range artifacts {
+		artifact := shared.AsMap(raw)
+		if shared.StringArg(artifact, "contentType", "") == "video/mp4" ||
+			strings.HasSuffix(strings.ToLower(shared.StringArg(artifact, "relativePath", "")), ".mp4") {
+			foundVideo = true
+			break
+		}
+	}
+	if !foundVideo {
+		t.Fatalf("expected mp4 artifact output, got %#v", artifacts)
+	}
+}
+
 func TestOpenClawAgentWaitTimeoutAdaptsToVideoWork(t *testing.T) {
 	base := openClawAgentWaitTimeout(
 		map[string]any{"taskPrompt": "say pong"},
@@ -2454,18 +2523,11 @@ func TestOpenClawChatSendParamsMaterializesInlineAttachments(t *testing.T) {
 		t.Fatalf("expected chat params, got rpc error: %#v", rpcErr)
 	}
 
-	attachments := shared.ListArg(chatParams, "attachments")
-	if len(attachments) != 1 {
-		t.Fatalf("expected one materialized attachment, got %#v", attachments)
+	if _, ok := chatParams["attachments"]; ok {
+		t.Fatalf("chat.send params must not forward attachments; use message paths instead, got %#v", chatParams)
 	}
-	attachment := shared.AsMap(attachments[0])
-	if got := shared.StringArg(attachment, "name", ""); got != "prompt.png" {
-		t.Fatalf("expected materialized attachment name, got %#v", attachment)
-	}
-	path := shared.StringArg(attachment, "path", "")
-	if path == "" {
-		t.Fatalf("expected materialized attachment path, got %#v", attachment)
-	}
+	attachmentDirectory := filepath.Join(workspace, ".xworkmate", "attachments", "turn-inline-attachments")
+	path := filepath.Join(attachmentDirectory, "01-prompt.png")
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("expected materialized file to exist: %v", err)
@@ -2478,6 +2540,74 @@ func TestOpenClawChatSendParamsMaterializesInlineAttachments(t *testing.T) {
 	}
 	if _, ok := chatParams["inlineAttachments"]; ok {
 		t.Fatalf("chat.send params must not forward raw inlineAttachments, got %#v", chatParams)
+	}
+}
+
+func TestOpenClawChatSendParamsVideoInlineImagesUsePromptPathsOnly(t *testing.T) {
+	workspace := t.TempDir()
+	chatParams, rpcErr := openClawChatSendParams(map[string]any{
+		"threadId":         "thread-video-attachments",
+		"taskPrompt":       "制作视频",
+		"workingDirectory": workspace,
+		"attachments": []any{
+			map[string]any{
+				"name":        "01-single-machine.png",
+				"description": "image/png",
+				"path":        "/Users/shenlan/Pictures/01-single-machine.png",
+			},
+		},
+		"inlineAttachments": []any{
+			map[string]any{
+				"name":     "01-single-machine.png",
+				"mimeType": "image/png",
+				"content":  base64.StdEncoding.EncodeToString([]byte("image-1")),
+			},
+			map[string]any{
+				"name":     "02-lan-era.png",
+				"mimeType": "image/png",
+				"content":  base64.StdEncoding.EncodeToString([]byte("image-2")),
+			},
+			map[string]any{
+				"name":     "03-web-era.png",
+				"mimeType": "image/png",
+				"content":  base64.StdEncoding.EncodeToString([]byte("image-3")),
+			},
+		},
+	}, "turn-video-inline-images")
+	if rpcErr != nil {
+		t.Fatalf("expected chat params, got rpc error: %#v", rpcErr)
+	}
+	if _, ok := chatParams["attachments"]; ok {
+		t.Fatalf("chat.send params must not forward attachments; use message paths instead, got %#v", chatParams)
+	}
+	if _, ok := chatParams["inlineAttachments"]; ok {
+		t.Fatalf("chat.send params must not forward raw inlineAttachments, got %#v", chatParams)
+	}
+	message := shared.StringArg(chatParams, "message", "")
+	for index, name := range []string{"01-single-machine.png", "02-lan-era.png", "03-web-era.png"} {
+		path := filepath.Join(
+			workspace,
+			".xworkmate",
+			"attachments",
+			"turn-video-inline-images",
+			fmt.Sprintf("%02d-%s", index+1, name),
+		)
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("expected materialized image %s to exist: %v", path, err)
+		}
+		if got := string(content); got != fmt.Sprintf("image-%d", index+1) {
+			t.Fatalf("expected materialized image content, got %q", got)
+		}
+		if !strings.Contains(message, path) {
+			t.Fatalf("expected message to include materialized image path %q, got %q", path, message)
+		}
+	}
+	if !strings.Contains(message, "制作视频") {
+		t.Fatalf("expected message to preserve video prompt, got %q", message)
+	}
+	if strings.Contains(message, "/Users/shenlan/Pictures/01-single-machine.png") {
+		t.Fatalf("OpenClaw message must use materialized remote paths, got %q", message)
 	}
 }
 
@@ -2500,11 +2630,10 @@ func TestOpenClawChatSendParamsMaterializesInlineAttachmentsInRemoteHint(t *test
 		t.Fatalf("expected chat params, got rpc error: %#v", rpcErr)
 	}
 
-	attachments := shared.ListArg(chatParams, "attachments")
-	if len(attachments) != 1 {
-		t.Fatalf("expected one materialized attachment, got %#v", attachments)
+	if _, ok := chatParams["attachments"]; ok {
+		t.Fatalf("chat.send params must not forward attachments; use message paths instead, got %#v", chatParams)
 	}
-	path := shared.StringArg(shared.AsMap(attachments[0]), "path", "")
+	path := filepath.Join(remoteWorkspace, ".xworkmate", "attachments", "turn-remote-attachments", "01-note.txt")
 	if !strings.HasPrefix(path, remoteWorkspace) {
 		t.Fatalf("expected attachment under remote workspace %q, got %q", remoteWorkspace, path)
 	}
@@ -2557,7 +2686,10 @@ func TestOpenClawChatSendParamsMapsOwnerScopedWorkspaceToWritableRoot(t *testing
 	if !strings.Contains(message, writableWorkspace) {
 		t.Fatalf("message should reference writable workspace %q, got %q", writableWorkspace, message)
 	}
-	path := shared.StringArg(shared.AsMap(shared.ListArg(chatParams, "attachments")[0]), "path", "")
+	if _, ok := chatParams["attachments"]; ok {
+		t.Fatalf("chat.send params must not forward attachments; use message paths instead, got %#v", chatParams)
+	}
+	path := filepath.Join(writableWorkspace, ".xworkmate", "attachments", "turn-owner-workspace", "01-note.txt")
 	if !strings.HasPrefix(path, writableWorkspace) {
 		t.Fatalf("expected materialized attachment under writable workspace %q, got %q", writableWorkspace, path)
 	}

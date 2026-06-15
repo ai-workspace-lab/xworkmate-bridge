@@ -16,6 +16,7 @@ import (
 const (
 	desktopReliableInputChannelLabel = "input"
 	desktopMoveInputChannelLabel     = "input-move"
+	desktopICEGatheringTimeout       = 10 * time.Second
 )
 
 type WebRTCServer struct {
@@ -230,7 +231,9 @@ func (w *WebRTCServer) ProcessOffer(sdpOffer string) (string, error) {
 		return "", fmt.Errorf("failed to set local description: %w", err)
 	}
 
-	<-gatherComplete
+	if err := waitForICEGatheringComplete(gatherComplete, desktopICEGatheringTimeout); err != nil {
+		return "", err
+	}
 
 	localDesc := pc.LocalDescription()
 	if localDesc == nil {
@@ -238,6 +241,15 @@ func (w *WebRTCServer) ProcessOffer(sdpOffer string) (string, error) {
 	}
 
 	return localDesc.SDP, nil
+}
+
+func waitForICEGatheringComplete(done <-chan struct{}, timeout time.Duration) error {
+	select {
+	case <-done:
+		return nil
+	case <-time.After(timeout):
+		return fmt.Errorf("timed out waiting for ICE gathering after %s", timeout)
+	}
 }
 
 // AddICECandidate adds a remote ICE candidate
