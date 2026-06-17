@@ -245,6 +245,9 @@ func (s *Server) mergeOpenClawTaskGetArtifactExport(payload map[string]any, para
 	if requiredExts := openClawTaskGetRequiredArtifactExtensions(params, payload); len(requiredExts) > 0 {
 		exportParams["requiredArtifactExtensions"] = append([]string(nil), requiredExts...)
 	}
+	if expectedCounts := openClawTaskGetExpectedFileCounts(params, payload); len(expectedCounts) > 0 {
+		exportParams["expectedFileCountByExtension"] = expectedCounts
+	}
 	exportPayload := s.orchestrator.openClawArtifactExportRequest(gatewayProvider, exportParams, notify)
 	if openClawArtifactExportPayloadAuthoritative(exportPayload) {
 		replaceOpenClawArtifactPayload(payload, exportPayload)
@@ -489,6 +492,20 @@ func replaceOpenClawArtifactPayload(result map[string]any, source map[string]any
 
 func openClawTaskGetRequiredArtifactExtensions(params map[string]any, payload map[string]any) []string {
 	return normalizeOpenClawArtifactExtList(openClawTaskGetMergedList(params, payload, "requiredArtifactExtensions"))
+}
+
+func openClawTaskGetExpectedFileCounts(params map[string]any, payload map[string]any) map[string]int {
+	result := normalizeOpenClawArtifactExtCountMap(shared.AsMap(payload["expectedFileCountByExtension"]))
+	for ext, count := range normalizeOpenClawArtifactExtCountMap(shared.AsMap(params["expectedFileCountByExtension"])) {
+		if result == nil {
+			result = map[string]int{}
+		}
+		result[ext] = count
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 func openClawTaskGetMergedList(params map[string]any, payload map[string]any, key string) []any {

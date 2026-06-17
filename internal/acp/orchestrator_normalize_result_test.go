@@ -263,6 +263,9 @@ func TestTaskGetArtifactExportReceivesRequiredArtifactExtensions(t *testing.T) {
 			"gatewayProviderId":          shared.StringArg(start, "resolvedGatewayProviderId", ""),
 			"requiresArtifactExport":     true,
 			"requiredArtifactExtensions": []any{"pdf"},
+			"expectedFileCountByExtension": map[string]any{
+				"pdf": 1,
+			},
 		},
 	}, nil)
 	if rpcErr != nil {
@@ -274,5 +277,8 @@ func TestTaskGetArtifactExportReceivesRequiredArtifactExtensions(t *testing.T) {
 	exportParams := gateway.LastArtifactExportParams()
 	if got := shared.ListArg(exportParams, "requiredArtifactExtensions"); len(got) != 1 || got[0] != "pdf" {
 		t.Fatalf("expected requiredArtifactExtensions to reach export, got %#v", exportParams)
+	}
+	if got := shared.AsMap(exportParams["expectedFileCountByExtension"]); openClawPositiveInt(got["pdf"]) != 1 {
+		t.Fatalf("expected expectedFileCountByExtension to reach export, got %#v", exportParams)
 	}
 }

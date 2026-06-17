@@ -342,12 +342,13 @@ func (o *SessionOrchestrator) startOpenClawGatewayTask(
 		return nil, rpcErr
 	}
 	applyOpenClawPreparedArtifactToChatParams(chatParams, preparedArtifact, sessionKey, turnID, artifactContract)
+	chatSendTimeout := openClawAgentWaitTimeout(params, chatParams)
 	sendStarted := time.Now()
 	sendResult := o.openClawGatewayRequestWithRetry(
 		gatewayProvider,
 		"chat.send",
 		chatParams,
-		2*time.Minute,
+		chatSendTimeout,
 		notifyWithCollection,
 	)
 	logOpenClawGatewayTiming(
@@ -784,6 +785,7 @@ type openClawArtifactContract struct {
 	RequiresArtifactExport bool
 	ExpectedArtifactDirs   []string
 	RequiredArtifactExts   []string
+	ExpectedFileCounts     map[string]int
 	SourceMessage          string
 }
 
@@ -806,14 +808,64 @@ func openClawArtifactContractForParams(params map[string]any, chatParams map[str
 	if len(requiredExts) == 0 {
 		requiredExts = inferOpenClawRequiredArtifactExts(lowerMessage)
 	}
+	expectedFileCounts := normalizeOpenClawArtifactExtCountMap(shared.AsMap(contract["expectedFileCountByExtension"]))
+	if len(expectedFileCounts) == 0 {
+		expectedFileCounts = normalizeOpenClawArtifactExtCountMap(shared.AsMap(metadata["expectedFileCountByExtension"]))
+	}
+	if len(expectedFileCounts) == 0 {
+		expectedFileCounts = normalizeOpenClawArtifactExtCountMap(shared.AsMap(shared.AsMap(metadata["xworkmateArtifactConstraints"])["expectedFileCountByExtension"]))
+	}
 	return openClawArtifactContract{
 		TaskLoadClass:          taskLoadClass,
 		ComplexLongChain:       complex,
 		RequiresArtifactExport: requiresExport,
 		ExpectedArtifactDirs:   expectedDirs,
 		RequiredArtifactExts:   requiredExts,
+		ExpectedFileCounts:     expectedFileCounts,
 		SourceMessage:          message,
 	}
+}
+
+func normalizeOpenClawArtifactExtCountMap(values map[string]any) map[string]int {
+	if len(values) == 0 {
+		return nil
+	}
+	result := map[string]int{}
+	for key, raw := range values {
+		ext := strings.ToLower(strings.TrimSpace(key))
+		ext = strings.TrimPrefix(ext, ".")
+		if ext == "" || strings.Contains(ext, "/") || strings.Contains(ext, "\\") {
+			continue
+		}
+		count := openClawPositiveInt(raw)
+		if count <= 0 {
+			continue
+		}
+		result[ext] = count
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func openClawPositiveInt(value any) int {
+	switch v := value.(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case float32:
+		return int(v)
+	case string:
+		var parsed int
+		if _, err := fmt.Sscanf(strings.TrimSpace(v), "%d", &parsed); err == nil {
+			return parsed
+		}
+	}
+	return 0
 }
 
 func normalizeOpenClawDirList(values []any) []string {
@@ -1429,6 +1481,13 @@ func (o *SessionOrchestrator) openClawArtifactExport(
 	if len(artifactContract.RequiredArtifactExts) > 0 {
 		exportParams["requiredArtifactExtensions"] = append([]string(nil), artifactContract.RequiredArtifactExts...)
 	}
+	if len(artifactContract.ExpectedFileCounts) > 0 {
+		counts := map[string]int{}
+		for ext, count := range artifactContract.ExpectedFileCounts {
+			counts[ext] = count
+		}
+		exportParams["expectedFileCountByExtension"] = counts
+	}
 	payload := o.openClawArtifactExportRequest(gatewayProvider, exportParams, notify)
 	return payload
 }
@@ -1496,6 +1555,9 @@ func mergeOpenClawArtifactPayload(result map[string]any, source map[string]any) 
 	}
 	if _, ok := source["missingRequiredExtensions"]; ok {
 		result["missingRequiredExtensions"] = appendStringList(result["missingRequiredExtensions"], source["missingRequiredExtensions"])
+	}
+	if value, ok := source["missingRequiredFileCounts"]; ok {
+		result["missingRequiredFileCounts"] = value
 	}
 }
 
