@@ -2,11 +2,11 @@
 set -euo pipefail
 
 BRIDGE_SERVER_URL="${BRIDGE_SERVER_URL:-https://xworkmate-bridge.svc.plus}"
-BRIDGE_AUTH_TOKEN="${BRIDGE_AUTH_TOKEN:-}"
+BRIDGE_AUTH_TOKEN="${AI_WORKSPACE_AUTH_TOKEN:-${BRIDGE_AUTH_TOKEN:-}}"
 HERMES_RPC_URL="${HERMES_RPC_URL:-${BRIDGE_SERVER_URL%/}/acp/rpc}"
 
 if [[ -z "${BRIDGE_AUTH_TOKEN}" ]]; then
-  echo "Error: BRIDGE_AUTH_TOKEN is required" >&2
+  echo "Error: AI_WORKSPACE_AUTH_TOKEN or BRIDGE_AUTH_TOKEN is required" >&2
   exit 1
 fi
 

@@ -95,8 +95,8 @@ func TestCapabilitiesExposeBuiltInProductionProviderCatalog(t *testing.T) {
 }
 
 func TestProductionProviderCatalogFallsBackToBridgeAuthToken(t *testing.T) {
+	t.Setenv("AI_WORKSPACE_AUTH_TOKEN", "")
 	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
-	t.Setenv("INTERNAL_SERVICE_TOKEN", "")
 
 	_, catalog, _ := newProductionProviderCatalog()
 	p, ok := catalog["codex"]
@@ -109,9 +109,24 @@ func TestProductionProviderCatalogFallsBackToBridgeAuthToken(t *testing.T) {
 	}
 }
 
+func TestProductionProviderCatalogPrefersAIWorkspaceAuthToken(t *testing.T) {
+	t.Setenv("AI_WORKSPACE_AUTH_TOKEN", "ai-workspace-token")
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	_, catalog, _ := newProductionProviderCatalog()
+	p, ok := catalog["codex"]
+	if !ok {
+		t.Fatal("missing codex")
+	}
+
+	if got := p.AuthorizationHeader; got != "Bearer ai-workspace-token" {
+		t.Fatalf("expected AI workspace bearer header, got %q", got)
+	}
+}
+
 func TestProductionProviderCatalogPrefersDedicatedBridgeAuthToken(t *testing.T) {
+	t.Setenv("AI_WORKSPACE_AUTH_TOKEN", "")
 	t.Setenv("BRIDGE_AUTH_TOKEN", "dedicated-token")
-	t.Setenv("INTERNAL_SERVICE_TOKEN", "legacy-token")
 
 	_, catalog, _ := newProductionProviderCatalog()
 	p, ok := catalog["codex"]
@@ -125,6 +140,7 @@ func TestProductionProviderCatalogPrefersDedicatedBridgeAuthToken(t *testing.T) 
 }
 
 func TestProductionProviderCatalogIgnoresInternalServiceToken(t *testing.T) {
+	t.Setenv("AI_WORKSPACE_AUTH_TOKEN", "")
 	t.Setenv("BRIDGE_AUTH_TOKEN", "")
 	t.Setenv("INTERNAL_SERVICE_TOKEN", "legacy-token")
 

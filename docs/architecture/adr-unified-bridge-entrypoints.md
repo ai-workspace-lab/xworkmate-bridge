@@ -109,7 +109,7 @@ Gateway access remains bridge-owned via JSON-RPC methods:
 
 Upstream authentication is unified for both ACP and gateway routes:
 
-- `Authorization: Bearer $INTERNAL_SERVICE_TOKEN`
+- `Authorization: Bearer $AI_WORKSPACE_AUTH_TOKEN`
 
 ## Consequences
 

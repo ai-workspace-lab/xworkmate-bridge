@@ -94,7 +94,7 @@ Optional GitHub secrets:
 
 Optional workflow input:
 
-- `internal_service_token`: manual dispatch input that is forwarded to Ansible as `INTERNAL_SERVICE_TOKEN`
+- `ai_workspace_auth_token`: manual dispatch input that is forwarded as `AI_WORKSPACE_AUTH_TOKEN`
 
 ## Environment
 

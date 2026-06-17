@@ -39,7 +39,8 @@
 
 环境变量：
 
-- `BRIDGE_AUTH_TOKEN`
+- `AI_WORKSPACE_AUTH_TOKEN`：主共享 token，用于 bridge 入站鉴权、上游 provider 转发、OpenClaw Gateway 重签发与任务转发 fallback。
+- `BRIDGE_AUTH_TOKEN`：旧主 token。没有 `AI_WORKSPACE_AUTH_TOKEN` 时继续生效并参与上游转发，用于存量租户兼容，直到 `AI_WORKSPACE_AUTH_TOKEN` 完成彻底替代后下线。
 - `BRIDGE_REVIEW_AUTH_TOKEN`（可选）：Apple review / beta 工测专用临时 token。清空该环境变量并重启/reload bridge 即可单独关停，不影响主 token。
 - `ACP_ALLOWED_ORIGINS`
 
@@ -48,9 +49,9 @@
 - `/acp` 与 `/acp/rpc` 都做 origin allowlist 校验
 - 空 `Origin` 默认允许
 - `/api/ping`、`/acp`、`/acp/rpc` 在任一 bridge token 非空时都要求 bearer header
-- `BRIDGE_AUTH_TOKEN` 与 `BRIDGE_REVIEW_AUTH_TOKEN` 都为空时默认放行
+- `AI_WORKSPACE_AUTH_TOKEN`、`BRIDGE_AUTH_TOKEN` 与 `BRIDGE_REVIEW_AUTH_TOKEN` 都为空时默认放行
 - token 非空时，接受裸 token 或 `Bearer <token>`
-- 线上 Caddy 入口必须与 bridge origin 保持同一 token set：主 `BRIDGE_AUTH_TOKEN` 与可选 `BRIDGE_REVIEW_AUTH_TOKEN` 都应放行；无 token 仍返回 `401`
+- 线上 Caddy 入口必须与 bridge origin 保持同一 token set：主 `AI_WORKSPACE_AUTH_TOKEN`、兼容 `BRIDGE_AUTH_TOKEN` 与可选 `BRIDGE_REVIEW_AUTH_TOKEN` 都应放行；无 token 仍返回 `401`
 - `xworkmate-app` 生产 Origin 固定为 `https://xworkmate.svc.plus`
 
 ## 3.1 Lightweight Distributed Task Forwarding
@@ -139,7 +140,7 @@ distributed:
 - `bridge_endpoint` 是 peer bridge base URL，bridge 会按当前请求路径拼接 `/acp/rpc` 或 `/gateway/openclaw`
 - 同步消息不能走公网；`bridge_endpoint` 必须是 loopback、private、link-local 这类本机或 VPN 内网地址，用于 WireGuard over VLESS 等隧道已经提供加密的场景
 - 只要求本机网络能路由到 endpoint；bridge 不依赖 config center 或额外注册中心
-- `task_forward_token` 为空时复用本机 `BRIDGE_AUTH_TOKEN`
+- `task_forward_token` 为空时复用本机 `AI_WORKSPACE_AUTH_TOKEN`；未配置时兼容复用 `BRIDGE_AUTH_TOKEN`
 - 转发请求会带 `X-XWorkmate-Bridge-Forwarded: 1`
 - `X-XWorkmate-Forward-Source` 是源节点，`X-XWorkmate-Forward-Target` 是最终目标节点
 - `X-XWorkmate-Forward-Hop` 逐跳递增，超过 `forwarding.hop_limit` 时拒绝转发，避免循环
@@ -157,7 +158,7 @@ distributed:
 BRIDGE_SERVER_URL=https://xworkmate-bridge.svc.plus
 BRIDGE_WS_URL=wss://xworkmate-bridge.svc.plus/acp
 BRIDGE_HTTP_RPC_URL=https://xworkmate-bridge.svc.plus/acp/rpc
-Authorization: Bearer $BRIDGE_AUTH_TOKEN
+Authorization: Bearer $AI_WORKSPACE_AUTH_TOKEN
 Origin: https://xworkmate.svc.plus
 ```
 

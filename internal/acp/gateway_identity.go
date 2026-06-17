@@ -138,6 +138,20 @@ func saveBridgeGatewayDeviceToken(deviceToken string) {
 	)
 }
 
+func clearBridgeGatewayDeviceToken() {
+	bridgeGatewayIdentity.Lock()
+	defer bridgeGatewayIdentity.Unlock()
+	if strings.TrimSpace(bridgeGatewayIdentity.value.DeviceID) == "" {
+		return
+	}
+	bridgeGatewayIdentity.deviceToken = ""
+	_ = persistBridgeGatewayIdentity(
+		bridgeGatewayIdentityPath(),
+		bridgeGatewayIdentity.value,
+		"",
+	)
+}
+
 func persistBridgeGatewayIdentity(
 	path string,
 	identity gatewayruntime.DeviceIdentity,

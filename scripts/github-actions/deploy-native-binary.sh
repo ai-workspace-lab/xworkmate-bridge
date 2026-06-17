@@ -57,15 +57,22 @@ resolve_token_from_unit() {
 
 REMOTE_SYSTEM_SERVICE_UNIT_CONTENT="$(ssh -o BatchMode=yes "${SYSTEM_MIGRATION_USER}@${TARGET_HOST}" "cat '${SYSTEM_SERVICE_UNIT_PATH}' 2>/dev/null || true" 2>/dev/null || true)"
 
-if [[ -z "${BRIDGE_AUTH_TOKEN:-}" && -n "${REMOTE_SYSTEM_SERVICE_UNIT_CONTENT}" ]]; then
+if [[ -z "${AI_WORKSPACE_AUTH_TOKEN:-}" && -n "${REMOTE_SYSTEM_SERVICE_UNIT_CONTENT}" ]]; then
+  AI_WORKSPACE_AUTH_TOKEN="$(printf '%s\n' "${REMOTE_SYSTEM_SERVICE_UNIT_CONTENT}" | resolve_token_from_unit /dev/stdin "AI_WORKSPACE_AUTH_TOKEN")"
+  if [[ -n "${AI_WORKSPACE_AUTH_TOKEN}" ]]; then
+    echo "recovered AI_WORKSPACE_AUTH_TOKEN from ${SYSTEM_SERVICE_UNIT_PATH} on ${TARGET_HOST}" >&2
+  fi
+fi
+
+if [[ -z "${AI_WORKSPACE_AUTH_TOKEN:-}" && -z "${BRIDGE_AUTH_TOKEN:-}" && -n "${REMOTE_SYSTEM_SERVICE_UNIT_CONTENT}" ]]; then
   BRIDGE_AUTH_TOKEN="$(printf '%s\n' "${REMOTE_SYSTEM_SERVICE_UNIT_CONTENT}" | resolve_token_from_unit /dev/stdin "BRIDGE_AUTH_TOKEN")"
   if [[ -n "${BRIDGE_AUTH_TOKEN}" ]]; then
     echo "recovered BRIDGE_AUTH_TOKEN from ${SYSTEM_SERVICE_UNIT_PATH} on ${TARGET_HOST}" >&2
   fi
 fi
 
-if [[ -z "${BRIDGE_AUTH_TOKEN:-}" ]]; then
-  echo "::error::BRIDGE_AUTH_TOKEN is required: pass it via env, -e xworkmate_bridge_auth_token=, or keep the existing system service unit at ${SYSTEM_SERVICE_UNIT_PATH}" >&2
+if [[ -z "${AI_WORKSPACE_AUTH_TOKEN:-}" && -z "${BRIDGE_AUTH_TOKEN:-}" ]]; then
+  echo "::error::AI_WORKSPACE_AUTH_TOKEN is required: pass it via env, -e ai_workspace_auth_token=, or keep AI_WORKSPACE_AUTH_TOKEN/BRIDGE_AUTH_TOKEN in the existing system service unit at ${SYSTEM_SERVICE_UNIT_PATH}" >&2
   exit 1
 fi
 
@@ -73,7 +80,12 @@ if [[ -z "${BRIDGE_REVIEW_AUTH_TOKEN:-}" && -n "${REMOTE_SYSTEM_SERVICE_UNIT_CON
   BRIDGE_REVIEW_AUTH_TOKEN="$(printf '%s\n' "${REMOTE_SYSTEM_SERVICE_UNIT_CONTENT}" | resolve_token_from_unit /dev/stdin "BRIDGE_REVIEW_AUTH_TOKEN")"
 fi
 
-AUTH_TOKEN_LINE="Environment=\"BRIDGE_AUTH_TOKEN=$(escape_systemd_env "${BRIDGE_AUTH_TOKEN}")\""
+AUTH_TOKEN_LINE=""
+if [[ -n "${AI_WORKSPACE_AUTH_TOKEN:-}" ]]; then
+  AUTH_TOKEN_LINE="Environment=\"AI_WORKSPACE_AUTH_TOKEN=$(escape_systemd_env "${AI_WORKSPACE_AUTH_TOKEN}")\""
+else
+  AUTH_TOKEN_LINE="Environment=\"BRIDGE_AUTH_TOKEN=$(escape_systemd_env "${BRIDGE_AUTH_TOKEN}")\""
+fi
 
 REVIEW_TOKEN_LINE=""
 if [[ -n "${BRIDGE_REVIEW_AUTH_TOKEN:-}" ]]; then
@@ -127,7 +139,7 @@ existing_env="$(
     systemctl --user show -p Environment --value "${SERVICE_NAME}" 2>/dev/null || true
     systemctl show -p Environment --value "${SYSTEM_SERVICE_NAME}" 2>/dev/null || true
     if [[ -f "${SYSTEM_SERVICE_UNIT_PATH}" ]]; then
-      sed -n 's/^Environment="\(BRIDGE_AUTH_TOKEN=[^"]*\|BRIDGE_REVIEW_AUTH_TOKEN=[^"]*\)"$/\1/p' "${SYSTEM_SERVICE_UNIT_PATH}"
+      sed -n 's/^Environment="\(AI_WORKSPACE_AUTH_TOKEN=[^"]*\|BRIDGE_AUTH_TOKEN=[^"]*\|BRIDGE_REVIEW_AUTH_TOKEN=[^"]*\)"$/\1/p' "${SYSTEM_SERVICE_UNIT_PATH}"
     fi
   } | sed '/^$/d' | head -n 1
 )"
@@ -146,7 +158,7 @@ for line in lines:
 
 for item in shlex.split(os.environ.get("EXISTING_ENV", "")):
     key, sep, value = item.partition("=")
-    if sep and key in {"BRIDGE_AUTH_TOKEN", "BRIDGE_REVIEW_AUTH_TOKEN"} and key not in present:
+    if sep and key in {"AI_WORKSPACE_AUTH_TOKEN", "BRIDGE_AUTH_TOKEN", "BRIDGE_REVIEW_AUTH_TOKEN"} and key not in present:
         escaped = value.replace("\\", "\\\\").replace('"', '\\"')
         lines.append(f'Environment="{key}={escaped}"')
         present.add(key)

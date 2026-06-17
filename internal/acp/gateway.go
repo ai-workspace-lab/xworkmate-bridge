@@ -93,6 +93,19 @@ func handleGatewayConnect(
 	}
 
 	result := server.gateway.Connect(request, notify)
+	if usesBridgeIdentity && shouldRetryOpenClawGatewayWithSharedToken(result) {
+		clearBridgeGatewayDeviceToken()
+		request.Auth.DeviceToken = ""
+		request.HasDeviceToken = false
+		request.Auth.Token = bridgeSharedAuthToken()
+		request.HasSharedAuth = strings.TrimSpace(request.Auth.Token) != ""
+		if request.HasSharedAuth {
+			request.ConnectAuthMode = "shared-token"
+			request.ConnectAuthFields = []string{"token"}
+			request.ConnectAuthSources = []string{"bridge:repair"}
+			result = server.gateway.Connect(request, notify)
+		}
+	}
 	if result.OK && usesBridgeIdentity {
 		saveBridgeGatewayDeviceToken(result.ReturnedDeviceToken)
 	}
@@ -285,6 +298,19 @@ func ensureProductionGatewayConnected(
 	request.HasDeviceToken = deviceToken != ""
 	request.ReportedRemoteAddress = resolveGatewayReportedRemoteAddress(server, request)
 	result := server.gateway.Connect(request, notify)
+	if shouldRetryOpenClawGatewayWithSharedToken(result) {
+		clearBridgeGatewayDeviceToken()
+		request.Auth.DeviceToken = ""
+		request.HasDeviceToken = false
+		request.Auth.Token = bridgeSharedAuthToken()
+		request.HasSharedAuth = strings.TrimSpace(request.Auth.Token) != ""
+		if request.HasSharedAuth {
+			request.ConnectAuthMode = "shared-token"
+			request.ConnectAuthFields = []string{"token"}
+			request.ConnectAuthSources = []string{"bridge:repair"}
+			result = server.gateway.Connect(request, notify)
+		}
+	}
 	if result.OK {
 		saveBridgeGatewayDeviceToken(result.ReturnedDeviceToken)
 		return nil
@@ -295,6 +321,21 @@ func ensureProductionGatewayConnected(
 		message = code + ": " + message
 	}
 	return &shared.RPCError{Code: -32002, Message: "GATEWAY_CONNECT_FAILED: " + message}
+}
+
+func shouldRetryOpenClawGatewayWithSharedToken(result gatewayruntime.ConnectResult) bool {
+	if result.OK || strings.TrimSpace(bridgeSharedAuthToken()) == "" {
+		return false
+	}
+	code := strings.ToUpper(strings.TrimSpace(shared.StringArg(result.Error, "code", "")))
+	message := strings.ToLower(strings.TrimSpace(shared.StringArg(result.Error, "message", "")))
+	details := shared.AsMap(result.Error["details"])
+	detailCode := strings.ToUpper(strings.TrimSpace(shared.StringArg(details, "code", "")))
+	return detailCode == "AUTH_DEVICE_TOKEN_MISMATCH" ||
+		detailCode == "PAIRING_REQUIRED" ||
+		code == "NOT_PAIRED" ||
+		strings.Contains(message, "device token mismatch") ||
+		strings.Contains(message, "rotate/reissue device token")
 }
 
 func configureProductionOpenClawGatewayRuntime(manager *gatewayruntime.Manager) {

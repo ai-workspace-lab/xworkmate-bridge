@@ -108,3 +108,117 @@ func TestSystemLogsConnectsProductionGatewayForStatus(t *testing.T) {
 		t.Fatalf("expected connected status to reuse gateway session, got %d connect attempts", got)
 	}
 }
+
+func TestProductionGatewayReconnectsWithSharedTokenAfterDeviceTokenMismatch(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+	gateway.rejectDeviceTokenOnce.Store(true)
+
+	identityPath := filepath.Join(t.TempDir(), "openclaw-device.json")
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
+	t.Setenv("BRIDGE_CONFIG_PATH", filepath.Join(t.TempDir(), "missing-config.yaml"))
+	t.Setenv("XWORKMATE_BRIDGE_OPENCLAW_IDENTITY_PATH", identityPath)
+	resetBridgeGatewayIdentityForTest()
+	t.Cleanup(resetBridgeGatewayIdentityForTest)
+
+	_ = newBridgeGatewayIdentity()
+	saveBridgeGatewayDeviceToken("stale-device-token")
+	server := NewServer()
+
+	result, rpcErr := server.handleRequest(
+		shared.RPCRequest{
+			ID:     "status",
+			Method: "system.logs",
+			Params: map[string]any{},
+		},
+		func(map[string]any) {},
+	)
+	if rpcErr != nil {
+		t.Fatalf("system.logs returned rpc error: %#v", rpcErr)
+	}
+	if got := result["gatewayStatus"]; got != "connected" {
+		t.Fatalf("expected gatewayStatus connected after repair, got %#v", result)
+	}
+	if got := gateway.ConnectCount(); got != 2 {
+		t.Fatalf("expected stale device token retry with shared token, got %d connects", got)
+	}
+	resetBridgeGatewayIdentityForTest()
+	_, token := bridgeGatewayOpenClawCredentials()
+	if token != "device-token-1" {
+		t.Fatalf("expected repaired device token to be persisted, got %q", token)
+	}
+}
+
+func TestProductionGatewayReconnectPrefersAIWorkspaceToken(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+	gateway.rejectDeviceTokenOnce.Store(true)
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("AI_WORKSPACE_AUTH_TOKEN", "ai-workspace-token")
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
+	t.Setenv("BRIDGE_CONFIG_PATH", filepath.Join(t.TempDir(), "missing-config.yaml"))
+	t.Setenv("XWORKMATE_BRIDGE_OPENCLAW_IDENTITY_PATH", filepath.Join(t.TempDir(), "openclaw-device.json"))
+	resetBridgeGatewayIdentityForTest()
+	t.Cleanup(resetBridgeGatewayIdentityForTest)
+
+	_ = newBridgeGatewayIdentity()
+	saveBridgeGatewayDeviceToken("stale-device-token")
+	server := NewServer()
+
+	result, rpcErr := server.handleRequest(
+		shared.RPCRequest{
+			ID:     "status",
+			Method: "system.logs",
+			Params: map[string]any{},
+		},
+		func(map[string]any) {},
+	)
+	if rpcErr != nil {
+		t.Fatalf("system.logs returned rpc error: %#v", rpcErr)
+	}
+	if got := result["gatewayStatus"]; got != "connected" {
+		t.Fatalf("expected gatewayStatus connected after AI workspace token repair, got %#v", result)
+	}
+	if got := gateway.ConnectCount(); got != 2 {
+		t.Fatalf("expected stale device token retry with AI workspace token, got %d connects", got)
+	}
+}
+
+func TestProductionGatewayDoesNotUseInternalServiceTokenFallback(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+	gateway.rejectDeviceTokenOnce.Store(true)
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("AI_WORKSPACE_AUTH_TOKEN", "")
+	t.Setenv("BRIDGE_AUTH_TOKEN", "")
+	t.Setenv("INTERNAL_SERVICE_TOKEN", "bridge-test-token")
+	t.Setenv("BRIDGE_CONFIG_PATH", filepath.Join(t.TempDir(), "missing-config.yaml"))
+	t.Setenv("XWORKMATE_BRIDGE_OPENCLAW_IDENTITY_PATH", filepath.Join(t.TempDir(), "openclaw-device.json"))
+	resetBridgeGatewayIdentityForTest()
+	t.Cleanup(resetBridgeGatewayIdentityForTest)
+
+	_ = newBridgeGatewayIdentity()
+	saveBridgeGatewayDeviceToken("stale-device-token")
+	server := NewServer()
+
+	result, rpcErr := server.handleRequest(
+		shared.RPCRequest{
+			ID:     "status",
+			Method: "system.logs",
+			Params: map[string]any{},
+		},
+		func(map[string]any) {},
+	)
+	if rpcErr != nil {
+		t.Fatalf("system.logs returned rpc error: %#v", rpcErr)
+	}
+	if got := result["gatewayStatus"]; got != "disconnected" {
+		t.Fatalf("expected gatewayStatus disconnected without AI workspace token, got %#v", result)
+	}
+	if got := gateway.ConnectCount(); got != 1 {
+		t.Fatalf("expected no retry with internal token, got %d connects", got)
+	}
+}

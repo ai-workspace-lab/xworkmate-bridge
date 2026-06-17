@@ -21,7 +21,7 @@ on:
         required: true
         default: true
         type: boolean
-      internal_service_token:
+      ai_workspace_auth_token:
         description: "Optional ACP auth token for deploy"
         required: false
         default: ""
@@ -64,11 +64,11 @@ jobs:
           jwtGithubAudience: vault
           ignoreNotFound: true
           secrets: |
-            kv/data/github-actions/xworkmate-bridge INTERNAL_SERVICE_TOKEN | INTERNAL_SERVICE_TOKEN
+            kv/data/github-actions/xworkmate-bridge AI_WORKSPACE_AUTH_TOKEN | AI_WORKSPACE_AUTH_TOKEN
 
       - name: Export bridge auth token
         if: ${{ steps.vault.outcome == 'success' }}
-        run: echo "BRIDGE_AUTH_TOKEN=${{ steps.vault.outputs.INTERNAL_SERVICE_TOKEN }}" >> "$GITHUB_ENV"
+        run: echo "AI_WORKSPACE_AUTH_TOKEN=${{ steps.vault.outputs.AI_WORKSPACE_AUTH_TOKEN }}" >> "$GITHUB_ENV"
 
       - name: Probe current production bridge
         id: production_state
@@ -220,7 +220,7 @@ jobs:
           jwtGithubAudience: vault
           ignoreNotFound: true
           secrets: |
-            kv/data/github-actions/xworkmate-bridge INTERNAL_SERVICE_TOKEN | INTERNAL_SERVICE_TOKEN ;
+            kv/data/github-actions/xworkmate-bridge AI_WORKSPACE_AUTH_TOKEN | AI_WORKSPACE_AUTH_TOKEN ;
             kv/data/github-actions/xworkmate-bridge WORKSPACE_REPO_TOKEN | WORKSPACE_REPO_TOKEN ;
             kv/data/github-actions/xworkmate-bridge SINGLE_NODE_VPS_SSH_PRIVATE_KEY | SINGLE_NODE_VPS_SSH_PRIVATE_KEY ;
             kv/data/github-actions/xworkmate-bridge SINGLE_NODE_VPS_SSH_PRIVATE_KEY_B64 | SINGLE_NODE_VPS_SSH_PRIVATE_KEY_B64 ;
@@ -229,20 +229,20 @@ jobs:
       - name: Export deploy secrets
         run: |
           {
-            if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.internal_service_token }}" ]]; then
-              echo "BRIDGE_AUTH_TOKEN=${{ inputs.internal_service_token }}"
+            if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.ai_workspace_auth_token }}" ]]; then
+              echo "AI_WORKSPACE_AUTH_TOKEN=${{ inputs.ai_workspace_auth_token }}"
             else
-              echo "BRIDGE_AUTH_TOKEN=${{ steps.vault.outputs.INTERNAL_SERVICE_TOKEN }}"
+              echo "AI_WORKSPACE_AUTH_TOKEN=${{ steps.vault.outputs.AI_WORKSPACE_AUTH_TOKEN }}"
             fi
           } >> "$GITHUB_ENV"
 
       - name: Validate deploy secrets
         run: |
-          if [[ -z "${BRIDGE_AUTH_TOKEN}" ]]; then
-            echo "::error::BRIDGE_AUTH_TOKEN is empty. Provide it via the workflow_dispatch input, or ensure kv/data/github-actions/xworkmate-bridge INTERNAL_SERVICE_TOKEN is readable from Vault."
+          if [[ -z "${AI_WORKSPACE_AUTH_TOKEN}" ]]; then
+            echo "::error::AI_WORKSPACE_AUTH_TOKEN is empty. Provide it via the workflow_dispatch input, or ensure kv/data/github-actions/xworkmate-bridge AI_WORKSPACE_AUTH_TOKEN is readable from Vault."
             exit 1
           fi
-          echo "BRIDGE_AUTH_TOKEN length=${#BRIDGE_AUTH_TOKEN}"
+          echo "AI_WORKSPACE_AUTH_TOKEN length=${#AI_WORKSPACE_AUTH_TOKEN}"
 
       - name: Checkout playbooks repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -384,10 +384,10 @@ jobs:
           jwtGithubAudience: vault
           ignoreNotFound: true
           secrets: |
-            kv/data/github-actions/xworkmate-bridge INTERNAL_SERVICE_TOKEN | INTERNAL_SERVICE_TOKEN
+            kv/data/github-actions/xworkmate-bridge AI_WORKSPACE_AUTH_TOKEN | AI_WORKSPACE_AUTH_TOKEN
 
       - name: Export bridge auth token
-        run: echo "BRIDGE_AUTH_TOKEN=${{ steps.vault.outputs.INTERNAL_SERVICE_TOKEN }}" >> "$GITHUB_ENV"
+        run: echo "AI_WORKSPACE_AUTH_TOKEN=${{ steps.vault.outputs.AI_WORKSPACE_AUTH_TOKEN }}" >> "$GITHUB_ENV"
 
       - name: Validate deployed endpoints
         run: bash ./scripts/github-actions/validate-deploy.sh "$(git rev-parse --short HEAD)" "${BRIDGE_SERVER_URL}"

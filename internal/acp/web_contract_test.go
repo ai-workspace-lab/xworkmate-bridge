@@ -875,6 +875,7 @@ func (w *panicSSEWriter) Write(payload []byte) (int, error) {
 func (w *panicSSEWriter) WriteHeader(int) {}
 
 func TestHTTPHandlerPingRequiresBearerAuthorizationWhenBridgeAuthTokenConfigured(t *testing.T) {
+	t.Setenv("AI_WORKSPACE_AUTH_TOKEN", "")
 	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
 	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
@@ -889,7 +890,27 @@ func TestHTTPHandlerPingRequiresBearerAuthorizationWhenBridgeAuthTokenConfigured
 	}
 }
 
+func TestHTTPHandlerPingAcceptsAIWorkspaceBearerAuthorization(t *testing.T) {
+	t.Setenv("AI_WORKSPACE_AUTH_TOKEN", "ai-workspace-test-token")
+	t.Setenv("BRIDGE_AUTH_TOKEN", "")
+	t.Setenv("BRIDGE_REVIEW_AUTH_TOKEN", "")
+	t.Setenv("INTERNAL_SERVICE_TOKEN", "")
+	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
+	server := NewServer()
+	handler := server.Handler()
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/ping", nil)
+	request.Header.Set("Authorization", "Bearer ai-workspace-test-token")
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200 for AI workspace token, got %d", recorder.Code)
+	}
+}
+
 func TestHTTPHandlerPingAllowsReviewBearerAuthorizationWhenConfigured(t *testing.T) {
+	t.Setenv("AI_WORKSPACE_AUTH_TOKEN", "ai-workspace-test-token")
 	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
 	t.Setenv("BRIDGE_REVIEW_AUTH_TOKEN", "review-bridge-test-token")
 	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
@@ -950,8 +971,10 @@ func TestHandleRPCAllowsPreflightForConfiguredOrigin(t *testing.T) {
 }
 
 func TestHandleRPCAllowsUnauthenticatedRequestsWhenBridgeAuthTokenUnset(t *testing.T) {
+	t.Setenv("AI_WORKSPACE_AUTH_TOKEN", "")
 	t.Setenv("BRIDGE_AUTH_TOKEN", "")
 	t.Setenv("BRIDGE_REVIEW_AUTH_TOKEN", "")
+	t.Setenv("INTERNAL_SERVICE_TOKEN", "")
 	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
 	recorder := httptest.NewRecorder()
@@ -970,6 +993,7 @@ func TestHandleRPCAllowsUnauthenticatedRequestsWhenBridgeAuthTokenUnset(t *testi
 }
 
 func TestHandleRPCRequiresBearerAuthorizationWhenBridgeAuthTokenConfigured(t *testing.T) {
+	t.Setenv("AI_WORKSPACE_AUTH_TOKEN", "")
 	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
 	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
@@ -990,6 +1014,7 @@ func TestHandleRPCRequiresBearerAuthorizationWhenBridgeAuthTokenConfigured(t *te
 }
 
 func TestHandleRPCCapabilitiesRequiresBearerAuthorizationWhenBridgeAuthTokenConfigured(t *testing.T) {
+	t.Setenv("AI_WORKSPACE_AUTH_TOKEN", "")
 	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
 	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")
 	server := NewServer()
@@ -1009,6 +1034,7 @@ func TestHandleRPCCapabilitiesRequiresBearerAuthorizationWhenBridgeAuthTokenConf
 }
 
 func TestHandleRPCAllowsReviewBearerAuthorizationWhenConfigured(t *testing.T) {
+	t.Setenv("AI_WORKSPACE_AUTH_TOKEN", "ai-workspace-test-token")
 	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-test-token")
 	t.Setenv("BRIDGE_REVIEW_AUTH_TOKEN", "review-bridge-test-token")
 	t.Setenv("BRIDGE_CONFIG_PATH", "../../example/config.yaml")

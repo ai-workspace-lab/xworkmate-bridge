@@ -149,7 +149,7 @@ run_deploy() {
 
 run_env_token_case() {
   local tmp_dir
-  tmp_dir="$(setup_test_env "case: BRIDGE_AUTH_TOKEN env var drives the unit file")"
+  tmp_dir="$(setup_test_env "case: AI_WORKSPACE_AUTH_TOKEN env var drives the unit file")"
 
   local log_file="${tmp_dir}/deploy.log"
   local unit_file="${tmp_dir}/remote/home/ubuntu/.config/systemd/user/xworkmate-bridge.service"
@@ -160,7 +160,7 @@ run_env_token_case() {
     BRIDGE_CONFIG_PATH="${tmp_dir}/remote/opt/cloud-neutral/xworkmate-bridge/config.yaml" \
     USER_SYSTEMD_DIR="${tmp_dir}/remote/home/ubuntu/.config/systemd/user" \
     DEPLOY_NATIVE_SKIP_PROC_CHECK=true \
-    BRIDGE_AUTH_TOKEN="test-token"
+    AI_WORKSPACE_AUTH_TOKEN="test-token"
 
   local log_output
   log_output="$(cat "${log_file}")"
@@ -168,7 +168,7 @@ run_env_token_case() {
   assert_contains "${log_output}" "scp ubuntu@example.test:"
   assert_contains "${log_output}" "ssh ubuntu@example.test"
   assert_contains "${log_output}" "systemctl --user restart xworkmate-bridge.service"
-  assert_file_contains "${unit_file}" 'Environment="BRIDGE_AUTH_TOKEN=test-token"'
+  assert_file_contains "${unit_file}" 'Environment="AI_WORKSPACE_AUTH_TOKEN=test-token"'
   assert_file_contains "${unit_file}" "WantedBy=default.target"
 
   rm -rf "${tmp_dir}"
@@ -176,7 +176,7 @@ run_env_token_case() {
 
 run_unit_fallback_case() {
   local tmp_dir
-  tmp_dir="$(setup_test_env "case: BRIDGE_AUTH_TOKEN recovered from system service unit file")"
+  tmp_dir="$(setup_test_env "case: AI_WORKSPACE_AUTH_TOKEN recovered from system service unit file")"
 
   local system_unit_dir="${tmp_dir}/remote/etc/systemd/system"
   mkdir -p "${system_unit_dir}"
@@ -185,7 +185,7 @@ run_unit_fallback_case() {
 [Unit]
 Description=Stale system service
 [Service]
-Environment="BRIDGE_AUTH_TOKEN=recovered-from-systemd"
+Environment="AI_WORKSPACE_AUTH_TOKEN=recovered-from-systemd"
 Environment="BRIDGE_REVIEW_AUTH_TOKEN=recovered-review-token"
 ExecStart=/bin/true
 EOF
@@ -201,7 +201,7 @@ EOF
     SYSTEM_SERVICE_UNIT_PATH="${system_unit_file}" \
     DEPLOY_NATIVE_SKIP_PROC_CHECK=true
 
-  assert_file_contains "${unit_file}" 'Environment="BRIDGE_AUTH_TOKEN=recovered-from-systemd"'
+  assert_file_contains "${unit_file}" 'Environment="AI_WORKSPACE_AUTH_TOKEN=recovered-from-systemd"'
   assert_file_contains "${unit_file}" 'Environment="BRIDGE_REVIEW_AUTH_TOKEN=recovered-review-token"'
 
   rm -rf "${tmp_dir}"
@@ -209,7 +209,7 @@ EOF
 
 run_fail_fast_case() {
   local tmp_dir
-  tmp_dir="$(setup_test_env "case: missing BRIDGE_AUTH_TOKEN fails fast with clear error")"
+  tmp_dir="$(setup_test_env "case: missing AI_WORKSPACE_AUTH_TOKEN fails fast with clear error")"
 
   local log_file="${tmp_dir}/deploy.log"
   local stderr_file="${tmp_dir}/deploy.stderr"
@@ -226,9 +226,9 @@ run_fail_fast_case() {
   set -e
 
   if [[ "${exit_code}" == "0" ]]; then
-    fail "expected deploy to fail when BRIDGE_AUTH_TOKEN is empty and no system service unit exists"
+    fail "expected deploy to fail when AI_WORKSPACE_AUTH_TOKEN is empty and no system service unit exists"
   fi
-  assert_contains "$(cat "${stderr_file}")" "BRIDGE_AUTH_TOKEN is required"
+  assert_contains "$(cat "${stderr_file}")" "AI_WORKSPACE_AUTH_TOKEN is required"
 
   rm -rf "${tmp_dir}"
 }

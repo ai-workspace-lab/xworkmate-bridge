@@ -31,8 +31,9 @@ curl_args=(
   --max-time 20
 )
 
-if [[ -n "${BRIDGE_AUTH_TOKEN:-}" ]]; then
-  curl_args+=(-H "Authorization: Bearer ${BRIDGE_AUTH_TOKEN}")
+AUTH_TOKEN="${AI_WORKSPACE_AUTH_TOKEN:-${BRIDGE_AUTH_TOKEN:-}}"
+if [[ -n "${AUTH_TOKEN}" ]]; then
+  curl_args+=(-H "Authorization: Bearer ${AUTH_TOKEN}")
 fi
 
 for ((attempt = 1; attempt <= attempts; attempt += 1)); do
@@ -83,4 +84,3 @@ print(f"production_tag={deployed_tag}")
 print(f"production_commit={deployed_commit}")
 print(f"production_version={deployed_version}")
 PY
-

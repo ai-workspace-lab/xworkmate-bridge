@@ -28,7 +28,11 @@ fi
 
 BASE_URL="$(normalize_url "${BRIDGE_SERVER_URL:-${2:-https://xworkmate-bridge.svc.plus}}")"
 RPC_URL="${BASE_URL%/}/acp/rpc"
-AUTH_TOKEN="${BRIDGE_AUTH_TOKEN:?BRIDGE_AUTH_TOKEN is required}"
+AUTH_TOKEN="${AI_WORKSPACE_AUTH_TOKEN:-${BRIDGE_AUTH_TOKEN:-}}"
+if [[ -z "${AUTH_TOKEN}" ]]; then
+  echo "AI_WORKSPACE_AUTH_TOKEN or BRIDGE_AUTH_TOKEN is required" >&2
+  exit 1
+fi
 
 fast_http_curl_common=(
   --silent

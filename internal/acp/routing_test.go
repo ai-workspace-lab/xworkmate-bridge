@@ -3056,6 +3056,7 @@ type acpFakeOpenClawGateway struct {
 	artifactCount              atomic.Int32
 	artifactReadCount          atomic.Int32
 	artifactReadFailures       atomic.Int32
+	rejectDeviceTokenOnce      atomic.Bool
 	closeNextChatSend          atomic.Bool
 	alwaysCloseChatSend        atomic.Bool
 	agentWaitDelayMs           atomic.Int64
@@ -3141,7 +3142,23 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 					})
 					return
 				}
-				if got, want := shared.StringArg(shared.AsMap(params["auth"]), "token", ""), os.Getenv("BRIDGE_AUTH_TOKEN"); got != want {
+				auth := shared.AsMap(params["auth"])
+				if fake.rejectDeviceTokenOnce.Swap(false) && strings.TrimSpace(shared.StringArg(auth, "deviceToken", "")) != "" {
+					_ = conn.WriteJSON(map[string]any{
+						"type": "res",
+						"id":   id,
+						"ok":   false,
+						"error": map[string]any{
+							"code":    "INVALID_REQUEST",
+							"message": "unauthorized: device token mismatch (rotate/reissue device token)",
+							"details": map[string]any{
+								"code": "AUTH_DEVICE_TOKEN_MISMATCH",
+							},
+						},
+					})
+					return
+				}
+				if got, want := shared.StringArg(auth, "token", ""), bridgeSharedAuthToken(); got != want {
 					_ = conn.WriteJSON(map[string]any{
 						"type": "res",
 						"id":   id,

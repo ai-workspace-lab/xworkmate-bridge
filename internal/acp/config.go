@@ -109,15 +109,43 @@ func resolveURL(yamlVal string, envKeys ...string) string {
 }
 
 func bridgeUpstreamAuthorizationHeader() string {
-	token := bridgeSharedAuthToken()
+	token := bridgePublicAuthToken()
 	if token != "" && !strings.HasPrefix(strings.ToLower(token), "bearer ") {
 		return "Bearer " + token
 	}
 	return token
 }
 
-func bridgeSharedAuthToken() string {
+func bridgePublicAuthToken() string {
+	if token := strings.TrimSpace(os.Getenv("AI_WORKSPACE_AUTH_TOKEN")); token != "" {
+		return token
+	}
 	return strings.TrimSpace(shared.EnvOrDefault("BRIDGE_AUTH_TOKEN", ""))
+}
+
+func bridgeSharedAuthToken() string {
+	return bridgePublicAuthToken()
+}
+
+func bridgeInboundAuthTokens() []string {
+	var tokens []string
+	seen := map[string]struct{}{}
+	for _, token := range []string{
+		os.Getenv("AI_WORKSPACE_AUTH_TOKEN"),
+		os.Getenv("BRIDGE_AUTH_TOKEN"),
+		os.Getenv("BRIDGE_REVIEW_AUTH_TOKEN"),
+	} {
+		trimmed := strings.TrimSpace(token)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		tokens = append(tokens, trimmed)
+	}
+	return tokens
 }
 
 func resolveDistributedTaskForwardToken(config *BridgeConfig) string {

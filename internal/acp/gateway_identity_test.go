@@ -144,6 +144,26 @@ func TestBridgeGatewayIdentityPersistsReturnedDeviceToken(t *testing.T) {
 	}
 }
 
+func TestBridgeGatewayIdentityClearsStoredDeviceToken(t *testing.T) {
+	identityPath := filepath.Join(t.TempDir(), "openclaw-device.json")
+	t.Setenv("XWORKMATE_BRIDGE_OPENCLAW_IDENTITY_PATH", identityPath)
+	resetBridgeGatewayIdentityForTest()
+	t.Cleanup(resetBridgeGatewayIdentityForTest)
+
+	identity := newBridgeGatewayIdentity()
+	saveBridgeGatewayDeviceToken("device-token-2")
+	clearBridgeGatewayDeviceToken()
+	resetBridgeGatewayIdentityForTest()
+
+	reloaded, token := bridgeGatewayOpenClawCredentials()
+	if reloaded.DeviceID != identity.DeviceID {
+		t.Fatalf("reloaded identity = %q, want %q", reloaded.DeviceID, identity.DeviceID)
+	}
+	if token != "" {
+		t.Fatalf("device token should be cleared, got %q", token)
+	}
+}
+
 func resetBridgeGatewayIdentityForTest() {
 	bridgeGatewayIdentity.Lock()
 	defer bridgeGatewayIdentity.Unlock()
