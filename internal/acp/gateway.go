@@ -92,20 +92,7 @@ func handleGatewayConnect(
 		server.gateway = gatewayruntime.NewManager()
 	}
 
-	result := server.gateway.Connect(request, notify)
-	if usesBridgeIdentity && shouldRetryOpenClawGatewayWithSharedToken(result) {
-		clearBridgeGatewayDeviceToken()
-		request.Auth.DeviceToken = ""
-		request.HasDeviceToken = false
-		request.Auth.Token = bridgeSharedAuthToken()
-		request.HasSharedAuth = strings.TrimSpace(request.Auth.Token) != ""
-		if request.HasSharedAuth {
-			request.ConnectAuthMode = "shared-token"
-			request.ConnectAuthFields = []string{"token"}
-			request.ConnectAuthSources = []string{"bridge:repair"}
-			result = server.gateway.Connect(request, notify)
-		}
-	}
+	result := connectOpenClawGateway(server.gateway, request, notify, usesBridgeIdentity)
 	if result.OK && usesBridgeIdentity {
 		saveBridgeGatewayDeviceToken(result.ReturnedDeviceToken)
 	}
@@ -297,20 +284,7 @@ func ensureProductionGatewayConnected(
 	request.Auth.DeviceToken = deviceToken
 	request.HasDeviceToken = deviceToken != ""
 	request.ReportedRemoteAddress = resolveGatewayReportedRemoteAddress(server, request)
-	result := server.gateway.Connect(request, notify)
-	if shouldRetryOpenClawGatewayWithSharedToken(result) {
-		clearBridgeGatewayDeviceToken()
-		request.Auth.DeviceToken = ""
-		request.HasDeviceToken = false
-		request.Auth.Token = bridgeSharedAuthToken()
-		request.HasSharedAuth = strings.TrimSpace(request.Auth.Token) != ""
-		if request.HasSharedAuth {
-			request.ConnectAuthMode = "shared-token"
-			request.ConnectAuthFields = []string{"token"}
-			request.ConnectAuthSources = []string{"bridge:repair"}
-			result = server.gateway.Connect(request, notify)
-		}
-	}
+	result := connectOpenClawGateway(server.gateway, request, notify, true)
 	if result.OK {
 		saveBridgeGatewayDeviceToken(result.ReturnedDeviceToken)
 		return nil
@@ -321,6 +295,28 @@ func ensureProductionGatewayConnected(
 		message = code + ": " + message
 	}
 	return &shared.RPCError{Code: -32002, Message: "GATEWAY_CONNECT_FAILED: " + message}
+}
+
+func connectOpenClawGateway(
+	manager *gatewayruntime.Manager,
+	request gatewayruntime.ConnectRequest,
+	notify func(map[string]any),
+	usesBridgeIdentity bool,
+) gatewayruntime.ConnectResult {
+	result := manager.Connect(request, notify)
+	if !usesBridgeIdentity || !shouldRetryOpenClawGatewayWithSharedToken(result) {
+		return result
+	}
+
+	clearBridgeGatewayDeviceToken()
+	request.Auth.DeviceToken = ""
+	request.HasDeviceToken = false
+	request.Auth.Token = bridgeSharedAuthToken()
+	request.HasSharedAuth = true
+	request.ConnectAuthMode = "shared-token"
+	request.ConnectAuthFields = []string{"token"}
+	request.ConnectAuthSources = []string{"bridge:device-token-reissue"}
+	return manager.Connect(request, notify)
 }
 
 func shouldRetryOpenClawGatewayWithSharedToken(result gatewayruntime.ConnectResult) bool {

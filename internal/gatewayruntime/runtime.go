@@ -360,7 +360,11 @@ func sameConnectTarget(current ConnectRequest, next ConnectRequest) bool {
 		strings.TrimSpace(current.Endpoint.Host) == strings.TrimSpace(next.Endpoint.Host) &&
 		current.Endpoint.Port == next.Endpoint.Port &&
 		current.Endpoint.TLS == next.Endpoint.TLS &&
-		normalizeEndpointPath(current.Endpoint.Path) == normalizeEndpointPath(next.Endpoint.Path)
+		normalizeEndpointPath(current.Endpoint.Path) == normalizeEndpointPath(next.Endpoint.Path) &&
+		strings.TrimSpace(current.Identity.DeviceID) == strings.TrimSpace(next.Identity.DeviceID) &&
+		strings.TrimSpace(current.Auth.Token) == strings.TrimSpace(next.Auth.Token) &&
+		strings.TrimSpace(current.Auth.DeviceToken) == strings.TrimSpace(next.Auth.DeviceToken) &&
+		strings.TrimSpace(current.Auth.Password) == strings.TrimSpace(next.Auth.Password)
 }
 
 func (s *session) connectAttempt() (ConnectResult, *GatewayError) {
@@ -412,11 +416,6 @@ func (s *session) connectAttempt() (ConnectResult, *GatewayError) {
 	snapshotPayload := asMap(payload["snapshot"])
 	sessionDefaults := asMap(snapshotPayload["sessionDefaults"])
 	returnedDeviceToken := strings.TrimSpace(stringValue(auth["deviceToken"]))
-	if returnedDeviceToken != "" {
-		s.mu.Lock()
-		s.config.Auth.DeviceToken = returnedDeviceToken
-		s.mu.Unlock()
-	}
 	negotiatedScopes := stringSlice(auth["scopes"])
 	negotiatedRole := strings.TrimSpace(stringValue(auth["role"]))
 	if negotiatedRole == "" {
