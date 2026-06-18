@@ -833,7 +833,7 @@ func TestGatewayRequestSkillsStatusAutoConnectsOpenClaw(t *testing.T) {
 	}
 }
 
-func TestExecuteSessionTaskGatewayFailsWhenPrepareUnsupported(t *testing.T) {
+func TestExecuteSessionTaskGatewayFallsBackWhenPrepareUnsupported(t *testing.T) {
 	gateway := newAcpFakeOpenClawGateway(t)
 	gateway.unsupportedSessionPrepare.Store(true)
 	defer gateway.Close()
@@ -858,15 +858,48 @@ func TestExecuteSessionTaskGatewayFailsWhenPrepareUnsupported(t *testing.T) {
 			},
 		},
 	})
-	if rpcErr == nil {
-		t.Fatalf("expected prepare error without legacy fallback, got response: %#v", response)
-		return
+	if rpcErr != nil {
+		t.Fatalf("expected prepare compatibility fallback, got error: %#v", rpcErr)
 	}
-	if rpcErr.Code != -32002 || !strings.Contains(rpcErr.Message, "unknown method: xworkmate.session.prepare") {
-		t.Fatalf("expected surfaced prepare unsupported error, got %#v", rpcErr)
+	if response["success"] != true {
+		t.Fatalf("expected successful gateway task with prepare fallback, got %#v", response)
+	}
+	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.session.prepare", "chat.send", "xworkmate.tasks.get"}) {
+		t.Fatalf("expected bridge to continue to chat.send when prepare is unsupported, got %#v", got)
+	}
+}
+
+func TestHandleSessionPrepareFallsBackWhenGatewayMethodUnsupported(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	gateway.unsupportedSessionPrepare.Store(true)
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	response, rpcErr := server.handleRequest(
+		shared.RPCRequest{
+			Method: "xworkmate.session.prepare",
+			Params: map[string]any{
+				"openclawSessionKey": "thread-prepare",
+				"runId":              "run-prepare",
+				"workspaceDir":       "/remote/openclaw/workspace",
+			},
+		},
+		func(map[string]any) {},
+	)
+	if rpcErr != nil {
+		t.Fatalf("expected fallback prepare response, got error: %#v", rpcErr)
+	}
+	if response["fallback"] != true {
+		t.Fatalf("expected fallback marker, got %#v", response)
+	}
+	if response["artifactScope"] != "tasks/thread-prepare/run-prepare" {
+		t.Fatalf("expected fallback task artifact scope, got %#v", response)
 	}
 	if got := gateway.Methods(); !sameMethods(got, []string{"connect", "xworkmate.session.prepare"}) {
-		t.Fatalf("expected bridge to stop before chat.send when prepare is unsupported, got %#v", got)
+		t.Fatalf("expected bridge to try gateway prepare before fallback, got %#v", got)
 	}
 }
 

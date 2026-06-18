@@ -76,6 +76,9 @@ func (s *Server) handleRequest(request shared.RPCRequest, notify func(map[string
 	case "xworkmate.tasks.get":
 		return s.handleTaskGet(ctx, request.Params, notify), nil
 
+	case "xworkmate.session.prepare":
+		return s.handleSessionPrepare(ctx, request.Params, notify)
+
 	case "xworkmate.tasks.cancel":
 		return s.handleTaskCancel(ctx, request.Params, notify), nil
 
@@ -88,6 +91,36 @@ func (s *Server) handleRequest(request shared.RPCRequest, notify func(map[string
 			Message: fmt.Sprintf("unknown method: %s", method),
 		}
 	}
+}
+
+func (s *Server) handleSessionPrepare(ctx context.Context, params map[string]any, notify func(map[string]any)) (map[string]any, *shared.RPCError) {
+	gatewayProvider := strings.TrimSpace(shared.StringArg(params, "gatewayProviderId", ""))
+	if gatewayProvider == "" {
+		gatewayProvider = strings.TrimSpace(shared.StringArg(params, "resolvedGatewayProviderId", ""))
+	}
+	if gatewayProvider == "" {
+		gatewayProvider = "openclaw"
+	}
+	if rpcErr := ensureProductionGatewayConnected(s, gatewayProvider, notify); rpcErr != nil {
+		return openClawFallbackSessionPreparePayload(params), nil
+	}
+	result := s.gateway.RequestByMode(
+		gatewayProvider,
+		"xworkmate.session.prepare",
+		params,
+		30*time.Second,
+		notify,
+	)
+	if result.OK {
+		payload := shared.AsMap(result.Payload)
+		if openClawPreparedArtifactScopeFromPayload(payload) != nil {
+			return payload, nil
+		}
+	}
+	if !result.OK && !isOpenClawUnknownMethodError(result.Error, "xworkmate.session.prepare") {
+		return nil, gatewayRPCError(result.Error, "openclaw artifact prepare failed")
+	}
+	return openClawFallbackSessionPreparePayload(params), nil
 }
 
 func (s *Server) handleTaskGet(ctx context.Context, params map[string]any, notify func(map[string]any)) map[string]any {

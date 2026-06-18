@@ -599,6 +599,9 @@ func (o *SessionOrchestrator) openClawArtifactPrepare(
 		notify,
 	)
 	if !prepareResult.OK {
+		if isOpenClawUnknownMethodError(prepareResult.Error, "xworkmate.session.prepare") {
+			return openClawPreparedArtifactScopeFromPayload(openClawFallbackSessionPreparePayload(prepareParams)), nil
+		}
 		return nil, gatewayRPCError(prepareResult.Error, "openclaw artifact prepare failed")
 	}
 	prepared := openClawPreparedArtifactScopeFromPayload(shared.AsMap(prepareResult.Payload))
@@ -606,6 +609,54 @@ func (o *SessionOrchestrator) openClawArtifactPrepare(
 		return nil, &shared.RPCError{Code: -32002, Message: "openclaw artifact prepare returned no scoped artifact directory"}
 	}
 	return prepared, nil
+}
+
+func isOpenClawUnknownMethodError(errorPayload map[string]any, method string) bool {
+	message := strings.ToLower(strings.TrimSpace(shared.StringArg(errorPayload, "message", "")))
+	code := strings.ToUpper(strings.TrimSpace(shared.StringArg(errorPayload, "code", "")))
+	if message == "" {
+		return false
+	}
+	return strings.Contains(message, "unknown method") &&
+		strings.Contains(message, strings.ToLower(strings.TrimSpace(method))) &&
+		(code == "" || code == "INVALID_REQUEST" || code == "METHOD_NOT_FOUND")
+}
+
+func openClawFallbackSessionPreparePayload(params map[string]any) map[string]any {
+	sessionKey := strings.TrimSpace(shared.StringArg(params, "openclawSessionKey", ""))
+	if sessionKey == "" {
+		sessionKey = strings.TrimSpace(shared.StringArg(params, "sessionKey", ""))
+	}
+	if sessionKey == "" {
+		sessionKey = "main"
+	}
+	runID := strings.TrimSpace(shared.StringArg(params, "runId", ""))
+	if runID == "" {
+		runID = strings.TrimSpace(shared.StringArg(params, "taskId", ""))
+	}
+	if runID == "" {
+		runID = strings.TrimSpace(shared.StringArg(params, "requestId", ""))
+	}
+	if runID == "" {
+		runID = "default"
+	}
+	relativeArtifactDirectory := filepath.Join("tasks", sessionKey, runID)
+	workspaceDir := openClawArtifactWorkspaceDir(params)
+	artifactDirectory := filepath.Join(workspaceDir, relativeArtifactDirectory)
+	return map[string]any{
+		"ok":                        true,
+		"fallback":                  true,
+		"compatibilityMode":         "local-session-prepare",
+		"runId":                     runID,
+		"sessionKey":                sessionKey,
+		"openclawSessionKey":        sessionKey,
+		"remoteWorkingDirectory":    workspaceDir,
+		"remoteWorkspaceRefKind":    "path",
+		"artifactScope":             relativeArtifactDirectory,
+		"artifactDirectory":         artifactDirectory,
+		"relativeArtifactDirectory": relativeArtifactDirectory,
+		"scopeKind":                 "task",
+	}
 }
 
 func openClawSessionPrepareParams(params map[string]any, openClawSessionKey string, runID string, artifactContract openClawArtifactContract) map[string]any {
