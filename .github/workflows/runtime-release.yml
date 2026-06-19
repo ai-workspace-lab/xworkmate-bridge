@@ -19,11 +19,12 @@ concurrency:
 
 jobs:
   build:
-    name: Build linux-${{ matrix.arch }}
+    name: Build ${{ matrix.os }}-${{ matrix.arch }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
+        os: [linux, darwin]
         arch: [amd64, arm64]
     steps:
       - uses: actions/checkout@v4
@@ -38,12 +39,13 @@ jobs:
 
       - name: Build runtime asset
         env:
+          TARGET_OS: ${{ matrix.os }}
           TARGET_ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
           root="dist/runtime/xworkmate-bridge"
           mkdir -p "${root}/bin" dist/assets
-          CGO_ENABLED=0 GOOS=linux GOARCH="${TARGET_ARCH}" \
+          CGO_ENABLED=0 GOOS="${TARGET_OS}" GOARCH="${TARGET_ARCH}" \
             go build -buildvcs=false -trimpath \
             -ldflags "-X main.buildCommit=${GITHUB_SHA}" \
             -o "${root}/bin/xworkmate-go-core" .
@@ -51,12 +53,12 @@ jobs:
           {
             "component": "xworkmate-bridge",
             "commit": "${GITHUB_SHA}",
-            "os": "linux",
+            "os": "${TARGET_OS}",
             "arch": "${TARGET_ARCH}",
             "binary": "bin/xworkmate-go-core"
           }
           JSON
-          tar -czf "dist/assets/xworkmate-bridge-linux-${TARGET_ARCH}.tar.gz" \
+          tar -czf "dist/assets/xworkmate-bridge-${TARGET_OS}-${TARGET_ARCH}.tar.gz" \
             -C dist/runtime xworkmate-bridge
           (
             cd dist/assets
@@ -65,7 +67,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: xworkmate-bridge-linux-${{ matrix.arch }}
+          name: xworkmate-bridge-${{ matrix.os }}-${{ matrix.arch }}
           path: |
             dist/assets/*.tar.gz
             dist/assets/SHA256SUMS-*
@@ -77,7 +79,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: xworkmate-bridge-linux-*
+          pattern: xworkmate-bridge-*
           path: dist
           merge-multiple: true
 
@@ -97,5 +99,5 @@ jobs:
               --repo "${GITHUB_REPOSITORY}" \
               --target "${GITHUB_SHA}" \
               --title "XWorkmate Bridge runtime ${GITHUB_SHA::12}" \
-              --notes "Prebuilt Linux bridge binaries. No target-host Go build is required."
+              --notes "Prebuilt bridge binaries. No target-host Go build is required."
           fi
