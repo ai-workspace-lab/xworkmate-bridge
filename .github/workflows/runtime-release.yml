@@ -62,7 +62,13 @@ jobs:
             -C dist/runtime xworkmate-bridge
           (
             cd dist/assets
-            sha256sum -- ./*.tar.gz | sed 's# \./# #' > "SHA256SUMS-${TARGET_ARCH}"
+            # Name the per-job checksum file by OS *and* ARCH. Keying on ARCH
+            # alone makes the linux/darwin jobs of the same arch both emit
+            # SHA256SUMS-<arch>, which then clobber each other under the
+            # publish job's merge-multiple download — leaving SHA256SUMS with
+            # only 2 of the 4 platforms and breaking arm64 (and darwin-amd64)
+            # consumers with "missing checksum".
+            sha256sum -- ./*.tar.gz | sed 's# \./# #' > "SHA256SUMS-${TARGET_OS}-${TARGET_ARCH}"
           )
 
       - uses: actions/upload-artifact@v4
