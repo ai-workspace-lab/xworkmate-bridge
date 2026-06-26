@@ -37,6 +37,7 @@ func (s *Server) Handler() http.Handler {
 				"commit":    info.Commit,
 				"version":   info.Version,
 				"buildDate": info.BuildDate,
+				"metrics":   bridgeStabilityMetricsSnapshot(), // T12
 			}
 			body, _ := json.Marshal(resp)
 			w.Header().Set("Content-Type", "application/json")
