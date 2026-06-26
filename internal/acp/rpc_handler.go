@@ -132,13 +132,13 @@ func (s *Server) handleTaskGet(ctx context.Context, params map[string]any, notif
 	if gatewayProvider == "" {
 		gatewayProvider = "openclaw"
 	}
+	// T7/T8: 一旦观察到终态就从持久 run 仓返回，避免之后 gateway 查不到导致结果丢失。
+	if cached, ok := s.cachedTerminalOpenClawResult(params); ok {
+		return cached
+	}
 	if rpcErr := ensureProductionGatewayConnected(s, gatewayProvider, notify); rpcErr != nil {
-		return map[string]any{
-			"ok":      false,
-			"status":  "not_found",
-			"code":    "GATEWAY_UNAVAILABLE",
-			"message": rpcErr.Message,
-		}
+		// T7/T9: gateway 不可达时按持久 run 仓兜底（续轮询 / deadline 终态），而非裸 not_found。
+		return s.openClawTaskGetGatewayUnconfirmedFallback(params, "GATEWAY_UNAVAILABLE", rpcErr.Message)
 	}
 	result := s.gateway.RequestByMode(
 		gatewayProvider,
@@ -162,16 +162,15 @@ func (s *Server) handleTaskGet(ctx context.Context, params map[string]any, notif
 		}
 		s.decorateOpenClawArtifactDownloadURLs(payload, sessionKey, runID)
 		stripOpenClawArtifactInlineContent(payload)
+		// T8: 缓存「最终客户端可见形态」（已 decorate 下载 URL + strip 内联内容），
+		// 这样从缓存回放时与正常路径完全一致。
+		s.cacheOpenClawTaskGetResultIfTerminal(params, payload)
 		return payload
 	}
+	// T7/T9: gateway 返回错误（socket closed / not_found / lookup failed）时同样走持久 run 仓兜底。
 	message := strings.TrimSpace(shared.StringArg(result.Error, "message", "openclaw native task lookup failed"))
 	code := strings.TrimSpace(shared.StringArg(result.Error, "code", "TASK_LOOKUP_FAILED"))
-	return map[string]any{
-		"ok":      false,
-		"status":  "not_found",
-		"code":    code,
-		"message": message,
-	}
+	return s.openClawTaskGetGatewayUnconfirmedFallback(params, code, message)
 }
 
 func (s *Server) taskGetParamsWithSessionScope(params map[string]any) map[string]any {

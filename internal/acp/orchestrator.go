@@ -417,6 +417,10 @@ func (o *SessionOrchestrator) startOpenClawGatewayTask(
 	sess.task.DeadlineAt = record.DeadlineAt
 	sess.task.ProgressStage = "running"
 	sess.task.ProgressMessage = "OpenClaw task accepted"
+	// 新一轮 turn 复用同一 session 时，必须重置上一轮可能留下的终态标记，
+	// 否则持久 run 仓(T8)会把旧 runId 的终态错配给新 run。
+	sess.task.State = TaskStateRunning
+	sess.task.ProgressTerminal = false
 	sess.openClaw = record
 	running := openClawRunningTaskResult(record)
 	sess.lastResult = cloneMap(running)
