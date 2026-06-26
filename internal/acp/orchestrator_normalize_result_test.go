@@ -282,3 +282,50 @@ func TestTaskGetArtifactExportReceivesRequiredArtifactExtensions(t *testing.T) {
 		t.Fatalf("expected expectedFileCountByExtension to reach export, got %#v", exportParams)
 	}
 }
+
+func TestIsOpenClawUnknownMethodErrorAcceptsNumericGatewayCodes(t *testing.T) {
+	const method = "xworkmate.session.prepare"
+	cases := []struct {
+		name    string
+		payload map[string]any
+		want    bool
+	}{
+		{
+			name:    "string invalid_request code",
+			payload: map[string]any{"code": "INVALID_REQUEST", "message": "unknown method: xworkmate.session.prepare"},
+			want:    true,
+		},
+		{
+			name:    "numeric -32002 (real gateway shape that previously hard-failed)",
+			payload: map[string]any{"code": float64(-32002), "message": "unknown method: xworkmate.session.prepare"},
+			want:    true,
+		},
+		{
+			name:    "numeric -32601 method not found",
+			payload: map[string]any{"code": float64(-32601), "message": "Unknown method: xworkmate.session.prepare"},
+			want:    true,
+		},
+		{
+			name:    "empty code",
+			payload: map[string]any{"message": "unknown method: xworkmate.session.prepare"},
+			want:    true,
+		},
+		{
+			name:    "unrelated error must not be swallowed",
+			payload: map[string]any{"code": float64(-32002), "message": "gateway socket closed"},
+			want:    false,
+		},
+		{
+			name:    "unknown method for a different method name",
+			payload: map[string]any{"code": float64(-32601), "message": "unknown method: chat.send"},
+			want:    false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isOpenClawUnknownMethodError(tc.payload, method); got != tc.want {
+				t.Fatalf("isOpenClawUnknownMethodError(%v) = %v, want %v", tc.payload, got, tc.want)
+			}
+		})
+	}
+}
