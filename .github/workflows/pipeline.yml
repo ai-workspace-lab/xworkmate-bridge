@@ -56,6 +56,7 @@ jobs:
       - name: Load Vault secrets
         id: vault
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        continue-on-error: true
         uses: hashicorp/vault-action@v2
         with:
           url: ${{ env.VAULT_ADDR }}
@@ -67,7 +68,7 @@ jobs:
             kv/data/github-actions/xworkmate-bridge AI_WORKSPACE_AUTH_TOKEN | AI_WORKSPACE_AUTH_TOKEN
 
       - name: Export bridge auth token
-        if: ${{ steps.vault.outcome == 'success' }}
+        if: ${{ steps.vault.outcome == 'success' && steps.vault.outputs.AI_WORKSPACE_AUTH_TOKEN != '' }}
         run: echo "AI_WORKSPACE_AUTH_TOKEN=${{ steps.vault.outputs.AI_WORKSPACE_AUTH_TOKEN }}" >> "$GITHUB_ENV"
 
       - name: Probe current production bridge
@@ -75,6 +76,17 @@ jobs:
         env:
           BRIDGE_SERVER_URL: https://xworkmate-bridge.svc.plus
         run: |
+          if [[ -z "${AI_WORKSPACE_AUTH_TOKEN:-}" ]]; then
+            echo "::notice title=Production state skipped::AI_WORKSPACE_AUTH_TOKEN is unavailable from Vault; continuing without production bridge metadata."
+            {
+              echo "production_image="
+              echo "production_tag="
+              echo "production_commit="
+              echo "production_version="
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           while IFS='=' read -r key value; do
             echo "${key}=${value}" >> "$GITHUB_OUTPUT"
           done < <(bash ./scripts/github-actions/report-production-state.sh "${BRIDGE_SERVER_URL}")
