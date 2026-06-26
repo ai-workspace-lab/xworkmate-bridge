@@ -850,12 +850,6 @@ type openClawArtifactContract struct {
 	SourceMessage          string
 }
 
-// defaultOpenClawExpectedArtifactDirs 是 agent 最常用的产物落盘目录。当任务期望产物却没有
-// 显式声明目录时，用作 openclaw-multi-session-plugins 的 workspace 根兜底扫描范围（S1）。
-func defaultOpenClawExpectedArtifactDirs() []string {
-	return []string{"reports/", "artifacts/", "exports/"}
-}
-
 func openClawArtifactContractForParams(params map[string]any, chatParams map[string]any) openClawArtifactContract {
 	metadata := shared.AsMap(params["metadata"])
 	taskLoadClass := strings.TrimSpace(shared.StringArg(metadata, "taskLoadClass", ""))
@@ -874,14 +868,6 @@ func openClawArtifactContractForParams(params map[string]any, chatParams map[str
 	}
 	if len(requiredExts) == 0 {
 		requiredExts = inferOpenClawRequiredArtifactExts(lowerMessage)
-	}
-	// S1（docs/cases/06 §7）：任务期望产物（需导出 或 已推断出 requiredExts）却没有显式声明
-	// expectedArtifactDirs 时，补一组缺省目录。openclaw-multi-session-plugins 在 task scope
-	// 目录为空时会回扫 workspace 根的 expectedArtifactDirs；该列表为空则兜底形同虚设，
-	// agent 写到 workspace 根（reports//artifacts//exports/）的产物就再也收不回（表现「暂无文件」）。
-	if len(expectedDirs) == 0 && (requiresExport || len(requiredExts) > 0) {
-		expectedDirs = defaultOpenClawExpectedArtifactDirs()
-		requiresExport = true
 	}
 	expectedFileCounts := normalizeOpenClawArtifactExtCountMap(shared.AsMap(contract["expectedFileCountByExtension"]))
 	if len(expectedFileCounts) == 0 {
@@ -1701,11 +1687,16 @@ func applyOpenClawConstraintDeliveryStatus(result map[string]any) {
 
 func gatewayRPCError(errorPayload map[string]any, fallback string) *shared.RPCError {
 	if isOpenClawRetryableGatewayError(errorPayload) {
+		metricGatewaySocketClosedInc() // T12
+		// T10：连接断属「可重试 / run 可能仍在后台、可续轮询」语义，而非 run 确实失败。
+		// 带 retryable/poll 提示，客户端据此降级为「后台续跑·重连中」(T5) 续轮询 tasks.get，而非硬失败。
 		return &shared.RPCError{
 			Code:    -32002,
 			Message: "OPENCLAW_GATEWAY_SOCKET_CLOSED: OpenClaw gateway connection closed during task execution",
 			Data: map[string]any{
 				"code":          "OPENCLAW_GATEWAY_SOCKET_CLOSED",
+				"retryable":     true,
+				"poll":          true,
 				"originalCode":  strings.TrimSpace(shared.StringArg(errorPayload, "code", "")),
 				"originalError": strings.TrimSpace(shared.StringArg(errorPayload, "message", "")),
 			},

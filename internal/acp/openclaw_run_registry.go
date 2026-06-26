@@ -1,6 +1,7 @@
 package acp
 
 import (
+	"log"
 	"strings"
 	"time"
 
@@ -125,11 +126,15 @@ func (s *Server) openClawTaskGetGatewayUnconfirmedFallback(params map[string]any
 		return s.markOpenClawRunDeadlineInterruptedLocked(sess, code, message)
 	}
 	// 仍在预算内：合成 running 句柄让客户端继续轮询，不因一次瞬时抖动硬失败。
+	metricTaskGetUnconfirmedFallbackInc() // T12
 	running := openClawRunningTaskResult(sess.openClaw)
 	running["transportDegraded"] = true
 	if strings.TrimSpace(code) != "" {
 		running["transportDegradedCode"] = strings.TrimSpace(code)
 	}
+	// T11：带 runId 的日志，便于与 App / 插件 / 网关四层按 runId 串联。
+	log.Printf("level=warn component=openclaw_run_registry event=tasks_get_unconfirmed_fallback runId=%q openclawSessionKey=%q code=%q",
+		sess.openClaw.RunID, sess.openClaw.SessionKey, strings.TrimSpace(code))
 	sess.lastResult = cloneMap(running)
 	return running
 }
@@ -143,6 +148,13 @@ func (s *Server) markOpenClawRunDeadlineInterruptedLocked(sess *session, code st
 	sess.task.ProgressStage = "interrupted"
 	sess.task.ProgressMessage = "OpenClaw run exceeded its budget and could not be confirmed"
 	sess.task.UpdatedAt = now
+	metricRunDeadlineInterruptInc() // T12
+	// T11：带 runId 的终态日志。
+	if sess.openClaw != nil {
+		log.Printf("level=warn component=openclaw_run_registry event=run_deadline_interrupt runId=%q openclawSessionKey=%q deadlineAt=%q code=%q",
+			sess.openClaw.RunID, sess.openClaw.SessionKey,
+			sess.openClaw.DeadlineAt.UTC().Format(time.RFC3339Nano), strings.TrimSpace(code))
+	}
 
 	result := map[string]any{
 		"ok":                 true,
