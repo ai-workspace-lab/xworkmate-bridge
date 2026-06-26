@@ -613,13 +613,19 @@ func (o *SessionOrchestrator) openClawArtifactPrepare(
 
 func isOpenClawUnknownMethodError(errorPayload map[string]any, method string) bool {
 	message := strings.ToLower(strings.TrimSpace(shared.StringArg(errorPayload, "message", "")))
-	code := strings.ToUpper(strings.TrimSpace(shared.StringArg(errorPayload, "code", "")))
 	if message == "" {
 		return false
 	}
+	// 消息形如「unknown method: <method>」已明确指向「网关不认识该方法」，足以判定，
+	// 据此走 graceful fallback（如 openClawFallbackSessionPreparePayload）。
+	//
+	// 注意：不能再用严格的 code 白名单来 gate。真实网关常以数字 JSON-RPC code
+	// (-32601 method not found / -32600 invalid request / -32002 等) 回传，
+	// 经 shared.StringArg(fmt.Sprint) 会被字符串化为 "-32601"/"-32002"，
+	// 旧实现只接受 {"", INVALID_REQUEST, METHOD_NOT_FOUND}，导致 fallback 失效、
+	// session.prepare 直接以 -32002 硬失败整轮任务。
 	return strings.Contains(message, "unknown method") &&
-		strings.Contains(message, strings.ToLower(strings.TrimSpace(method))) &&
-		(code == "" || code == "INVALID_REQUEST" || code == "METHOD_NOT_FOUND")
+		strings.Contains(message, strings.ToLower(strings.TrimSpace(method)))
 }
 
 func openClawFallbackSessionPreparePayload(params map[string]any) map[string]any {
