@@ -132,6 +132,49 @@ func TestNormalizeOpenClawTaskGetUnknownArtifactEvidenceKeepsActiveRecordRunning
 	}
 }
 
+func TestExpectedArtifactDirectoriesDoNotBlockTerminalTaskState(t *testing.T) {
+	params := map[string]any{"expectedArtifactDirs": []any{"reports/", "artifacts/"}}
+	payload := map[string]any{
+		"success":           true,
+		"status":            string(TaskStateCompleted),
+		"artifactScope":     "tasks/session/run",
+		"artifactDirectory": "/remote/openclaw/workspace/tasks/session/run",
+		"expectedArtifactDirs": []any{
+			"reports/",
+			"artifacts/",
+		},
+	}
+
+	if openClawTaskGetRequiresArtifactExport(params, payload) {
+		t.Fatal("expectedArtifactDirs must remain non-blocking scan hints")
+	}
+	got := normalizeOpenClawTaskGetResult(params, payload, "openclaw", nil)
+	if status := shared.StringArg(got, "status", ""); status != string(TaskStateCompleted) {
+		t.Fatalf("expected terminal status to remain completed, got %#v", got)
+	}
+	if parseBool(got["pending"]) {
+		t.Fatalf("expected terminal payload not to become pending, got %#v", got)
+	}
+}
+
+func TestRequiredArtifactExtensionsStillBlockUntilVerified(t *testing.T) {
+	params := map[string]any{"requiredArtifactExtensions": []any{"md"}}
+	payload := map[string]any{
+		"success":           true,
+		"status":            string(TaskStateCompleted),
+		"artifactScope":     "tasks/session/run",
+		"artifactDirectory": "/remote/openclaw/workspace/tasks/session/run",
+	}
+
+	if !openClawTaskGetRequiresArtifactExport(params, payload) {
+		t.Fatal("requiredArtifactExtensions must remain a blocking delivery contract")
+	}
+	got := normalizeOpenClawTaskGetResult(params, payload, "openclaw", nil)
+	if status := shared.StringArg(got, "status", ""); status != string(TaskStateRunning) {
+		t.Fatalf("expected missing required artifact to remain syncing, got %#v", got)
+	}
+}
+
 func TestNormalizeOpenClawTaskGetUnknownArtifactEvidenceFailsAfterDeadlineWithoutRequiredArtifacts(t *testing.T) {
 	payload := map[string]any{
 		"success":            false,

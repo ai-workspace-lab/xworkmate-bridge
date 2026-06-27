@@ -471,9 +471,11 @@ func openClawTaskGetRequiresArtifactExport(params map[string]any, payload map[st
 	if parseBool(params["requiresExportBeforeFinalResponse"]) || parseBool(payload["requiresExportBeforeFinalResponse"]) {
 		return true
 	}
-	return len(shared.ListArg(params, "expectedArtifactDirs")) > 0 ||
-		len(shared.ListArg(payload, "expectedArtifactDirs")) > 0 ||
-		len(shared.ListArg(params, "requiredArtifactExtensions")) > 0 ||
+	// expectedArtifactDirs are discovery hints for the plugin's workspace-root
+	// scan. They do not prove that the caller requires a file before the run can
+	// reach a terminal state. Treating them as a blocking contract turns a
+	// failed/no-output agent run into an endless "syncing-artifacts" loop.
+	return len(shared.ListArg(params, "requiredArtifactExtensions")) > 0 ||
 		len(shared.ListArg(payload, "requiredArtifactExtensions")) > 0
 }
 
