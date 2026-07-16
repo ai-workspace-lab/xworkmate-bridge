@@ -1,3 +1,5 @@
+![XWorkmate Bridge promotional poster](./assets/product.png)
+
 # XWorkmate Bridge
 
 `xworkmate-bridge` is the standalone repository for the XWorkmate ACP Bridge Server and the embedded Go helper previously stored under `xworkmate-app/go/go_core`.
