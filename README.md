@@ -1,3 +1,7 @@
+![XWorkmate Bridge promotional poster](./assets/product.png)
+
+[![License](https://img.shields.io/badge/license-not%20declared-6b7280.svg)](https://github.com/ai-workspace-lab/xworkmate-bridge) [![Go](https://img.shields.io/badge/Go-1.22%2B-00ADD8.svg?logo=go&logoColor=white)](https://go.dev/) [![Transport](https://img.shields.io/badge/transport-WebSocket%20%7C%20HTTP-1769aa.svg)](./docs/api-reference.md) [![ACP](https://img.shields.io/badge/protocol-ACP-0b7285.svg)](./docs/architecture/adr-unified-bridge-entrypoints.md)
+
 # XWorkmate Bridge
 
 `xworkmate-bridge` is the standalone repository for the XWorkmate ACP Bridge Server and the embedded Go helper previously stored under `xworkmate-app/go/go_core`.
