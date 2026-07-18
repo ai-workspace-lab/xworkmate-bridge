@@ -323,6 +323,7 @@ func (s *Server) mergeOpenClawTaskGetArtifactExport(payload map[string]any, para
 				collectParams[key] = value
 			}
 			collectParams["sinceUnixMs"] = collectSinceUnixMs
+			collectParams["sourceFiles"] = openClawTerminalMediaReferenceFiles(payload)
 			logOpenClawArtifactSync(gatewayProvider, sessionKey, runID, "collect", true, false, true)
 			if s.orchestrator.openClawArtifactCollectAndSnapshotRequest(
 				gatewayProvider,
@@ -575,6 +576,38 @@ func openClawTerminalMediaReferenceEvidence(payload map[string]any) bool {
 		}
 	}
 	return false
+}
+
+// openClawTerminalMediaReferenceFiles returns only files explicitly referenced
+// by this terminal result. The plugin validates these paths against managed
+// staging roots before copying them into the task scope. This avoids sweeping
+// shared media directories and mixing concurrent task outputs.
+func openClawTerminalMediaReferenceFiles(payload map[string]any) []any {
+	seen := map[string]bool{}
+	files := []any{}
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		value = strings.TrimRight(value, "\"'`),]};")
+		if value == "" || seen[value] {
+			return
+		}
+		seen[value] = true
+		files = append(files, value)
+	}
+	add(shared.StringArg(payload, "mediaUrl", ""))
+	for _, value := range shared.ListArg(payload, "mediaUrls") {
+		if text, ok := value.(string); ok {
+			add(text)
+		}
+	}
+	for _, key := range []string{"message", "output", "summary"} {
+		for _, field := range strings.Fields(shared.StringArg(payload, key, "")) {
+			if strings.HasPrefix(field, "MEDIA:") {
+				add(strings.TrimPrefix(field, "MEDIA:"))
+			}
+		}
+	}
+	return files
 }
 
 func openClawTaskGetRequiresArtifactExport(params map[string]any, payload map[string]any) bool {
