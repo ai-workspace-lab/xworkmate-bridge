@@ -2,19 +2,25 @@ name: Pipeline
 
 env:
   VAULT_ADDR: https://vault.svc.plus
-  DEFAULT_TARGET_HOST: jp-xhttp-contabo.svc.plus
 
 on:
   pull_request:
     branches: [main]
   push:
-    branches: ['**']
+    branches: [main, 'release/**']
+    tags: ['v*']
   workflow_dispatch:
     inputs:
+      environment:
+        description: Deployment environment
+        required: true
+        default: uat
+        type: choice
+        options: [uat, prod]
       target_host:
-        description: "Ansible inventory host or alias"
+        description: "Optional host override for the selected environment"
         required: false
-        default: "jp-xhttp-contabo.svc.plus"
+        default: ""
         type: string
       run_apply:
         description: "Apply deployment (false = dry-run)"
@@ -41,9 +47,47 @@ defaults:
     shell: bash
 
 jobs:
-  production_state:
-    name: Production State
+  resolve_profile:
+    name: Resolve deployment profile
     runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.profile.outputs.environment }}
+      target_host: ${{ steps.profile.outputs.target_host }}
+      run_apply: ${{ steps.profile.outputs.run_apply }}
+      bridge_server_url: ${{ steps.profile.outputs.bridge_server_url }}
+    steps:
+      - id: profile
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          INPUT_ENVIRONMENT: ${{ inputs.environment }}
+          INPUT_TARGET_HOST: ${{ inputs.target_host }}
+          INPUT_RUN_APPLY: ${{ inputs.run_apply }}
+          UAT_TARGET_HOST: ${{ vars.UAT_TARGET_HOST }}
+          UAT_BRIDGE_SERVER_URL: ${{ vars.UAT_BRIDGE_SERVER_URL }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == workflow_dispatch ]]; then environment="$INPUT_ENVIRONMENT"
+          elif [[ "$REF" == refs/heads/main ]]; then environment=uat
+          elif [[ "$REF" == refs/heads/release/* || "$REF" == refs/tags/v* ]]; then environment=prod
+          else echo "::error::No deployment profile for $REF"; exit 1; fi
+          if [[ "$environment" == uat ]]; then
+            target_host="${INPUT_TARGET_HOST:-$UAT_TARGET_HOST}"
+            bridge_server_url="$UAT_BRIDGE_SERVER_URL"
+          else
+            target_host="${INPUT_TARGET_HOST:-jp-xhttp-contabo.svc.plus}"
+            bridge_server_url="https://xworkmate-bridge.svc.plus"
+          fi
+          [[ -n "$target_host" && -n "$bridge_server_url" ]] || { echo "::error::target_host and bridge_server_url are required for $environment"; exit 1; }
+          echo "environment=$environment" >> "$GITHUB_OUTPUT"
+          echo "target_host=$target_host" >> "$GITHUB_OUTPUT"
+          echo "run_apply=${INPUT_RUN_APPLY:-true}" >> "$GITHUB_OUTPUT"
+          echo "bridge_server_url=$bridge_server_url" >> "$GITHUB_OUTPUT"
+
+  production_state:
+    name: Current Environment State
+    runs-on: ubuntu-latest
+    needs: resolve_profile
     outputs:
       production_image: ${{ steps.production_state.outputs.production_image }}
       production_tag: ${{ steps.production_state.outputs.production_tag }}
@@ -71,13 +115,13 @@ jobs:
         if: ${{ steps.vault.outcome == 'success' && steps.vault.outputs.AI_WORKSPACE_AUTH_TOKEN != '' }}
         run: echo "AI_WORKSPACE_AUTH_TOKEN=${{ steps.vault.outputs.AI_WORKSPACE_AUTH_TOKEN }}" >> "$GITHUB_ENV"
 
-      - name: Probe current production bridge
+      - name: Probe current environment bridge
         id: production_state
         env:
-          BRIDGE_SERVER_URL: https://xworkmate-bridge.svc.plus
+          BRIDGE_SERVER_URL: ${{ needs.resolve_profile.outputs.bridge_server_url }}
         run: |
           if [[ -z "${AI_WORKSPACE_AUTH_TOKEN:-}" ]]; then
-            echo "::notice title=Production state skipped::AI_WORKSPACE_AUTH_TOKEN is unavailable from Vault; continuing without production bridge metadata."
+            echo "::notice title=Environment state skipped::AI_WORKSPACE_AUTH_TOKEN is unavailable from Vault; continuing without bridge metadata."
             {
               echo "production_image="
               echo "production_tag="
@@ -91,10 +135,10 @@ jobs:
             echo "${key}=${value}" >> "$GITHUB_OUTPUT"
           done < <(bash ./scripts/github-actions/report-production-state.sh "${BRIDGE_SERVER_URL}")
 
-      - name: Explain branch push vs production
+      - name: Report selected environment state
         if: ${{ github.event_name == 'push' }}
         run: |
-          echo "::notice title=Production state::Current production bridge before this run is ${{ steps.production_state.outputs.production_commit }}."
+          echo "::notice title=Environment state::Current ${{ needs.resolve_profile.outputs.environment }} bridge before this run is ${{ steps.production_state.outputs.production_commit }}."
 
   prep:
     name: Prep
@@ -211,9 +255,10 @@ jobs:
 
   deploy:
     name: Deploy
-    needs: build
-    if: ${{ github.event_name != 'pull_request' && github.event_name != 'push' }}
+    needs: [build, resolve_profile]
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
+    environment: ${{ needs.resolve_profile.outputs.environment }}
     outputs:
       run_apply: ${{ steps.deploy_meta.outputs.run_apply }}
     steps:
@@ -289,20 +334,8 @@ jobs:
       - name: Resolve deployment settings
         id: deploy_meta
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            target_host="${{ inputs.target_host }}"
-            run_apply="${{ inputs.run_apply }}"
-          else
-            target_host="${DEFAULT_TARGET_HOST}"
-            run_apply="true"
-          fi
-
-          if [[ -z "${target_host}" ]]; then
-            target_host="${DEFAULT_TARGET_HOST}"
-          fi
-
-          echo "target_host=${target_host}" >> "$GITHUB_OUTPUT"
-          echo "run_apply=${run_apply}" >> "$GITHUB_OUTPUT"
+          echo "target_host=${{ needs.resolve_profile.outputs.target_host }}" >> "$GITHUB_OUTPUT"
+          echo "run_apply=${{ needs.resolve_profile.outputs.run_apply }}" >> "$GITHUB_OUTPUT"
 
       - name: Prepare runner SSH access
         working-directory: xworkmate-bridge
@@ -337,7 +370,8 @@ jobs:
       - build
       - deploy
       - validate
-    if: ${{ github.event_name != 'pull_request' && needs.deploy.result == 'success' && needs.validate.result == 'success' }}
+      - resolve_profile
+    if: ${{ github.event_name != 'pull_request' && needs.resolve_profile.outputs.environment == 'prod' && needs.deploy.result == 'success' && needs.validate.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -378,10 +412,12 @@ jobs:
     needs:
       - build
       - deploy
-    if: ${{ github.event_name != 'push' && needs.deploy.result == 'success' && needs.deploy.outputs.run_apply == 'true' }}
+      - resolve_profile
+    if: ${{ needs.deploy.result == 'success' && needs.deploy.outputs.run_apply == 'true' }}
     runs-on: ubuntu-latest
+    environment: ${{ needs.resolve_profile.outputs.environment }}
     env:
-      BRIDGE_SERVER_URL: https://xworkmate-bridge.svc.plus
+      BRIDGE_SERVER_URL: ${{ needs.resolve_profile.outputs.bridge_server_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
