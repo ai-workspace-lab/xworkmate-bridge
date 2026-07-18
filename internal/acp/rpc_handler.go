@@ -281,6 +281,23 @@ func (s *Server) mergeOpenClawTaskGetArtifactExport(payload map[string]any, para
 		exportParams["expectedFileCountByExtension"] = expectedCounts
 	}
 	exportPayload := s.orchestrator.openClawArtifactExportRequest(gatewayProvider, exportParams, notify)
+	if len(extractArtifactPayloads(exportPayload, remoteWorkingDirectory)) == 0 {
+		// Compatibility owner: Bridge artifact handoff. Scope: OpenClaw tools that
+		// still finish in managed media/tmp roots instead of the prepared task
+		// scope. Remove after the v1.2 protocol requires terminal snapshots to
+		// include a scoped artifact manifest for every generated file.
+		if s.orchestrator.openClawArtifactCollectAndSnapshotRequest(
+			gatewayProvider,
+			exportParams,
+			notify,
+		) {
+			exportPayload = s.orchestrator.openClawArtifactExportRequest(
+				gatewayProvider,
+				exportParams,
+				notify,
+			)
+		}
+	}
 	if openClawArtifactExportPayloadAuthoritative(exportPayload) {
 		replaceOpenClawArtifactPayload(payload, exportPayload)
 	} else {
