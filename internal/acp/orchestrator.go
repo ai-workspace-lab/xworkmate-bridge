@@ -1577,6 +1577,21 @@ func (o *SessionOrchestrator) openClawArtifactExportRequest(
 	}
 }
 
+func (o *SessionOrchestrator) openClawArtifactCollectAndSnapshotRequest(
+	gatewayProvider string,
+	params map[string]any,
+	notify func(map[string]any),
+) bool {
+	result := o.openClawGatewayRequestWithRetry(
+		gatewayProvider,
+		"xworkmate.artifacts.collect-and-snapshot",
+		params,
+		30*time.Second,
+		notify,
+	)
+	return result.OK
+}
+
 func mergeOpenClawArtifactPayload(result map[string]any, source map[string]any) {
 	if result == nil || len(source) == 0 {
 		return

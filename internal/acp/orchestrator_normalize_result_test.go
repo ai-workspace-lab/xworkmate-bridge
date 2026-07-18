@@ -324,6 +324,16 @@ func TestTaskGetArtifactExportReceivesRequiredArtifactExtensions(t *testing.T) {
 	if got := shared.AsMap(exportParams["expectedFileCountByExtension"]); openClawPositiveInt(got["pdf"]) != 1 {
 		t.Fatalf("expected expectedFileCountByExtension to reach export, got %#v", exportParams)
 	}
+	if got := gateway.ArtifactSnapshotCount(); got != 1 {
+		t.Fatalf("expected one collect-and-snapshot fallback, got %d", got)
+	}
+	if got := gateway.ArtifactExportCount(); got != 2 {
+		t.Fatalf("expected export to retry after snapshot collection, got %d", got)
+	}
+	snapshotParams := gateway.LastArtifactSnapshotParams()
+	if got := shared.ListArg(snapshotParams, "requiredArtifactExtensions"); len(got) != 1 || got[0] != "pdf" {
+		t.Fatalf("expected artifact constraints to reach snapshot collection, got %#v", snapshotParams)
+	}
 }
 
 func TestIsOpenClawUnknownMethodErrorAcceptsNumericGatewayCodes(t *testing.T) {
