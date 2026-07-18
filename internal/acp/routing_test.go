@@ -2992,6 +2992,63 @@ func TestTaskGetBackfillsArtifactScopeFromBridgeSession(t *testing.T) {
 	}
 }
 
+func TestTaskGetCollectsTerminalArtifactsWithoutExportContract(t *testing.T) {
+	gateway := newAcpFakeOpenClawGateway(t)
+	defer gateway.Close()
+
+	t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+	t.Setenv("BRIDGE_AUTH_TOKEN", "bridge-token")
+
+	server := NewServer()
+	start, rpcErr := server.handleRequest(shared.RPCRequest{
+		Method: "session.start",
+		Params: map[string]any{
+			"sessionId":        "session-openclaw-no-contract-collect",
+			"threadId":         "thread-openclaw-no-contract-collect",
+			"taskPrompt":       "generate a media reply",
+			"workingDirectory": t.TempDir(),
+			"routing": map[string]any{
+				"routingMode":                "explicit",
+				"explicitExecutionTarget":    "gateway",
+				"preferredGatewayProviderId": "openclaw",
+			},
+		},
+	}, nil)
+	if rpcErr != nil {
+		t.Fatalf("expected running task handle, got rpc error: %#v", rpcErr)
+	}
+	if got := start["status"]; got != string(TaskStateRunning) {
+		t.Fatalf("expected running start response, got %#v", start)
+	}
+
+	response, rpcErr := server.handleRequest(shared.RPCRequest{
+		Method: "xworkmate.tasks.get",
+		Params: map[string]any{
+			"runId":              shared.StringArg(start, "runId", ""),
+			"appThreadKey":       shared.StringArg(start, "appThreadKey", ""),
+			"openclawSessionKey": shared.StringArg(start, "openclawSessionKey", ""),
+			"includeArtifacts":   true,
+		},
+	}, nil)
+	if rpcErr != nil {
+		t.Fatalf("expected task lookup response, got rpc error: %#v", rpcErr)
+	}
+	if got := response["status"]; got != string(TaskStateCompleted) {
+		t.Fatalf("expected contract-less terminal lookup to stay completed, got %#v", response)
+	}
+	if gateway.ArtifactExportCount() != 2 || gateway.ArtifactSnapshotCount() != 1 {
+		t.Fatalf("expected contract-less empty terminal lookup to collect and retry export, got exports=%d snapshots=%d", gateway.ArtifactExportCount(), gateway.ArtifactSnapshotCount())
+	}
+	snapshotParams := gateway.LastArtifactSnapshotParams()
+	sinceUnixMs, _ := snapshotParams["sinceUnixMs"].(float64)
+	if sinceUnixMs <= 0 {
+		t.Fatalf("expected snapshot window bounded to the run start, got %#v", snapshotParams)
+	}
+	if got := shared.StringArg(snapshotParams, "artifactScope", ""); got == "" || got != shared.StringArg(start, "artifactScope", "") {
+		t.Fatalf("expected snapshot to target the prepared task scope %q, got %#v", shared.StringArg(start, "artifactScope", ""), snapshotParams)
+	}
+}
+
 func TestExtractArtifactPayloadsDoesNotScanRemoteDirectoryFallback(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "stale.txt"), []byte("stale"), 0o644); err != nil {
@@ -3494,6 +3551,8 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 					errorMessage = message
 				case strings.Contains(runMessage, "hallucinate-files"):
 					message = "文件已就绪，点击直接下载👇 三个格式一键收取："
+				case strings.Contains(lowerRunMessage, "media reply"):
+					message = "生成完成\nMEDIA:/home/ubuntu/.openclaw/media/tool-image-generation/demo.png"
 				}
 				artifactScope := "tasks/" + sessionKey + "/" + runID
 				artifacts := []any{}
