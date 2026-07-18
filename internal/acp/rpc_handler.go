@@ -225,8 +225,28 @@ func (s *Server) mergeOpenClawTaskGetArtifactExport(payload map[string]any, para
 	if status == string(TaskStateRunning) || status == string(TaskStateFailed) || status == string(TaskStateCancelled) {
 		return
 	}
+	// Contract-less tasks normally rely on the native task-registry snapshot and
+	// never trigger a Bridge export sync. The one exception is a terminal reply
+	// that references OpenClaw-managed media (MEDIA:/mediaUrls) while the
+	// snapshot carries no artifact manifest: media tools finish in the managed
+	// media/tmp roots, so without a collect pass the run's files never reach the
+	// task scope and every client sees an empty completed task. The pass is only
+	// taken when the prepared task scope is known to this bridge's own session
+	// record (injected into params by taskGetParamsWithSessionScope) — scope
+	// fields that appear only in the gateway payload are agent-influenced output
+	// and must not trigger an export on their own.
 	if !openClawTaskGetRequiresArtifactExport(params, payload) {
-		return
+		bridgeScope := strings.TrimSpace(shared.StringArg(params, "artifactScope", ""))
+		bridgeArtifactDirectory := strings.TrimSpace(shared.StringArg(params, "artifactDirectory", ""))
+		if bridgeScope == "" || bridgeArtifactDirectory == "" {
+			return
+		}
+		if len(extractArtifactPayloads(payload, strings.TrimSpace(shared.StringArg(payload, "remoteWorkingDirectory", "")))) > 0 {
+			return
+		}
+		if !openClawTerminalMediaReferenceEvidence(payload) {
+			return
+		}
 	}
 	success := true
 	if value, ok := payload["success"]; ok {
@@ -286,16 +306,44 @@ func (s *Server) mergeOpenClawTaskGetArtifactExport(payload map[string]any, para
 		// still finish in managed media/tmp roots instead of the prepared task
 		// scope. Remove after the v1.2 protocol requires terminal snapshots to
 		// include a scoped artifact manifest for every generated file.
-		if s.orchestrator.openClawArtifactCollectAndSnapshotRequest(
-			gatewayProvider,
-			exportParams,
-			notify,
-		) {
-			exportPayload = s.orchestrator.openClawArtifactExportRequest(
+		//
+		// The snapshot window starts at the run's StartedAt so the collector only
+		// copies files changed during this run; without a known window the
+		// collect is skipped rather than sweeping other runs' media into this
+		// task scope.
+		collectSinceUnixMs := int64(0)
+		if startedAt := s.openClawTaskRunStartTime(params); !startedAt.IsZero() {
+			collectSinceUnixMs = startedAt.Add(-30 * time.Second).UnixMilli()
+		}
+		if collectSinceUnixMs <= 0 {
+			logOpenClawArtifactSync(gatewayProvider, sessionKey, runID, "collect-skip", true, false, true)
+		} else {
+			collectParams := make(map[string]any, len(exportParams)+1)
+			for key, value := range exportParams {
+				collectParams[key] = value
+			}
+			collectParams["sinceUnixMs"] = collectSinceUnixMs
+			logOpenClawArtifactSync(gatewayProvider, sessionKey, runID, "collect", true, false, true)
+			if s.orchestrator.openClawArtifactCollectAndSnapshotRequest(
 				gatewayProvider,
-				exportParams,
+				collectParams,
 				notify,
-			)
+			) {
+				exportPayload = s.orchestrator.openClawArtifactExportRequest(
+					gatewayProvider,
+					exportParams,
+					notify,
+				)
+				logOpenClawArtifactSync(
+					gatewayProvider,
+					sessionKey,
+					runID,
+					"export-retry",
+					true,
+					true,
+					len(extractArtifactPayloads(exportPayload, remoteWorkingDirectory)) == 0,
+				)
+			}
 		}
 	}
 	if openClawArtifactExportPayloadAuthoritative(exportPayload) {
@@ -323,6 +371,31 @@ func (s *Server) activeOpenClawTaskRecord(params map[string]any) *OpenClawTaskRe
 	}
 	record := *sess.openClaw
 	return &record
+}
+
+// openClawTaskRunStartTime returns the recorded StartedAt for the requested run
+// regardless of task state (the run record outlives the running phase). Zero
+// time means the run is unknown to this bridge instance, or the per-session
+// record belongs to a different run after session reuse.
+func (s *Server) openClawTaskRunStartTime(params map[string]any) time.Time {
+	sess := s.findTaskSession(params)
+	if sess == nil {
+		return time.Time{}
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	record := sess.openClaw
+	if record == nil || record.StartedAt.IsZero() {
+		return time.Time{}
+	}
+	requestedRun := strings.TrimSpace(shared.StringArg(params, "runId", ""))
+	if requestedRun == "" {
+		requestedRun = strings.TrimSpace(shared.StringArg(params, "taskId", ""))
+	}
+	if requestedRun != "" && record.RunID != "" && !strings.EqualFold(record.RunID, requestedRun) {
+		return time.Time{}
+	}
+	return record.StartedAt
 }
 
 func normalizeOpenClawTaskGetResult(params map[string]any, payload map[string]any, gatewayProvider string, activeRecord *OpenClawTaskRecord) map[string]any {
@@ -479,6 +552,29 @@ func openClawTaskRecordStillActive(record *OpenClawTaskRecord) bool {
 		return false
 	}
 	return record.DeadlineAt.IsZero() || time.Now().Before(record.DeadlineAt)
+}
+
+// openClawTerminalMediaReferenceEvidence reports whether a terminal reply
+// references OpenClaw-managed media output: structured mediaUrl/mediaUrls
+// fields, or the OpenClaw `MEDIA:` reply convention inside the displayed text.
+// This is the signature of media tools that finished in the managed media/tmp
+// roots instead of the prepared task scope.
+func openClawTerminalMediaReferenceEvidence(payload map[string]any) bool {
+	if len(payload) == 0 {
+		return false
+	}
+	if strings.TrimSpace(shared.StringArg(payload, "mediaUrl", "")) != "" {
+		return true
+	}
+	if len(shared.ListArg(payload, "mediaUrls")) > 0 {
+		return true
+	}
+	for _, key := range []string{"message", "output", "summary"} {
+		if strings.Contains(shared.StringArg(payload, key, ""), "MEDIA:") {
+			return true
+		}
+	}
+	return false
 }
 
 func openClawTaskGetRequiresArtifactExport(params map[string]any, payload map[string]any) bool {
