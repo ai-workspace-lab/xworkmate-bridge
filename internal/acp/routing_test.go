@@ -3248,7 +3248,7 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 					})
 					return
 				}
-				if got, want := shared.StringArg(auth, "token", ""), bridgeSharedAuthToken(); got != want {
+				if got, want := shared.StringArg(auth, "token", ""), bridgeGatewayServiceToken(); got != want {
 					_ = conn.WriteJSON(map[string]any{
 						"type": "res",
 						"id":   id,

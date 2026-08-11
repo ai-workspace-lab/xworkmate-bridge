@@ -100,7 +100,6 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 			notify(shared.ErrorEnvelope(nil, -32700, err.Error()))
 			continue
 		}
-		request.Params = injectInboundAuthorizationHeader(request.Params, r.Header.Get("Authorization"))
 		response, rpcErr := s.handleRequest(request, notify)
 		if request.ID == nil {
 			continue
@@ -179,7 +178,6 @@ func (s *Server) handleRPCWithTransform(
 		shared.WriteJSONError(w, nil, http.StatusBadRequest, -32700, err.Error())
 		return
 	}
-	request.Params = injectInboundAuthorizationHeader(request.Params, r.Header.Get("Authorization"))
 	if transform != nil {
 		transformed, rpcErr := transform(request)
 		if rpcErr != nil {
@@ -583,15 +581,4 @@ func (s *Server) authorized(r *http.Request) bool {
 		return v.ValidateAuthorizationHeader(r.Header.Get("Authorization"))
 	}
 	return true
-}
-
-func injectInboundAuthorizationHeader(params map[string]any, authorization string) map[string]any {
-	if params == nil {
-		params = map[string]any{}
-	}
-	authorization = strings.TrimSpace(authorization)
-	if authorization != "" {
-		params["bridgeAuthorizationHeader"] = authorization
-	}
-	return params
 }

@@ -45,20 +45,13 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 
 func NewServer() *Server {
 	config := loadBridgeConfig()
-	authTokens := bridgeInboundAuthTokens()
-	authToken := ""
-	authExtraTokens := []string(nil)
-	if len(authTokens) > 0 {
-		authToken = authTokens[0]
-		authExtraTokens = authTokens[1:]
-	}
 	s := &Server{
 		sessions:       make(map[string]*session),
 		config:         config,
 		allowedOrigins: shared.ParseAllowedOrigins(shared.EnvOrDefault("ACP_ALLOWED_ORIGINS", "https://xworkmate.svc.plus,http://localhost:*,http://127.0.0.1:*")),
-		authService: service.NewStaticTokenAuthService(
-			authToken,
-			authExtraTokens...,
+		authService: service.NewCredentialTokenAuthService(
+			shared.EnvOrDefault("BRIDGE_ACCOUNTS_INTROSPECTION_URL", ""),
+			shared.EnvOrDefault("BRIDGE_ACCOUNTS_SERVICE_TOKEN", ""),
 		),
 		openClawGate: newOpenClawGatewayAdmissionGate(config),
 		taskRouter: newDistributedTaskRouter(distributedTaskRouterConfig{
