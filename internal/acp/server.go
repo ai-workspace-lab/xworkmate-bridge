@@ -4,7 +4,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -63,6 +65,20 @@ func NewServer() *Server {
 			Config: config,
 			Token:  resolveDistributedTaskForwardToken(config),
 		}),
+	}
+	if internalServiceToken := strings.TrimSpace(os.Getenv("INTERNAL_SERVICE_TOKEN")); internalServiceToken != "" {
+		conflictsWithPublicToken := false
+		for _, publicToken := range authTokens {
+			if internalServiceToken == publicToken {
+				conflictsWithPublicToken = true
+				break
+			}
+		}
+		if conflictsWithPublicToken {
+			log.Printf("level=error component=task_run_dispatch event=auth_disabled reason=internal_token_conflicts_with_public_token")
+		} else {
+			s.taskRunAuthService = service.NewStaticTokenAuthService(internalServiceToken)
+		}
 	}
 	s.Bootstrap()
 	return s

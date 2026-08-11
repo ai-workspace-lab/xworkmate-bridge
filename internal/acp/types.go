@@ -25,6 +25,10 @@ const (
 	TaskKindGateway     TaskKind = "gateway"
 )
 
+type authorizationHeaderValidator interface {
+	ValidateAuthorizationHeader(string) bool
+}
+
 type ControlPlaneSession struct {
 	ControlPlaneSessionID string
 	ThreadID              string
@@ -95,11 +99,13 @@ type Server struct {
 	orchestrator  *SessionOrchestrator
 	memoryService memory.Service
 
-	providerOrder []string
-	gateway       *gatewayruntime.Manager
-	openClawGate  *openClawGatewayAdmissionGate
-	jobs          *jobManager
-	taskRouter    *distributedTaskRouter
+	providerOrder      []string
+	gateway            *gatewayruntime.Manager
+	openClawGate       *openClawGatewayAdmissionGate
+	jobs               *jobManager
+	taskRouter         *distributedTaskRouter
+	taskRunDispatcher  *TaskRunDispatcher
+	taskRunAuthService authorizationHeaderValidator
 
 	// Legacy / Common
 	authService    interface{} // Minimal auth dependency
