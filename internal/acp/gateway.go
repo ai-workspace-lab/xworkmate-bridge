@@ -139,7 +139,7 @@ func applyProductionGatewayRouting(
 		TLS:  tls,
 		Path: parsed.EscapedPath(),
 	}
-	request.Auth.Token = bridgeSharedAuthToken()
+	request.Auth.Token = bridgeGatewayServiceToken()
 	request.Auth.Password = ""
 	request.ConnectAuthMode = "shared-token"
 	request.ConnectAuthFields = []string{"token"}
@@ -311,7 +311,7 @@ func connectOpenClawGateway(
 	clearBridgeGatewayDeviceToken()
 	request.Auth.DeviceToken = ""
 	request.HasDeviceToken = false
-	request.Auth.Token = bridgeSharedAuthToken()
+	request.Auth.Token = bridgeGatewayServiceToken()
 	request.HasSharedAuth = true
 	request.ConnectAuthMode = "shared-token"
 	request.ConnectAuthFields = []string{"token"}
@@ -320,7 +320,7 @@ func connectOpenClawGateway(
 }
 
 func shouldRetryOpenClawGatewayWithSharedToken(result gatewayruntime.ConnectResult) bool {
-	if result.OK || strings.TrimSpace(bridgeSharedAuthToken()) == "" {
+	if result.OK || strings.TrimSpace(bridgeGatewayServiceToken()) == "" {
 		return false
 	}
 	code := strings.ToUpper(strings.TrimSpace(shared.StringArg(result.Error, "code", "")))
