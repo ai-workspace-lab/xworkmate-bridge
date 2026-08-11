@@ -29,6 +29,7 @@
 | --- | --- | --- | --- |
 | `/` | `GET` | 否 | 纯文本运行状态 |
 | `/api/ping` | `GET` | 是 | 发布版本探针 |
+| `/api/internal/task-runs/dispatch` | `POST` | 内部服务 token | 受管 scheduler lease 到 ACP 的执行入口 |
 | `/acp` | `GET` + WebSocket upgrade | 是 | App-facing JSON-RPC WebSocket 主入口 |
 | `/acp/rpc` | `POST` | 是 | JSON-RPC HTTP fallback / CI / 调试入口 |
 | `/acp/rpc` | `OPTIONS` | 否 | CORS preflight |
@@ -43,6 +44,7 @@
 - `BRIDGE_AUTH_TOKEN`：旧主 token。没有 `AI_WORKSPACE_AUTH_TOKEN` 时继续生效并参与上游转发，用于存量租户兼容，直到 `AI_WORKSPACE_AUTH_TOKEN` 完成彻底替代后下线。
 - `BRIDGE_REVIEW_AUTH_TOKEN`（可选）：Apple review / beta 工测专用临时 token。清空该环境变量并重启/reload bridge 即可单独关停，不影响主 token。
 - `ACP_ALLOWED_ORIGINS`
+- `INTERNAL_SERVICE_TOKEN`：只用于受管 task-run dispatch；不接受 App/Web 用户 token 代替。
 
 规则：
 
@@ -54,7 +56,38 @@
 - 线上 Caddy 入口必须与 bridge origin 保持同一 token set：主 `AI_WORKSPACE_AUTH_TOKEN`、兼容 `BRIDGE_AUTH_TOKEN` 与可选 `BRIDGE_REVIEW_AUTH_TOKEN` 都应放行；无 token 仍返回 `401`
 - `xworkmate-app` 生产 Origin 固定为 `https://xworkmate.svc.plus`
 
-## 3.1 Lightweight Distributed Task Forwarding
+## 3.1 Managed Task-Run Dispatch
+
+`POST /api/internal/task-runs/dispatch` 是 Bridge-hosted scheduler/runtime 的内部边界，不属于 App-facing API：
+
+- 必须使用 `Authorization: Bearer $INTERNAL_SERVICE_TOKEN`；未配置 token，或它与任一 App-facing token 相同时 fail closed。
+- 请求不得携带 `Origin`，浏览器调用固定拒绝。
+- `taskRunId + accountId + namespaceId + sessionId + threadId + fence + leaseToken + leaseExpiresAt` 由受管 scheduler 签发；MVP 要求 `threadId == sessionId`。
+- Bridge 在调用 ACP 前通过 `TaskRunLeaseVerifier` 对 Bridge-hosted repository 做 account/namespace/session 与有效 lease 条件校验。
+- 用户 params 中出现冲突身份、lease 字段或 multi-agent 编排字段时拒绝执行。
+- callback writer 必须按 `taskRunId + fence + leaseToken + leaseExpiresAt` 条件更新；旧 fence、错误 token 和过期 lease 返回冲突，不写终态。
+- callback 仅含轻量状态、消息、错误摘要和 opaque `bridgeTaskRef`；不包含 artifact、附件正文、base64 或工具日志。
+
+最小请求：
+
+```json
+{
+  "taskRunId": "run-uuid",
+  "accountId": "account-uuid",
+  "namespaceId": "namespace-uuid",
+  "sessionId": "session-uuid",
+  "threadId": "session-uuid",
+  "fence": 1,
+  "leaseToken": "opaque-secret",
+  "leaseExpiresAt": "2026-08-11T12:00:00Z",
+  "method": "session.message",
+  "params": {
+    "taskPrompt": "continue the shared task"
+  }
+}
+```
+
+## 3.2 Lightweight Distributed Task Forwarding
 
 bridge 可以把本机收到的 HTTP 任务提交转发到另一个 bridge endpoint，用于轻量分布式部署。当前实现是一个静态 task router，不做自动发现，不依赖 config center：
 

@@ -43,6 +43,8 @@ func (s *Server) Handler() http.Handler {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write(body)
+		case "/api/internal/task-runs/dispatch":
+			s.HandleTaskRunDispatch(w, r)
 		case "/acp/rpc":
 			s.HandleRPC(w, r)
 		case "/acp":

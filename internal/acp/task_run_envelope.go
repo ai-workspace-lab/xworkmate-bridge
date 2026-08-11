@@ -1,8 +1,10 @@
 package acp
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 )
@@ -16,14 +18,14 @@ var (
 // to a bridge executor. Client-provided routing metadata is never authoritative
 // once this envelope has been accepted.
 type TaskRunEnvelope struct {
-	TaskRunID      string
-	AccountID      string
-	NamespaceID    string
-	SessionID      string
-	ThreadID       string
-	Fence          int64
-	LeaseToken     string
-	LeaseExpiresAt time.Time
+	TaskRunID      string    `json:"taskRunId"`
+	AccountID      string    `json:"accountId"`
+	NamespaceID    string    `json:"namespaceId"`
+	SessionID      string    `json:"sessionId"`
+	ThreadID       string    `json:"threadId"`
+	Fence          int64     `json:"fence"`
+	LeaseToken     string    `json:"leaseToken"`
+	LeaseExpiresAt time.Time `json:"leaseExpiresAt"`
 }
 
 func (e TaskRunEnvelope) Validate(now time.Time) error {
@@ -48,30 +50,111 @@ func (e TaskRunEnvelope) EnrichParams(params map[string]any, now time.Time) (map
 	if err := e.Validate(now); err != nil {
 		return nil, err
 	}
-	result := make(map[string]any, len(params)+2)
+	for key, expected := range map[string]string{
+		"taskRunId":   e.TaskRunID,
+		"accountId":   e.AccountID,
+		"namespaceId": e.NamespaceID,
+		"sessionId":   e.SessionID,
+		"threadId":    e.ThreadID,
+	} {
+		if err := validateTaskRunStringIdentity(params, key, expected); err != nil {
+			return nil, err
+		}
+	}
+	if err := validateTaskRunFence(params, "fence", e.Fence); err != nil {
+		return nil, err
+	}
+	for _, key := range []string{"leaseToken", "leaseExpiresAt"} {
+		if _, exists := params[key]; exists {
+			return nil, fmt.Errorf("%w: %s is reserved for the managed lease", ErrTaskRunEnvelopeInvalid, key)
+		}
+	}
+
+	result := make(map[string]any, len(params)+6)
 	for key, value := range params {
 		result[key] = value
 	}
-	if sessionID, ok := result["sessionId"].(string); ok && strings.TrimSpace(sessionID) != "" && sessionID != e.SessionID {
-		return nil, fmt.Errorf("%w: sessionId does not match task run", ErrTaskRunEnvelopeInvalid)
-	}
-	if threadID, ok := result["threadId"].(string); ok && strings.TrimSpace(threadID) != "" && threadID != e.ThreadID {
-		return nil, fmt.Errorf("%w: threadId does not match task run", ErrTaskRunEnvelopeInvalid)
-	}
+	result["taskRunId"] = e.TaskRunID
+	result["accountId"] = e.AccountID
 	result["sessionId"] = e.SessionID
 	result["threadId"] = e.ThreadID
 	result["namespaceId"] = e.NamespaceID
+	result["fence"] = e.Fence
 	metadata := map[string]any{}
-	if existing, ok := result["metadata"].(map[string]any); ok {
+	if raw, exists := result["metadata"]; exists {
+		existing, ok := raw.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("%w: metadata must be an object", ErrTaskRunEnvelopeInvalid)
+		}
 		for key, value := range existing {
 			metadata[key] = value
 		}
+	}
+	for key, expected := range map[string]string{
+		"xworkmateTaskRunId":   e.TaskRunID,
+		"xworkmateAccountId":   e.AccountID,
+		"xworkmateNamespaceId": e.NamespaceID,
+	} {
+		if err := validateTaskRunStringIdentity(metadata, key, expected); err != nil {
+			return nil, err
+		}
+	}
+	if err := validateTaskRunFence(metadata, "xworkmateFence", e.Fence); err != nil {
+		return nil, err
+	}
+	if _, exists := metadata["xworkmateLeaseToken"]; exists {
+		return nil, fmt.Errorf("%w: lease token must not cross the ACP boundary", ErrTaskRunEnvelopeInvalid)
 	}
 	metadata["xworkmateTaskRunId"] = e.TaskRunID
 	metadata["xworkmateAccountId"] = e.AccountID
 	metadata["xworkmateNamespaceId"] = e.NamespaceID
 	metadata["xworkmateFence"] = e.Fence
-	metadata["xworkmateLeaseToken"] = e.LeaseToken
+	metadata["xworkmateLeaseExpiresAt"] = e.LeaseExpiresAt.UTC().Format(time.RFC3339Nano)
 	result["metadata"] = metadata
 	return result, nil
+}
+
+func validateTaskRunStringIdentity(values map[string]any, key string, expected string) error {
+	value, exists := values[key]
+	if !exists {
+		return nil
+	}
+	actual, ok := value.(string)
+	if !ok || strings.TrimSpace(actual) != expected {
+		return fmt.Errorf("%w: %s does not match the managed task run", ErrTaskRunEnvelopeInvalid, key)
+	}
+	return nil
+}
+
+func validateTaskRunFence(values map[string]any, key string, expected int64) error {
+	value, exists := values[key]
+	if !exists {
+		return nil
+	}
+	actual, ok := taskRunInt64(value)
+	if !ok || actual != expected {
+		return fmt.Errorf("%w: %s does not match the managed task run", ErrTaskRunEnvelopeInvalid, key)
+	}
+	return nil
+}
+
+func taskRunInt64(value any) (int64, bool) {
+	switch typed := value.(type) {
+	case int:
+		return int64(typed), true
+	case int32:
+		return int64(typed), true
+	case int64:
+		return typed, true
+	case float64:
+		if math.Trunc(typed) != typed || typed > math.MaxInt64 || typed < math.MinInt64 {
+			return 0, false
+		}
+		return int64(typed), true
+	case json.Number:
+		parsed, err := typed.Int64()
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
 }
