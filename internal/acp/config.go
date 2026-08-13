@@ -129,10 +129,6 @@ func bridgePublicAuthToken() string {
 	return strings.TrimSpace(os.Getenv("BRIDGE_AUTH_TOKEN"))
 }
 
-func bridgeSharedAuthToken() string {
-	return bridgePublicAuthToken()
-}
-
 func resolveDistributedTaskForwardToken(config *BridgeConfig) string {
 	if token := strings.TrimSpace(os.Getenv("XWORKMATE_BRIDGE_TASK_FORWARD_TOKEN")); token != "" {
 		return token
