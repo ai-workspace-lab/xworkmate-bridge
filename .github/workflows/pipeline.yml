@@ -68,10 +68,19 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$EVENT_NAME" == workflow_dispatch ]]; then environment="$INPUT_ENVIRONMENT"
+          elif [[ "$EVENT_NAME" == pull_request ]]; then
+            # Pull requests build and test only; no UAT/prod deployment profile
+            # is required and repository variables are intentionally unavailable
+            # to forked PRs. Use non-deploying placeholders for downstream jobs.
+            environment=uat
+            target_host="pr"
+            bridge_server_url="http://127.0.0.1:8787"
           elif [[ "$REF" == refs/heads/main ]]; then environment=uat
           elif [[ "$REF" == refs/heads/release/* || "$REF" == refs/tags/v* ]]; then environment=prod
           else echo "::error::No deployment profile for $REF"; exit 1; fi
-          if [[ "$environment" == uat ]]; then
+          if [[ "$EVENT_NAME" == pull_request ]]; then
+            : # placeholders already set above; deployment steps are skipped.
+          elif [[ "$environment" == uat ]]; then
             target_host="${INPUT_TARGET_HOST:-$UAT_TARGET_HOST}"
             bridge_server_url="$UAT_BRIDGE_SERVER_URL"
           else
@@ -252,4 +261,3 @@ jobs:
         with:
           name: ${{ steps.binary_artifact_meta.outputs.binary_artifact_name }}
           path: dist/native-binary/xworkmate-bridge
-
