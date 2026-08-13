@@ -109,7 +109,28 @@ func resolveURL(yamlVal string, envKeys ...string) string {
 }
 
 func bridgeUpstreamAuthorizationHeader() string {
-	return strings.TrimSpace(os.Getenv("UPSTREAM_AUTHORIZATION_HEADER"))
+	if explicit := strings.TrimSpace(os.Getenv("UPSTREAM_AUTHORIZATION_HEADER")); explicit != "" {
+		return explicit
+	}
+	token := bridgePublicAuthToken()
+	if token != "" && !strings.HasPrefix(strings.ToLower(token), "bearer ") {
+		return "Bearer " + token
+	}
+	return token
+}
+
+// bridgePublicAuthToken is retained for provider/upstream compatibility. It
+// is separate from Accounts credential introspection, which authenticates
+// inbound app requests when BRIDGE_ACCOUNTS_INTROSPECTION_URL is configured.
+func bridgePublicAuthToken() string {
+	if token := strings.TrimSpace(os.Getenv("AI_WORKSPACE_AUTH_TOKEN")); token != "" {
+		return token
+	}
+	return strings.TrimSpace(os.Getenv("BRIDGE_AUTH_TOKEN"))
+}
+
+func bridgeSharedAuthToken() string {
+	return bridgePublicAuthToken()
 }
 
 func resolveDistributedTaskForwardToken(config *BridgeConfig) string {
@@ -128,9 +149,13 @@ func resolveDistributedTaskForwardToken(config *BridgeConfig) string {
 }
 
 // bridgeGatewayServiceToken is only for bridge-to-OpenClaw service traffic.
-// It is distinct from user credentials and has no fallback to user tokens.
+// A dedicated token wins. The legacy public-token fallback is retained only
+// for standalone/dev deployments; UAT config supplies a dedicated value.
 func bridgeGatewayServiceToken() string {
-	return strings.TrimSpace(os.Getenv("OPENCLAW_GATEWAY_SERVICE_TOKEN"))
+	if token := strings.TrimSpace(os.Getenv("OPENCLAW_GATEWAY_SERVICE_TOKEN")); token != "" {
+		return token
+	}
+	return bridgePublicAuthToken()
 }
 
 func defaultDistributedNodes() []DistributedNodeConfig {
