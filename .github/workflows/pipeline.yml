@@ -227,7 +227,7 @@ jobs:
           file: Dockerfile
           platforms: linux/amd64
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.service_ref.outputs.image_ref }}
+          tags: ${{ steps.service_ref.outputs.image_refs }}
           build-args: |
             BUILD_COMMIT=${{ github.sha }}
             BUILD_DATE=${{ github.event.head_commit.timestamp || github.event.repository.pushed_at }}
