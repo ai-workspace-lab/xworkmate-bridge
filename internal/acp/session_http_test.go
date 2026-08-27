@@ -7,15 +7,12 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-
-	"xworkmate-bridge/internal/service"
 )
 
 func newTaskSessionProxyTestServer(upstreamURL string) *Server {
 	return &Server{
 		accountsSessionAPIURL: upstreamURL,
 		accountsSessionClient: newAccountsSessionProxyClient(),
-		authService:           service.NewStaticTokenAuthService("bridge-token"),
 	}
 }
 
@@ -24,7 +21,7 @@ func TestTaskSessionProxyForwardsCompatibleRequestAndResponse(t *testing.T) {
 		if r.Method != http.MethodPost || r.URL.Path != "/accounts/api/v1/sessions/session-1/messages" || r.URL.RawQuery != "source=portal" {
 			t.Fatalf("upstream request = %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
 		}
-		if got := r.Header.Get("Authorization"); got != "Bearer bridge-token" {
+		if got := r.Header.Get("Authorization"); got != "Bearer account-session-token" {
 			t.Fatalf("Authorization = %q", got)
 		}
 		if got := r.Header.Get("Cookie"); got != "" {
@@ -49,7 +46,7 @@ func TestTaskSessionProxyForwardsCompatibleRequestAndResponse(t *testing.T) {
 
 	server := newTaskSessionProxyTestServer(upstream.URL + "/accounts")
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/sessions/session-1/messages?source=portal", strings.NewReader(`{"clientRequestId":"request-1","text":"hello"}`))
-	request.Header.Set("Authorization", "Bearer bridge-token")
+	request.Header.Set("Authorization", "Bearer account-session-token")
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Cookie", "portal-session=secret")
 	request.Header.Set("X-Service-Token", "must-not-forward")
@@ -107,7 +104,7 @@ func TestTaskSessionProxyRejectsUnconfiguredUpstream(t *testing.T) {
 	}
 }
 
-func TestTaskSessionProxyRequiresExistingBridgeAuthorization(t *testing.T) {
+func TestTaskSessionProxyRequiresBearerAuthorization(t *testing.T) {
 	var calls atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		calls.Add(1)
@@ -121,6 +118,26 @@ func TestTaskSessionProxyRequiresExistingBridgeAuthorization(t *testing.T) {
 
 	if response.Code != http.StatusUnauthorized || calls.Load() != 0 {
 		t.Fatalf("status/calls = %d/%d", response.Code, calls.Load())
+	}
+}
+
+func TestTaskSessionProxyDoesNotIntrospectAccountsBearer(t *testing.T) {
+	var authorization string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authorization = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"namespaces":[]}`))
+	}))
+	defer upstream.Close()
+	server := newTaskSessionProxyTestServer(upstream.URL)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/namespaces", nil)
+	request.Header.Set("Authorization", "Bearer accounts-session-token")
+	response := httptest.NewRecorder()
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || authorization != "Bearer accounts-session-token" {
+		t.Fatalf("status/authorization = %d/%q", response.Code, authorization)
 	}
 }
 

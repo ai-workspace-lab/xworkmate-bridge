@@ -40,7 +40,7 @@ func (s *Server) handleTaskSessionAPI(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if !s.authorized(r) {
+	if !taskSessionBearerPresent(r.Header.Get("Authorization")) {
 		writeTaskSessionProxyError(w, http.StatusUnauthorized, "missing_bearer_authorization", "missing bearer authorization")
 		return
 	}
@@ -112,6 +112,14 @@ func (s *Server) handleTaskSessionAPI(w http.ResponseWriter, r *http.Request) {
 			log.Printf("level=error component=session_proxy event=response_limit_probe_failed path=%q error=%q", r.URL.Path, readErr)
 		}
 	}
+}
+
+func taskSessionBearerPresent(header string) bool {
+	header = strings.TrimSpace(header)
+	if len(header) < len("Bearer ") || !strings.EqualFold(header[:len("Bearer ")], "Bearer ") {
+		return false
+	}
+	return strings.TrimSpace(header[len("Bearer "):]) != ""
 }
 
 func taskSessionProxyRouteAllowed(method, path string) bool {
