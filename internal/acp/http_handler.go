@@ -257,7 +257,6 @@ func (s *Server) handleRPCWithTransform(
 	defer streamWriter.close()
 
 	response, rpcErr := s.handleRequest(request, writeNotification)
-	s.recordTaskSessionRPCUpdate(r, request, response, rpcErr)
 	stopKeepalive()
 	if request.ID == nil {
 		if stream {

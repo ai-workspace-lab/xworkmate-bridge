@@ -34,7 +34,7 @@ func TestNewServerUsesAccountsCredentialIntrospection(t *testing.T) {
 			t.Fatalf("service token = %q, want accounts-service-token", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"active":true,"accountId":"account-1"}`))
+		_, _ = w.Write([]byte(`{"active":true}`))
 	}))
 	defer introspection.Close()
 

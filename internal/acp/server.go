@@ -1,7 +1,6 @@
 package acp
 
 import (
-	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,7 +11,6 @@ import (
 	"time"
 
 	"xworkmate-bridge/internal/service"
-	"xworkmate-bridge/internal/sessionstore"
 	"xworkmate-bridge/internal/shared"
 )
 
@@ -25,19 +23,7 @@ func Serve(args []string) error {
 	)
 	_ = flags.Parse(args)
 
-	store, err := sessionstore.OpenFromEnv(context.Background())
-	if err != nil {
-		return err
-	}
-	if store != nil {
-		defer func() {
-			if err := store.Close(); err != nil {
-				log.Printf("level=error component=session_store event=close_failed error=%q", err)
-			}
-		}()
-	}
 	server := NewServer()
-	server.sessionStore = store
 	httpServer := newHTTPServer(strings.TrimSpace(*listen), server.Handler())
 
 	if err := httpServer.ListenAndServe(); err != nil &&
@@ -82,11 +68,13 @@ func NewServer() *Server {
 		authService = service.NewStaticTokenAuthService(expected, extras...)
 	}
 	s := &Server{
-		sessions:       make(map[string]*session),
-		config:         config,
-		allowedOrigins: shared.ParseAllowedOrigins(shared.EnvOrDefault("ACP_ALLOWED_ORIGINS", "https://xworkmate.svc.plus,http://localhost:*,http://127.0.0.1:*")),
-		authService:    authService,
-		openClawGate:   newOpenClawGatewayAdmissionGate(config),
+		sessions:              make(map[string]*session),
+		config:                config,
+		accountsSessionAPIURL: strings.TrimRight(strings.TrimSpace(os.Getenv("BRIDGE_ACCOUNTS_SESSION_API_URL")), "/"),
+		accountsSessionClient: newAccountsSessionProxyClient(),
+		allowedOrigins:        shared.ParseAllowedOrigins(shared.EnvOrDefault("ACP_ALLOWED_ORIGINS", "https://xworkmate.svc.plus,http://localhost:*,http://127.0.0.1:*")),
+		authService:           authService,
+		openClawGate:          newOpenClawGatewayAdmissionGate(config),
 		taskRouter: newDistributedTaskRouter(distributedTaskRouterConfig{
 			Config: config,
 			Token:  resolveDistributedTaskForwardToken(config),

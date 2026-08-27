@@ -11,8 +11,9 @@
 
 ## Shared task sessions (`/api/v1`)
 
-All routes use existing Bearer authentication. The verified `accountId` comes
-only from Accounts introspection.
+All routes use existing Bearer authentication. Bridge forwards the
+`Authorization` header, query string, and JSON body to the explicitly configured
+Accounts session API without storing or interpreting session state.
 
 - `GET /api/v1/namespaces` returns `{ "namespaces": [...] }`.
 - `GET /api/v1/namespaces/{namespaceId}/sessions` returns `{ "sessions": [...] }`.
@@ -26,10 +27,15 @@ Snapshots contain `sessionId`, `namespaceId`, `snapshotVersion`,
 RFC 3339 timestamps. Events contain `seq`, `type`, `payload`, and `createdAt`,
 are strictly ordered by `seq`, and use `payload.schemaVersion: 1`.
 
-Message append returns `{sessionId, namespaceId, snapshotVersion, event,
-taskRun}` with `201`. Retrying a `clientRequestId` returns the original result
-with `200`. Unknown fields are rejected. Errors have the stable nested shape
-`{ "error": { "code": "...", "message": "..." } }`.
+Accounts preserves response shapes, ordered replay, and message idempotency.
+Bridge permits only the methods and paths listed above, requires JSON for POST,
+caps requests at 128 KiB and responses at 4 MiB, suppresses response caching,
+and does not follow redirects. Configure `BRIDGE_ACCOUNTS_SESSION_API_URL`; if
+it is absent or invalid, these routes return `503` while ACP stays available.
+Bridge-local proxy errors use `{ "error": { "code": "...", "message": "..." } }`.
+
+ACP run completion is persisted by Accounts/scheduler callbacks. The Bridge
+does not maintain a session database or write ACP results to local state.
 
 ## 1. Runtime Entry Points
 
@@ -52,6 +58,7 @@ with `200`. Unknown fields are rejected. Errors have the stable nested shape
 | `/` | `GET` | 否 | 纯文本运行状态 |
 | `/api/ping` | `GET` | 是 | 发布版本探针 |
 | `/api/internal/task-runs/dispatch` | `POST` | 内部服务 token | 受管 scheduler lease 到 ACP 的执行入口 |
+| `/api/v1/namespaces`、`/api/v1/sessions/*` | `GET` / `POST`（白名单） | 是 | 无状态转发到 Accounts session API |
 | `/acp` | `GET` + WebSocket upgrade | 是 | App-facing JSON-RPC WebSocket 主入口 |
 | `/acp/rpc` | `POST` | 是 | JSON-RPC HTTP fallback / CI / 调试入口 |
 | `/acp/rpc` | `OPTIONS` | 否 | CORS preflight |
@@ -67,6 +74,7 @@ with `200`. Unknown fields are rejected. Errors have the stable nested shape
 - `BRIDGE_REVIEW_AUTH_TOKEN`（可选）：Apple review / beta 工测专用临时 token。清空该环境变量并重启/reload bridge 即可单独关停，不影响主 token。
 - `ACP_ALLOWED_ORIGINS`
 - `INTERNAL_SERVICE_TOKEN`：只用于受管 task-run dispatch；不接受 App/Web 用户 token 代替。
+- `BRIDGE_ACCOUNTS_SESSION_API_URL`：Accounts task-session API 的明确 origin/base path；Bridge 不提供默认值。
 
 规则：
 

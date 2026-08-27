@@ -26,23 +26,23 @@ It is not a global ACP base endpoint.
 
 ## Shared task sessions
 
-The Bridge owns durable cross-terminal task/session state. Set
-`XWORKMATE_SESSION_DATABASE_URL` to a PostgreSQL connection string when
-starting `xworkmate-bridge serve`. Startup verifies the connection and applies
-the embedded schema before accepting traffic. If the variable is not set, ACP
-forwarding remains available and the `/api/v1/*` task-session routes return
-`503 session_store_unavailable`.
+Accounts owns durable cross-terminal task/session state. Bridge keeps the
+client-compatible `/api/v1` surface as a stateless, bounded streaming proxy.
+Set `BRIDGE_ACCOUNTS_SESSION_API_URL` to the Accounts origin (and optional base
+path), for example `https://accounts.svc.plus`. Bridge appends the incoming
+`/api/v1/...` path and query verbatim. If the variable is absent or invalid,
+ACP forwarding remains available and task-session routes return `503`.
 
 The session API exposes namespace listing, session create/list/snapshot,
 ordered event replay, and idempotent message append under `/api/v1`. Every
-route requires the existing Bearer credential. Accounts introspection must
-return `{"active":true,"accountId":"..."}`; the Bridge never accepts an
-account ID from request data, and ownership mismatches return `404`.
+route requires the existing Bearer credential. Bridge preserves its current
+public authentication check, forwards `Authorization` to Accounts, and never
+derives or accepts account identity from request data.
 
-PostgreSQL stores session metadata, ordered events, allowlisted text message
-context, and task-run state. It does not store or proxy artifact bytes,
-artifact content, attachments, file/path fields, download URLs, base64 data,
-working directories, tool logs, or generic ACP request/result payloads.
+Bridge does not store, cache, migrate, or persist session data or artifacts.
+Accounts owns snapshots, ordered events, message idempotency, and task-run
+state. Scheduler/Accounts callbacks persist ACP execution results; Bridge does
+not write execution state locally.
 
 Architecture topology: [docs/architecture/acp-forwarding-topology.md](/Users/shenlan/workspaces/cloud-neutral-toolkit/xworkmate-bridge/docs/architecture/acp-forwarding-topology.md)
 

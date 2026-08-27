@@ -1,12 +1,12 @@
 package acp
 
 import (
+	"net/http"
 	"sync"
 	"time"
 
 	"xworkmate-bridge/internal/gatewayruntime"
 	"xworkmate-bridge/internal/memory"
-	"xworkmate-bridge/internal/sessionstore"
 )
 
 type TaskState string
@@ -109,7 +109,8 @@ type Server struct {
 	taskRunAuthService authorizationHeaderValidator
 
 	// Legacy / Common
-	authService    interface{} // Minimal auth dependency
-	allowedOrigins []string
-	sessionStore   sessionstore.Store
+	authService           interface{} // Minimal auth dependency
+	allowedOrigins        []string
+	accountsSessionAPIURL string
+	accountsSessionClient *http.Client
 }
