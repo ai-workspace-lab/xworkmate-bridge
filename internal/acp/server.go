@@ -1,6 +1,7 @@
 package acp
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"xworkmate-bridge/internal/service"
+	"xworkmate-bridge/internal/sessionstore"
 	"xworkmate-bridge/internal/shared"
 )
 
@@ -23,7 +25,19 @@ func Serve(args []string) error {
 	)
 	_ = flags.Parse(args)
 
+	store, err := sessionstore.OpenFromEnv(context.Background())
+	if err != nil {
+		return err
+	}
+	if store != nil {
+		defer func() {
+			if err := store.Close(); err != nil {
+				log.Printf("level=error component=session_store event=close_failed error=%q", err)
+			}
+		}()
+	}
 	server := NewServer()
+	server.sessionStore = store
 	httpServer := newHTTPServer(strings.TrimSpace(*listen), server.Handler())
 
 	if err := httpServer.ListenAndServe(); err != nil &&

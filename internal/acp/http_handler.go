@@ -22,6 +22,10 @@ const openClawGatewayMaxNotificationBytes = 64 * 1024
 
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/") {
+			s.handleTaskSessionAPI(w, r)
+			return
+		}
 		switch r.URL.Path {
 		case "/":
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -253,6 +257,7 @@ func (s *Server) handleRPCWithTransform(
 	defer streamWriter.close()
 
 	response, rpcErr := s.handleRequest(request, writeNotification)
+	s.recordTaskSessionRPCUpdate(r, request, response, rpcErr)
 	stopKeepalive()
 	if request.ID == nil {
 		if stream {

@@ -9,6 +9,28 @@
 - `POST /acp/rpc` 作为 CI、脚本、调试、HTTP fallback 和 OpenClaw gateway task submit 入口
 - `/acp-server/*` 不属于 APP-facing contract，APP 不应保存或拼接这些 provider direct path
 
+## Shared task sessions (`/api/v1`)
+
+All routes use existing Bearer authentication. The verified `accountId` comes
+only from Accounts introspection.
+
+- `GET /api/v1/namespaces` returns `{ "namespaces": [...] }`.
+- `GET /api/v1/namespaces/{namespaceId}/sessions` returns `{ "sessions": [...] }`.
+- `POST /api/v1/namespaces/{namespaceId}/sessions` accepts `{ "title": "optional" }` and returns a snapshot (`201`).
+- `GET /api/v1/sessions/{sessionId}` returns the snapshot.
+- `GET /api/v1/sessions/{sessionId}/events?after_seq=0&limit=100` returns `{ "events": [...], "lastEventSeq": n }`.
+- `POST /api/v1/sessions/{sessionId}/messages` accepts `clientRequestId`, `text`, and optional `run.priority`/`run.notBefore`.
+
+Snapshots contain `sessionId`, `namespaceId`, `snapshotVersion`,
+`lastEventSeq`, `lifecycleState`, allowlisted `context`, optional `taskRun`, and
+RFC 3339 timestamps. Events contain `seq`, `type`, `payload`, and `createdAt`,
+are strictly ordered by `seq`, and use `payload.schemaVersion: 1`.
+
+Message append returns `{sessionId, namespaceId, snapshotVersion, event,
+taskRun}` with `201`. Retrying a `clientRequestId` returns the original result
+with `200`. Unknown fields are rejected. Errors have the stable nested shape
+`{ "error": { "code": "...", "message": "..." } }`.
+
 ## 1. Runtime Entry Points
 
 二进制入口定义在 [main.go](../main.go)。

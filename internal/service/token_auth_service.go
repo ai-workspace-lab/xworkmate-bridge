@@ -1,6 +1,11 @@
 package service
 
-import "strings"
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"strings"
+)
 
 type StaticTokenAuthService struct {
 	expectedTokens map[string]struct{}
@@ -41,4 +46,14 @@ func (s *StaticTokenAuthService) ValidateAuthorizationHeader(header string) bool
 		return false
 	}
 	return s.ValidateToken(strings.TrimSpace(header[len("Bearer "):]))
+}
+
+// ResolveAuthorizationHeader provides a stable development-only account scope
+// without retaining the static token. Production identity comes from Accounts.
+func (s *StaticTokenAuthService) ResolveAuthorizationHeader(_ context.Context, header string) (AuthorizationPrincipal, error) {
+	if !s.ValidateAuthorizationHeader(header) {
+		return AuthorizationPrincipal{}, ErrAuthorizationPrincipalUnavailable
+	}
+	digest := sha256.Sum256([]byte(strings.TrimSpace(header)))
+	return AuthorizationPrincipal{AccountID: "static-" + hex.EncodeToString(digest[:])}, nil
 }

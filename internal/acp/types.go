@@ -6,6 +6,7 @@ import (
 
 	"xworkmate-bridge/internal/gatewayruntime"
 	"xworkmate-bridge/internal/memory"
+	"xworkmate-bridge/internal/sessionstore"
 )
 
 type TaskState string
@@ -110,4 +111,5 @@ type Server struct {
 	// Legacy / Common
 	authService    interface{} // Minimal auth dependency
 	allowedOrigins []string
+	sessionStore   sessionstore.Store
 }
