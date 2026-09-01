@@ -39,7 +39,10 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pipeline-${{ github.ref }}
+  # A tag snapshot creates a push run and the snapshot orchestrator also
+  # dispatches this workflow explicitly. Keep those trigger types in separate
+  # concurrency groups so one cannot cancel the other before CI completes.
+  group: pipeline-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 defaults:
