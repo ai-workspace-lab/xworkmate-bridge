@@ -192,9 +192,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      # GitHub occasionally drops the OIDC-token request before Vault sees it.
+      # A second independent action invocation is safe (the JWT is short-lived)
+      # and prevents a transient socket reset from blocking an immutable release.
       - name: Load Vault secrets
-        id: vault
+        id: vault_primary
+        continue-on-error: true
         if: ${{ github.event_name != 'pull_request' }}
+        uses: hashicorp/vault-action@v2
+        with:
+          url: ${{ env.VAULT_ADDR }}
+          method: jwt
+          role: github-actions-xworkmate-bridge
+          jwtGithubAudience: vault
+          ignoreNotFound: true
+          secrets: |
+            kv/data/github-actions/xworkmate-bridge GHCR_TOKEN | GHCR_TOKEN
+
+      - name: Retry Vault secrets after OIDC transport failure
+        id: vault_retry
+        if: ${{ github.event_name != 'pull_request' && steps.vault_primary.outcome == 'failure' }}
         uses: hashicorp/vault-action@v2
         with:
           url: ${{ env.VAULT_ADDR }}
@@ -217,7 +234,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ vars.GHCR_USERNAME || github.repository_owner }}
-          password: ${{ steps.vault.outputs.GHCR_TOKEN || github.token }}
+          password: ${{ steps.vault_primary.outputs.GHCR_TOKEN || steps.vault_retry.outputs.GHCR_TOKEN || github.token }}
 
       - name: Resolve service image ref
         id: service_ref
