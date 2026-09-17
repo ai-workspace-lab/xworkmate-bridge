@@ -44,6 +44,20 @@ Accounts owns snapshots, ordered events, message idempotency, and task-run
 state. Scheduler/Accounts callbacks persist ACP execution results; Bridge does
 not write execution state locally.
 
+## Agent context ingest (one-way)
+
+`POST /api/v1/agent/ingest` forwards extracted agent session facts (goal, plan,
+next action, decisions, pitfalls, verification results, repo-relative paths)
+from web/mobile clients to QMD, which owns the shared task context schema and
+merge rules. The route is write-only: Bridge exposes no way to read shared
+context back, stores nothing, and never forwards artifacts.
+
+Set `BRIDGE_QMD_INGEST_API_URL` to the QMD HTTP origin (for example
+`http://127.0.0.1:8181`) and `BRIDGE_QMD_INGEST_TOKEN` to QMD's
+`QMD_INGEST_TOKEN`. Callers authenticate to Bridge with the existing Bearer
+credential; Bridge replaces it with the QMD credential when forwarding. If
+either variable is missing the route returns `503`.
+
 Architecture topology: [docs/architecture/acp-forwarding-topology.md](/Users/shenlan/workspaces/cloud-neutral-toolkit/xworkmate-bridge/docs/architecture/acp-forwarding-topology.md)
 
 ADR for the unified APP-facing bridge contract: [docs/architecture/adr-unified-bridge-entrypoints.md](/Users/shenlan/workspaces/cloud-neutral-toolkit/xworkmate-bridge/docs/architecture/adr-unified-bridge-entrypoints.md)
