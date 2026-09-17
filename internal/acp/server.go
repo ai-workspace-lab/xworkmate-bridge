@@ -75,6 +75,8 @@ func NewServer() *Server {
 		qmdIngestAPIURL:       strings.TrimRight(strings.TrimSpace(os.Getenv("BRIDGE_QMD_INGEST_API_URL")), "/"),
 		qmdIngestToken:        strings.TrimSpace(os.Getenv("BRIDGE_QMD_INGEST_TOKEN")),
 		qmdIngestClient:       newQMDIngestClient(),
+		qmdMCPToken:           strings.TrimSpace(os.Getenv("BRIDGE_QMD_MCP_TOKEN")),
+		qmdMCPClient:          newQMDMCPClient(),
 		allowedOrigins:        shared.ParseAllowedOrigins(shared.EnvOrDefault("ACP_ALLOWED_ORIGINS", "https://xworkmate.svc.plus,http://localhost:*,http://127.0.0.1:*")),
 		authService:           authService,
 		openClawGate:          newOpenClawGatewayAdmissionGate(config),

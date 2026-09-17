@@ -44,19 +44,24 @@ Accounts owns snapshots, ordered events, message idempotency, and task-run
 state. Scheduler/Accounts callbacks persist ACP execution results; Bridge does
 not write execution state locally.
 
-## Agent context ingest (one-way)
+## Agent task context (two-way, via QMD)
 
-`POST /api/v1/agent/ingest` forwards extracted agent session facts (goal, plan,
-next action, decisions, pitfalls, verification results, repo-relative paths)
-from web/mobile clients to QMD, which owns the shared task context schema and
-merge rules. The route is write-only: Bridge exposes no way to read shared
-context back, stores nothing, and never forwards artifacts.
+Every client — ChatGPT / Claude web and mobile extensions and CLI / APP plugins
+(Claude Code, Codex, Antigravity, OpenCode) — syncs shared agent task context
+both ways through Bridge. QMD owns the schema and merge rules; Bridge
+authenticates the caller, forwards allowlisted routes with QMD's own credential,
+and stores nothing.
 
-Set `BRIDGE_QMD_INGEST_API_URL` to the QMD HTTP origin (for example
-`http://127.0.0.1:8181`) and `BRIDGE_QMD_INGEST_TOKEN` to QMD's
-`QMD_INGEST_TOKEN`. Callers authenticate to Bridge with the existing Bearer
-credential; Bridge replaces it with the QMD credential when forwarding. If
-either variable is missing the route returns `503`.
+- Submit session facts: `POST /api/v1/agent/ingest`
+- Read tasks, lists and shared memory: `GET /api/v1/agent/catalog`, `/threads`,
+  `/threads/{id}/briefing`, `/memory`, `/sync` (paged by QMD)
+- Remote mode MCP: `POST|GET|DELETE /api/v1/agent/mcp` passes MCP Streamable HTTP
+  through to QMD's `/mcp`
+
+Configuration: `BRIDGE_QMD_INGEST_API_URL` is the QMD HTTP origin (for example
+`http://127.0.0.1:8181`); `BRIDGE_QMD_INGEST_TOKEN` must equal QMD's
+`QMD_INGEST_TOKEN` (ingest and read routes); `BRIDGE_QMD_MCP_TOKEN` must equal
+QMD's `QMD_MCP_TOKEN` (MCP passthrough). Missing configuration returns `503`.
 
 Architecture topology: [docs/architecture/acp-forwarding-topology.md](/Users/shenlan/workspaces/cloud-neutral-toolkit/xworkmate-bridge/docs/architecture/acp-forwarding-topology.md)
 

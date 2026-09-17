@@ -37,22 +37,37 @@ Bridge-local proxy errors use `{ "error": { "code": "...", "message": "..." } }`
 ACP run completion is persisted by Accounts/scheduler callbacks. The Bridge
 does not maintain a session database or write ACP results to local state.
 
-## Agent context ingest (`/api/v1/agent/ingest`)
+## Agent task context (`/api/v1/agent/*`)
 
-- `POST /api/v1/agent/ingest` only. Any other method returns `405`; any other
-  `/api/v1/agent/*` path returns `404`. Bridge never reads shared context back.
-- Inbound: existing Bearer credential, `Content-Type: application/json`,
-  uncompressed, at most 128 KiB.
-- Outbound: `BRIDGE_QMD_INGEST_API_URL` + `/api/v1/agent/ingest`, query string
-  dropped, `Authorization: Bearer $BRIDGE_QMD_INGEST_TOKEN` (the caller's token
-  is not forwarded), no redirects, 15 s timeout, response capped at 64 KiB and
-  marked `Cache-Control: no-store`.
-- Missing configuration → `503 qmd_ingest_unavailable`; QMD unreachable → `502`.
+All clients (web/mobile extensions and CLI/APP plugins) use the same routes in
+both directions. Every route requires the existing Bearer credential; Bridge
+replaces it with a QMD credential when forwarding, never forwards the caller's
+token, follows no redirects and marks responses `Cache-Control: no-store`.
 
-Body (validated by QMD): `{ source, sourceSessionId, scope, headBranch?, prNumber?,
-prState?, headSha?, title?, clientRequestId?, items: [{ kind, text, status?, key?,
-detail?, at? }] }` where `kind` is one of `goal`, `next_action`, `plan_step`,
-`decision`, `pitfall`, `verification`, `path`, `question`, `blocker`.
+| Route | Methods | Forwarded query | Upstream credential | Limits |
+|---|---|---|---|---|
+| `/api/v1/agent/ingest` | POST (JSON, uncompressed) | none | `BRIDGE_QMD_INGEST_TOKEN` | request 128 KiB, response 64 KiB, 15 s |
+| `/api/v1/agent/catalog` | GET | `scope`, `limit`, `offset` | `BRIDGE_QMD_INGEST_TOKEN` | response 2 MiB, 15 s |
+| `/api/v1/agent/threads` | GET | `scope`, `state`, `limit`, `offset` | same | same |
+| `/api/v1/agent/threads/{uuid}/briefing` | GET | `events` | same | same |
+| `/api/v1/agent/memory` | GET | `q`, `scope`, `kind`, `limit`, `offset` | same | same |
+| `/api/v1/agent/sync` | GET | `cursor`, `limit` | same | same |
+| `/api/v1/agent/mcp` | POST, GET, DELETE | none | `BRIDGE_QMD_MCP_TOKEN` | request 1 MiB, JSON response 4 MiB, SSE streamed |
+
+- Other query parameters are dropped. Other methods return `405`; other paths
+  under `/api/v1/agent/` return `404`.
+- MCP passthrough forwards `Content-Type`, `Accept`, `Mcp-Session-Id`,
+  `Mcp-Protocol-Version` and `Last-Event-Id`, and returns `Mcp-Session-Id`.
+  Sessions live in one QMD process, so all requests of a session must reach the
+  same QMD instance (run one instance or route stickily on `Mcp-Session-Id`).
+- A response larger than its limit, with or without `Content-Length`, becomes
+  `502 qmd_response_too_large` rather than a truncated body.
+- Missing configuration → `503`; QMD unreachable → `502`.
+
+Ingest body (validated by QMD): `{ source, sourceSessionId, scope, headBranch?,
+prNumber?, prState?, headSha?, title?, clientRequestId?, items: [{ kind, text,
+status?, key?, detail?, at? }] }`. Read and sync payloads carry git scopes and
+repo-relative locations, never absolute paths.
 
 ## 1. Runtime Entry Points
 
