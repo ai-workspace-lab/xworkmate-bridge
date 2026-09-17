@@ -116,4 +116,6 @@ type Server struct {
 	qmdIngestAPIURL       string
 	qmdIngestToken        string
 	qmdIngestClient       *http.Client
+	qmdMCPToken           string
+	qmdMCPClient          *http.Client
 }
