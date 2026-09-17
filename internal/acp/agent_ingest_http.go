@@ -22,6 +22,7 @@ import (
 const (
 	agentAPIPrefix                = "/api/v1/agent/"
 	agentIngestPath               = "/api/v1/agent/ingest"
+	agentCatalogPath              = "/api/v1/agent/catalog"
 	agentIngestRequestMaxBytes    = 128 * 1024
 	agentIngestResponseMaxBytes   = 64 * 1024
 	agentIngestUpstreamTimeoutSec = 15
@@ -118,16 +119,90 @@ func (s *Server) handleAgentIngest(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func qmdIngestTarget(configuredBase string) (*url.URL, error) {
+func (s *Server) handleAgentAPI(w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Path {
+	case agentIngestPath:
+		s.handleAgentIngest(w, r)
+	case agentCatalogPath:
+		s.handleAgentCatalog(w, r)
+	default:
+		writeTaskSessionProxyError(w, http.StatusNotFound, "route_not_found", "agent route not found")
+	}
+}
+
+func (s *Server) handleAgentCatalog(w http.ResponseWriter, r *http.Request) {
+	shared.ApplyCORS(w, r, s.allowedOrigins)
+	if r.Method == http.MethodOptions {
+		w.Header().Set("Allow", http.MethodGet)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		writeTaskSessionProxyError(w, http.StatusMethodNotAllowed, "method_not_allowed", "agent catalog is read-only: GET")
+		return
+	}
+	if !taskSessionBearerPresent(r.Header.Get("Authorization")) || !s.authorized(r) {
+		writeTaskSessionProxyError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer authorization")
+		return
+	}
+	target, err := qmdEndpointTarget(s.qmdIngestAPIURL, agentCatalogPath)
+	if err != nil || s.qmdIngestToken == "" || s.qmdIngestClient == nil {
+		writeTaskSessionProxyError(w, http.StatusServiceUnavailable, "qmd_catalog_unavailable", "QMD is not configured")
+		return
+	}
+
+	upstreamRequest, err := http.NewRequestWithContext(r.Context(), http.MethodGet, target.String(), nil)
+	if err != nil {
+		writeTaskSessionProxyError(w, http.StatusBadGateway, "qmd_catalog_request_failed", "failed to create QMD request")
+		return
+	}
+	for _, name := range []string{"X-Request-Id", "Traceparent", "Tracestate"} {
+		if value := r.Header.Get(name); value != "" {
+			upstreamRequest.Header.Set(name, value)
+		}
+	}
+	upstreamRequest.Header.Set("Authorization", "Bearer "+s.qmdIngestToken)
+
+	upstreamResponse, err := s.qmdIngestClient.Do(upstreamRequest)
+	if err != nil {
+		log.Printf("level=error component=agent_catalog event=upstream_failed error=%q", err)
+		writeTaskSessionProxyError(w, http.StatusBadGateway, "qmd_catalog_unavailable", "QMD is unavailable")
+		return
+	}
+	defer func() {
+		if closeErr := upstreamResponse.Body.Close(); closeErr != nil {
+			log.Printf("level=warn component=agent_catalog event=upstream_body_close_failed error=%q", closeErr)
+		}
+	}()
+	if upstreamResponse.ContentLength > agentIngestResponseMaxBytes {
+		writeTaskSessionProxyError(w, http.StatusBadGateway, "qmd_response_too_large", "QMD response exceeds the Bridge limit")
+		return
+	}
+	if contentType := upstreamResponse.Header.Get("Content-Type"); contentType != "" {
+		w.Header().Set("Content-Type", contentType)
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(upstreamResponse.StatusCode)
+	if _, err := io.Copy(w, io.LimitReader(upstreamResponse.Body, agentIngestResponseMaxBytes)); err != nil {
+		log.Printf("level=error component=agent_catalog event=response_stream_failed error=%q", err)
+	}
+}
+
+func qmdEndpointTarget(configuredBase string, endpointPath string) (*url.URL, error) {
 	base, err := url.Parse(strings.TrimSpace(configuredBase))
 	if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" || base.User != nil || base.RawQuery != "" || base.Fragment != "" {
-		return nil, errors.New("invalid QMD ingest API URL")
+		return nil, errors.New("invalid QMD API URL")
 	}
 	trimmed := strings.TrimRight(base.Path, "/")
-	if !strings.HasSuffix(trimmed, agentIngestPath) {
-		trimmed = trimmed + agentIngestPath
+	if strings.HasSuffix(trimmed, agentIngestPath) {
+		trimmed = strings.TrimSuffix(trimmed, agentIngestPath)
 	}
-	base.Path = trimmed
+	base.Path = strings.TrimRight(trimmed, "/") + endpointPath
 	base.RawPath = ""
 	return base, nil
+}
+
+func qmdIngestTarget(configuredBase string) (*url.URL, error) {
+	return qmdEndpointTarget(configuredBase, agentIngestPath)
 }

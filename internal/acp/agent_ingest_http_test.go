@@ -167,3 +167,28 @@ func TestAgentIngestDoesNotShadowTaskSessionRoutes(t *testing.T) {
 		t.Fatalf("task session route = %d path %q", response.Code, path)
 	}
 }
+
+func TestAgentCatalogForwardsWithQMDCredential(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/qmd/api/v1/agent/catalog" {
+			t.Fatalf("upstream request = %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer qmd-ingest-token" {
+			t.Fatalf("Authorization = %q, want the QMD ingest credential", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true,"catalog":{"pinnedTasks":[]}}`))
+	}))
+	defer upstream.Close()
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/agent/catalog", nil)
+	request.Header.Set("Authorization", "Bearer bridge-user-token")
+	response := httptest.NewRecorder()
+	newAgentIngestTestServer(upstream.URL+"/qmd").Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"pinnedTasks"`) {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+}
+
