@@ -22,6 +22,10 @@ const openClawGatewayMaxNotificationBytes = 64 * 1024
 
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, agentAPIPrefix) {
+			s.handleAgentIngest(w, r)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/api/v1/") {
 			s.handleTaskSessionAPI(w, r)
 			return

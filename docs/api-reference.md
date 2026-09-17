@@ -37,6 +37,23 @@ Bridge-local proxy errors use `{ "error": { "code": "...", "message": "..." } }`
 ACP run completion is persisted by Accounts/scheduler callbacks. The Bridge
 does not maintain a session database or write ACP results to local state.
 
+## Agent context ingest (`/api/v1/agent/ingest`)
+
+- `POST /api/v1/agent/ingest` only. Any other method returns `405`; any other
+  `/api/v1/agent/*` path returns `404`. Bridge never reads shared context back.
+- Inbound: existing Bearer credential, `Content-Type: application/json`,
+  uncompressed, at most 128 KiB.
+- Outbound: `BRIDGE_QMD_INGEST_API_URL` + `/api/v1/agent/ingest`, query string
+  dropped, `Authorization: Bearer $BRIDGE_QMD_INGEST_TOKEN` (the caller's token
+  is not forwarded), no redirects, 15 s timeout, response capped at 64 KiB and
+  marked `Cache-Control: no-store`.
+- Missing configuration → `503 qmd_ingest_unavailable`; QMD unreachable → `502`.
+
+Body (validated by QMD): `{ source, sourceSessionId, scope, headBranch?, prNumber?,
+prState?, headSha?, title?, clientRequestId?, items: [{ kind, text, status?, key?,
+detail?, at? }] }` where `kind` is one of `goal`, `next_action`, `plan_step`,
+`decision`, `pitfall`, `verification`, `path`, `question`, `blocker`.
+
 ## 1. Runtime Entry Points
 
 二进制入口定义在 [main.go](../main.go)。

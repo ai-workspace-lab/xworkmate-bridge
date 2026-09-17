@@ -113,4 +113,7 @@ type Server struct {
 	allowedOrigins        []string
 	accountsSessionAPIURL string
 	accountsSessionClient *http.Client
+	qmdIngestAPIURL       string
+	qmdIngestToken        string
+	qmdIngestClient       *http.Client
 }
