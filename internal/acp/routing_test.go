@@ -3136,6 +3136,8 @@ func TestExtractArtifactPayloadsRejectsUnsafeDownloadURLArtifactNames(t *testing
 }
 
 type acpFakeOpenClawGateway struct {
+	lastModelPatchParams       atomic.Value
+	rejectModelPatch           atomic.Bool
 	server                     *http.Server
 	listener                   net.Listener
 	connectCount               atomic.Int32
@@ -3277,6 +3279,18 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 						},
 					},
 				})
+			case "sessions.patch":
+				params := shared.AsMap(frame["params"])
+				fake.lastModelPatchParams.Store(params)
+				if fake.rejectModelPatch.Load() {
+					if err := conn.WriteJSON(map[string]any{"type": "res", "id": id, "ok": false, "error": map[string]any{"code": "INVALID_REQUEST", "message": "model is not allowed"}}); err != nil {
+						return
+					}
+				} else {
+					if err := conn.WriteJSON(map[string]any{"type": "res", "id": id, "ok": true, "payload": params}); err != nil {
+						return
+					}
+				}
 			case "chat.send":
 				fake.chatSendCount.Add(1)
 				if fake.alwaysCloseChatSend.Load() || fake.closeNextChatSend.Swap(false) {

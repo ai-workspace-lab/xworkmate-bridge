@@ -308,6 +308,10 @@ func (o *SessionOrchestrator) startOpenClawGatewayTask(
 	releaseAdmission func(),
 	notify func(map[string]any),
 ) (map[string]any, *shared.RPCError) {
+	capability, capabilityErr := openClawProductCapability(params)
+	if capabilityErr != nil {
+		return nil, capabilityErr
+	}
 	sessionID := strings.TrimSpace(shared.StringArg(params, "sessionId", ""))
 	threadID := strings.TrimSpace(shared.StringArg(params, "threadId", sessionID))
 	if sessionID == "" {
@@ -342,6 +346,14 @@ func (o *SessionOrchestrator) startOpenClawGatewayTask(
 		return nil, rpcErr
 	}
 	applyOpenClawPreparedArtifactToChatParams(chatParams, preparedArtifact, sessionKey, turnID, artifactContract)
+	// Native sessions.patch validates the model against the Gateway's catalog.
+	// Patch the mapped Gateway key, never the App's local thread identity.
+	if model, ok := capability["model"].(string); ok {
+		patched := o.openClawGatewayRequestWithRetry(gatewayProvider, "sessions.patch", map[string]any{"key": sessionKey, "model": model}, 30*time.Second, notifyWithCollection)
+		if !patched.OK {
+			return nil, gatewayRPCError(patched.Error, "selected Gateway model is unavailable")
+		}
+	}
 	chatSendTimeout := openClawAgentWaitTimeout(params, chatParams)
 	sendStarted := time.Now()
 	sendResult := o.openClawGatewayRequestWithRetry(
@@ -679,6 +691,10 @@ func openClawSessionPrepareParams(params map[string]any, openClawSessionKey stri
 		"requestId":          strings.TrimSpace(runID),
 		"externalTaskId":     strings.TrimSpace(runID),
 	}
+	// The admission path validates this contract before preparing a run.
+	if capability, err := openClawProductCapability(params); err == nil && capability != nil {
+		result["productCapability"] = capability
+	}
 	if len(artifactContract.ExpectedArtifactDirs) > 0 {
 		result["expectedArtifactDirs"] = append([]string(nil), artifactContract.ExpectedArtifactDirs...)
 	}
@@ -991,6 +1007,10 @@ func openClawChatSendParamsWithSessionKey(
 	turnID string,
 	sessionKey string,
 ) (map[string]any, *shared.RPCError) {
+	capability, capabilityErr := openClawProductCapability(params)
+	if capabilityErr != nil {
+		return nil, capabilityErr
+	}
 	message := openClawCurrentTurnMessage(params)
 	if message == "" {
 		return nil, &shared.RPCError{Code: -32602, Message: "OPENCLAW_TASK_PROMPT_REQUIRED"}
@@ -999,6 +1019,9 @@ func openClawChatSendParamsWithSessionKey(
 		"sessionKey":     sessionKey,
 		"message":        message,
 		"idempotencyKey": turnID,
+	}
+	if receipt := productCapabilityReceipt(capability); receipt != "" {
+		chatParams["systemProvenanceReceipt"] = receipt
 	}
 	attachments := openClawNonEmptyPathAttachments(params)
 	inlineAttachments, rpcErr := materializeOpenClawInlineAttachments(params, turnID)
