@@ -751,6 +751,31 @@ func (s *Server) handleTaskCancel(ctx context.Context, params map[string]any, no
 		if gatewayProvider == "" {
 			gatewayProvider = sess.task.GatewayProviderID
 		}
+		requestedKey := firstNonEmptyString(params, "openclawSessionKey", "sessionKey")
+		if runID != sess.task.RunID || (requestedKey != "" && requestedKey != sess.task.SessionKey) {
+			sess.mu.Unlock()
+			return map[string]any{"accepted": false, "cancelled": false, "code": "RUN_SCOPE_MISMATCH", "runId": runID}
+		}
+		if cached, ok := cachedTerminalForRunLocked(sess, params); ok {
+			sess.mu.Unlock()
+			if cached["cancellationScope"] == "artifact-wait" {
+				return map[string]any{"accepted": true, "cancelled": true, "cancellationScope": "artifact-wait", "runId": runID}
+			}
+			return map[string]any{"accepted": false, "cancelled": false, "code": "TASK_ALREADY_TERMINAL", "runId": runID}
+		}
+		if sess.artifactWaitTerminalRunID == runID && sess.artifactWaitTerminalSessionKey == sess.task.SessionKey {
+			// The native run already ended. Cancel only this Bridge artifact wait,
+			// not a model or worker execution, and preserve that transport terminal.
+			sess.task.State = TaskStateCancelled
+			sess.task.ProgressTerminal = true
+			sess.task.ProgressStage = "cancelled"
+			sess.task.UpdatedAt = time.Now()
+			sess.lastResult = map[string]any{"status": "cancelled", "success": false, "pending": false,
+				"terminal": true, "terminalSource": "bridge_artifact_wait_cancel", "cancellationScope": "artifact-wait",
+				"runId": runID, "openclawSessionKey": sess.task.SessionKey, "code": "ARTIFACT_WAIT_CANCELLED"}
+			sess.mu.Unlock()
+			return map[string]any{"accepted": true, "cancelled": true, "cancellationScope": "artifact-wait", "runId": runID}
+		}
 		sess.task.State = TaskStateCancelled
 		sess.task.UpdatedAt = time.Now()
 		sess.task.ProgressStage = "cancelled"

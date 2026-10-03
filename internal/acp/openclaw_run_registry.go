@@ -38,7 +38,7 @@ func openClawTaskGetResultIsTerminal(payload map[string]any) bool {
 
 // cacheOpenClawTaskGetResultIfTerminal 把一次 gateway 确认的终态结果落进 per-session 持久 run 仓（T8）。
 func (s *Server) cacheOpenClawTaskGetResultIfTerminal(params map[string]any, payload map[string]any) {
-	if len(payload) == 0 || !openClawTaskGetResultIsTerminal(payload) {
+	if len(payload) == 0 {
 		return
 	}
 	sess := s.findTaskSession(params)
@@ -47,6 +47,29 @@ func (s *Server) cacheOpenClawTaskGetResultIfTerminal(params map[string]any, pay
 	}
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
+	payloadRun := firstNonEmptyString(payload, "runId", "taskId")
+	requestedRun := firstNonEmptyString(params, "runId", "taskId")
+	requestedKey := firstNonEmptyString(params, "openclawSessionKey", "sessionKey")
+	if (requestedRun != "" && requestedRun != sess.task.RunID) || (requestedKey != "" && requestedKey != sess.task.SessionKey) || (payloadRun != "" && payloadRun != sess.task.RunID) {
+		return
+	}
+	if cached, ok := cachedTerminalForRunLocked(sess, params); ok && cached["cancellationScope"] == "artifact-wait" {
+		return
+	}
+	// This evidence comes only from the authenticated native lookup response,
+	// after normalization identified local artifact waiting. It is not a worker stop receipt.
+	sess.artifactWaitTerminalRunID = ""
+	sess.artifactWaitTerminalSessionKey = ""
+	if payloadRun != "" && payload["status"] == "running" && payload["taskStatus"] == "completed" &&
+		parseBool(payload["success"]) && parseBool(payload["terminal"]) && parseBool(payload["pending"]) &&
+		payload["terminalSource"] == "agent_end" && payload["artifactSyncStatus"] == "syncing" &&
+		firstNonEmptyString(payload, "openclawSessionKey", "sessionKey") == sess.task.SessionKey && sess.task.SessionKey != "" {
+		sess.artifactWaitTerminalRunID = payloadRun
+		sess.artifactWaitTerminalSessionKey = sess.task.SessionKey
+	}
+	if !openClawTaskGetResultIsTerminal(payload) {
+		return
+	}
 	switch strings.ToLower(strings.TrimSpace(shared.StringArg(payload, "status", ""))) {
 	case string(TaskStateFailed):
 		sess.task.State = TaskStateFailed
