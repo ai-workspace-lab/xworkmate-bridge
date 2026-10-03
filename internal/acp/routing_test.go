@@ -3136,6 +3136,8 @@ func TestExtractArtifactPayloadsRejectsUnsafeDownloadURLArtifactNames(t *testing
 }
 
 type acpFakeOpenClawGateway struct {
+	lastChatAbortParams        atomic.Value
+	chatAbortPayload           atomic.Value
 	lastModelPatchParams       atomic.Value
 	rejectModelPatch           atomic.Bool
 	server                     *http.Server
@@ -3978,6 +3980,20 @@ func newAcpFakeOpenClawGateway(t *testing.T) *acpFakeOpenClawGateway {
 						},
 					},
 				})
+			case "agent.cancel":
+				_ = conn.WriteJSON(map[string]any{"type": "res", "id": id, "ok": false, "error": map[string]any{"code": "INVALID_REQUEST", "message": "unknown method: agent.cancel"}})
+			case "chat.abort":
+				params := shared.AsMap(frame["params"])
+				fake.lastChatAbortParams.Store(params)
+				if shared.StringArg(params, "sessionKey", "") == "" || shared.StringArg(params, "runId", "") == "" || len(params) != 2 {
+					_ = conn.WriteJSON(map[string]any{"type": "res", "id": id, "ok": false, "error": map[string]any{"code": "INVALID_REQUEST", "message": "invalid chat.abort params"}})
+				} else {
+					payload := fake.chatAbortPayload.Load()
+					if payload == nil {
+						payload = map[string]any{"ok": true, "aborted": false, "runIds": []string{}}
+					}
+					_ = conn.WriteJSON(map[string]any{"type": "res", "id": id, "ok": true, "payload": payload})
+				}
 			case "chat.run":
 				_ = conn.WriteJSON(map[string]any{
 					"type": "res",

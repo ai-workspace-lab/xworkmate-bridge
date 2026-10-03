@@ -738,11 +738,15 @@ func openClawMissingRequiredExtensions(artifacts []map[string]any, requiredExts 
 
 func (s *Server) handleTaskCancel(ctx context.Context, params map[string]any, notify func(map[string]any)) map[string]any {
 	sess := s.findTaskSession(params)
+	if sess == nil {
+		return map[string]any{"accepted": false, "cancelled": false, "code": "TASK_SCOPE_NOT_OWNED_OR_RECOVERED", "runId": strings.TrimSpace(shared.StringArg(params, "runId", ""))}
+	}
 	runID := strings.TrimSpace(shared.StringArg(params, "runId", ""))
 	gatewayProvider := strings.TrimSpace(shared.StringArg(params, "gatewayProviderId", ""))
 	if gatewayProvider == "" {
 		gatewayProvider = strings.TrimSpace(shared.StringArg(params, "resolvedGatewayProviderId", ""))
 	}
+	var sessionKey string
 	if sess != nil {
 		sess.mu.Lock()
 		if runID == "" {
@@ -752,7 +756,7 @@ func (s *Server) handleTaskCancel(ctx context.Context, params map[string]any, no
 			gatewayProvider = sess.task.GatewayProviderID
 		}
 		requestedKey := firstNonEmptyString(params, "openclawSessionKey", "sessionKey")
-		if runID != sess.task.RunID || (requestedKey != "" && requestedKey != sess.task.SessionKey) {
+		if runID != sess.task.RunID || (requestedKey != "" && requestedKey != sess.task.SessionKey) || (sess.task.GatewayProviderID != "" && gatewayProvider != sess.task.GatewayProviderID) {
 			sess.mu.Unlock()
 			return map[string]any{"accepted": false, "cancelled": false, "code": "RUN_SCOPE_MISMATCH", "runId": runID}
 		}
@@ -776,30 +780,40 @@ func (s *Server) handleTaskCancel(ctx context.Context, params map[string]any, no
 			sess.mu.Unlock()
 			return map[string]any{"accepted": true, "cancelled": true, "cancellationScope": "artifact-wait", "runId": runID}
 		}
-		sess.task.State = TaskStateCancelled
 		sess.task.UpdatedAt = time.Now()
-		sess.task.ProgressStage = "cancelled"
-		sess.task.ProgressMessage = "OpenClaw task cancelled"
-		sess.task.ProgressTerminal = true
-		if sess.openClaw != nil {
-			sess.openClaw.ProgressStage = "cancelled"
-			sess.openClaw.ProgressMessage = "OpenClaw task cancelled"
-		}
+		sess.task.ProgressStage = "cancel-requested"
+		sess.task.ProgressMessage = "OpenClaw cancellation requested; terminal is unconfirmed"
+		sessionKey = sess.task.SessionKey
 		sess.mu.Unlock()
 	}
 	if gatewayProvider == "" {
 		gatewayProvider = "openclaw"
 	}
-	if strings.TrimSpace(runID) != "" && s.gateway != nil {
-		_ = s.gateway.RequestByMode(
-			gatewayProvider,
-			"agent.cancel",
-			map[string]any{"runId": runID},
-			5*time.Second,
-			notify,
-		)
+	if runID == "" || sessionKey == "" || s.gateway == nil {
+		return map[string]any{"accepted": false, "cancelled": false, "code": "NATIVE_CANCEL_UNCONFIRMED", "runId": runID}
 	}
-	return map[string]any{"accepted": strings.TrimSpace(runID) != "", "runId": runID}
+	result := s.gateway.RequestByMode(gatewayProvider, "chat.abort",
+		map[string]any{"sessionKey": sessionKey, "runId": runID}, 5*time.Second, notify)
+	if !result.OK {
+		return map[string]any{"accepted": false, "cancelled": false, "code": "NATIVE_CANCEL_UNCONFIRMED", "nativeMethod": "chat.abort", "runId": runID}
+	}
+	payload := shared.AsMap(result.Payload)
+	aborted, hasAborted := payload["aborted"].(bool)
+	nativeRuns, hasRuns := payload["runIds"].([]any)
+	runIDs := []string{}
+	validScope := hasRuns && ((!aborted && len(nativeRuns) == 0) || (aborted && len(nativeRuns) == 1 && nativeRuns[0] == runID))
+	if !parseBool(payload["ok"]) || !hasAborted || !validScope {
+		return map[string]any{"accepted": false, "cancelled": false, "code": "NATIVE_CANCEL_UNCONFIRMED", "nativeMethod": "chat.abort", "runId": runID}
+	}
+	if aborted {
+		runIDs = append(runIDs, runID)
+	}
+
+	// Native aborted acknowledges the scoped abort operation, not worker/cgroup
+	// termination. The normal terminal query still decides task completion.
+	return map[string]any{"accepted": true, "cancelled": false, "nativeMethod": "chat.abort",
+		"aborted": aborted, "runIds": runIDs, "runId": runID}
+
 }
 
 func (s *Server) findTaskSession(params map[string]any) *session {

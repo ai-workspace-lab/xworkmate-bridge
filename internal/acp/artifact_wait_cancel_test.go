@@ -2,6 +2,7 @@ package acp
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 	"xworkmate-bridge/internal/shared"
@@ -89,5 +90,52 @@ func TestArtifactWaitCancelDoesNotRewriteNativeFailedOrWrongRequestedScope(t *te
 		if _, ok := srv.cachedTerminalOpenClawResult(good); ok {
 			t.Fatal("wrong scope cached a terminal")
 		}
+	}
+}
+
+func TestTaskCancelWithoutOwnedOrRecoveredSessionIsNotAccepted(t *testing.T) {
+	s := &Server{sessions: map[string]*session{}}
+	r := s.handleTaskCancel(context.Background(), map[string]any{"runId": "pre-restart-run"}, nil)
+	if parseBool(r["accepted"]) || r["code"] != "TASK_SCOPE_NOT_OWNED_OR_RECOVERED" {
+		t.Fatalf("unowned cancellation misleading: %v", r)
+	}
+}
+
+func TestOwnedActiveCancelUsesSupportedChatAbortScopeAndNativeReceipt(t *testing.T) {
+	for _, aborted := range []bool{false, true} {
+		t.Run(map[bool]string{false: "already-finished", true: "abort-requested"}[aborted], func(t *testing.T) {
+			gateway := newAcpFakeOpenClawGateway(t)
+			defer gateway.Close()
+			runIDs := []string{}
+			if aborted {
+				runIDs = []string{"run-1"}
+			}
+			gateway.chatAbortPayload.Store(map[string]any{"ok": true, "aborted": aborted, "runIds": runIDs})
+			t.Setenv("GATEWAY_RPC_URL", gateway.URL())
+			t.Setenv("BRIDGE_AUTH_TOKEN", "test-cancel-key")
+			t.Setenv("BRIDGE_CONFIG_PATH", filepath.Join(t.TempDir(), "missing.yaml"))
+			t.Setenv("XWORKMATE_BRIDGE_OPENCLAW_IDENTITY_PATH", filepath.Join(t.TempDir(), "device.json"))
+			resetBridgeGatewayIdentityForTest()
+			t.Cleanup(resetBridgeGatewayIdentityForTest)
+			s, p := newRunRegistryTestServer(time.Now().Add(time.Minute))
+			s.config = NewServer().config
+			if err := ensureProductionGatewayConnected(s, "openclaw", nil); err != nil {
+				t.Fatal(err)
+			}
+			r := s.handleTaskCancel(context.Background(), p, nil)
+			if !parseBool(r["accepted"]) || r["nativeMethod"] != "chat.abort" || parseBool(r["aborted"]) != aborted || parseBool(r["cancelled"]) {
+				t.Fatalf("invalid native cancellation receipt: %v", r)
+			}
+			params := shared.AsMap(gateway.lastChatAbortParams.Load())
+			if params["sessionKey"] != "sk" || params["runId"] != "run-1" || len(params) != 2 {
+				t.Fatalf("wrong native schema/scope: %v", params)
+			}
+			if _, exists := r["workerStopped"]; exists {
+				t.Fatal("cannot claim worker stopped")
+			}
+			if s.sessions["s1"].task.ProgressTerminal {
+				t.Fatal("native request does not prove terminal")
+			}
+		})
 	}
 }
