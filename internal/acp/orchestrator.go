@@ -50,7 +50,20 @@ func (o *SessionOrchestrator) Process(ctx context.Context, method string, params
 	}
 
 	if res.Status == "unavailable" {
-		return o.formatUnavailable(res), nil
+		unavailable := o.formatUnavailable(res)
+		if res.RoleDecision != nil {
+			unavailable["roleSelection"] = decisionSummary(*res.RoleDecision)
+			sessionID := shared.StringArg(params, "sessionId", "")
+			sess := o.server.getOrCreateSession(sessionID, shared.StringArg(params, "threadId", sessionID))
+			turnID := fmt.Sprintf("turn-%d", time.Now().UnixNano())
+			sess.mu.Lock()
+			sess.role = &roleTaskState{decision: *res.RoleDecision}
+			sess.task = QueuedTask{SessionID: sessionID, ThreadID: sess.threadID, TurnID: turnID, State: TaskStateFailed, Kind: TaskKindSingleAgent, UpdatedAt: time.Now()}
+			sess.lastResult = cloneMap(unavailable)
+			sess.mu.Unlock()
+			o.server.emitTaskEvent(notify, sess, turnID, "rejected", decisionSummary(*res.RoleDecision))
+		}
+		return unavailable, nil
 	}
 
 	sessionID := shared.StringArg(params, "sessionId", "")
@@ -62,6 +75,7 @@ func (o *SessionOrchestrator) Process(ctx context.Context, method string, params
 	sess.target = res.TargetID
 	sess.provider = res.ProviderID
 	sess.mode = res.TargetID
+	sess.role = nil
 	sess.control.ControlPlaneSessionID = sessionID
 	sess.control.ThreadID = threadID
 	sess.control.RequestedWorkingDir = strings.TrimSpace(shared.StringArg(params, "workingDirectory", ""))
@@ -112,6 +126,10 @@ func (o *SessionOrchestrator) Process(ctx context.Context, method string, params
 	sess.mu.Lock()
 	sess.compat = compat
 	sess.mu.Unlock()
+
+	if res.RoleDecision != nil {
+		return o.runRoleTask(ctx, method, params, res, sess, compat, turnID, notify)
+	}
 
 	sink := func(update map[string]any) {
 		o.server.emitSessionUpdate(notify, turnID, update)

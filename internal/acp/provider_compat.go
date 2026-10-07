@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -34,6 +35,10 @@ type codexCompat struct {
 type opencodeCompat struct{ *externalACPCompat }
 type geminiCompat struct{ *externalACPCompat }
 type hermesCompat struct{ *externalACPCompat }
+
+// acpAgentCompat fronts an ACP v1 stdio agent (`dsh --profile acp`,
+// `opencode acp`) through the acp-agent adapter over WebSocket.
+type acpAgentCompat struct{ *externalACPCompat }
 
 type sessionContinuationUnavailableError struct {
 	providerID string
@@ -87,6 +92,8 @@ func newProviderCompat(provider syncedProvider) ProviderCompat {
 		return &opencodeCompat{externalACPCompat: base}
 	case "hermes":
 		return &hermesCompat{externalACPCompat: base}
+	case "deepseek-harness", "opencode-acp":
+		return &acpAgentCompat{externalACPCompat: base}
 	default:
 		return &codexCompat{
 			externalACPCompat: base,
@@ -97,7 +104,7 @@ func newProviderCompat(provider syncedProvider) ProviderCompat {
 
 func providerCategory(providerID string) string {
 	switch providerID {
-	case "gemini", "hermes", "opencode":
+	case "gemini", "hermes", "opencode", "deepseek-harness", "opencode-acp":
 		return "protocol-adapter"
 	default:
 		return "native"
@@ -606,6 +613,14 @@ func (c *externalACPCompat) callWSRPC(ctx context.Context, method string, params
 		return nil, err
 	}
 	defer func() { _ = conn.Close() }()
+	// Cancelling the run closes the socket so the blocked read returns and the
+	// upstream adapter observes the disconnect and cancels its prompt.
+	stopCloseOnCancel := context.AfterFunc(ctx, func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			log.Printf("[provider:%s] close on cancel: %v", c.providerID, closeErr)
+		}
+	})
+	defer stopCloseOnCancel()
 
 	requestID := fmt.Sprintf("req-%d", time.Now().UnixNano())
 	request := map[string]any{
@@ -622,6 +637,9 @@ func (c *externalACPCompat) callWSRPC(ctx context.Context, method string, params
 	for {
 		_, payload, err := conn.ReadMessage()
 		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
 			return nil, err
 		}
 
@@ -633,7 +651,9 @@ func (c *externalACPCompat) callWSRPC(ctx context.Context, method string, params
 		methodName := strings.TrimSpace(shared.StringArg(decoded, "method", ""))
 		if methodName != "" {
 			if isExternalPermissionRequest(methodName) {
-				_ = writeExternalPermissionApproval(conn, decoded)
+				if err := answerExternalPermissionRequest(ctx, conn, decoded); err != nil {
+					log.Printf("[provider:%s] answer permission request: %v", c.providerID, err)
+				}
 				continue
 			}
 			collector.observe(decoded)
