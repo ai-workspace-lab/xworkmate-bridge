@@ -18,6 +18,9 @@ func (e *DefaultRoutingEngine) Resolve(ctx context.Context, params map[string]an
 	if len(routingParams) == 0 {
 		routingParams = map[string]any{}
 	}
+	if roleRoutingRequested(routingParams) {
+		return e.server.resolveRoleRouting(ctx, params, routingParams), nil
+	}
 	routingMode := strings.TrimSpace(shared.StringArg(routingParams, "routingMode", "implicit"))
 	explicitExecutionTarget := strings.TrimSpace(shared.StringArg(routingParams, "explicitExecutionTarget", ""))
 	if explicitExecutionTarget == "" {

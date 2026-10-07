@@ -203,3 +203,32 @@ func sessionMessage(sessionID string) shared.RPCRequest {
 		Params: map[string]any{"sessionId": sessionID, "openclawSessionKey": "thread-" + sessionID, "threadId": "thread-" + sessionID},
 	}
 }
+
+func TestDistributedTaskRouterRoutesRoleFollowUpsToSessionOwner(t *testing.T) {
+	config := &BridgeConfig{}
+	config.Distributed.Topology = "dual-node"
+	config.Distributed.LocalNodeID = "cn-xworkmate-bridge"
+	config.Distributed.TaskForwardPeerID = "xworkmate-bridge"
+	router := newDistributedTaskRouter(distributedTaskRouterConfig{Config: config, Token: "token"})
+	request := func(method string, params map[string]any) shared.RPCRequest {
+		return shared.RPCRequest{ID: method, Method: method, Params: params}
+	}
+
+	for _, method := range []string{"session.cancel", "xworkmate.permissions.respond", "xworkmate.tasks.get"} {
+		if _, ok, err := router.forwardDecision(httptest.NewRequest("POST", "/acp/rpc", nil), request(method, map[string]any{"sessionId": "eng"})); err != nil || ok {
+			t.Fatalf("%s without an existing route must stay local: ok=%v err=%v", method, ok, err)
+		}
+	}
+	if _, ok, err := router.forwardDecision(httptest.NewRequest("POST", "/acp/rpc", nil), request("session.start", map[string]any{"sessionId": "eng"})); err != nil || !ok {
+		t.Fatalf("session.start should be forwarded: ok=%v err=%v", ok, err)
+	}
+	for _, method := range []string{"session.cancel", "xworkmate.permissions.respond", "xworkmate.permissions.list", "xworkmate.tasks.get"} {
+		decision, ok, err := router.forwardDecision(httptest.NewRequest("POST", "/acp/rpc", nil), request(method, map[string]any{"sessionId": "eng", "requestId": "perm-1"}))
+		if err != nil || !ok || decision.targetNodeID != "xworkmate-bridge" {
+			t.Fatalf("%s must follow the session route: decision=%#v ok=%v err=%v", method, decision, ok, err)
+		}
+	}
+	if _, ok, err := router.forwardDecision(httptest.NewRequest("POST", "/acp/rpc", nil), request("xworkmate.tasks.get", map[string]any{"sessionId": "eng", "runId": "run-1"})); err != nil || ok {
+		t.Fatalf("OpenClaw task lookups keep the local path: ok=%v err=%v", ok, err)
+	}
+}

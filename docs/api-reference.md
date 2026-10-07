@@ -336,6 +336,8 @@ bridge 对 app 的稳定 method family 只有：
 - `xworkmate.jobs.list`
 - `xworkmate.jobs.stats`
 - `xworkmate.tools.invoke`
+- `xworkmate.permissions.respond`
+- `xworkmate.permissions.list`
 
 路径约束：
 
@@ -505,8 +507,12 @@ OpenClaw gateway 任务的 HTTP task submit 路径是 `/acp/rpc`。请求必须�
 
 语义：
 
-- `session.cancel` 调用当前 compat 的 cancel
+- `session.cancel` 调用当前 compat 的 cancel；角色路由任务还会拒绝挂起授权并中断进行中的 run，返回值附带 `runCancelled`
 - `session.close` 调用当前 compat 的 close，并移除 bridge 内部 session state
+
+## 9.1 角色路由（Engineer 闭环）
+
+`session.start` / `session.message` / `xworkmate.routing.resolve` 的 `routing` 中带 `role` 或 `roleMode` 时走角色策略（`BRIDGE_ROLE_POLICY_PATH`）。完整契约、任务事件 schema、`xworkmate.permissions.respond` / `xworkmate.permissions.list` 与 `xworkmate.tasks.get` 角色快照见 [role-routing-engineer-loop.md](architecture/role-routing-engineer-loop.md) §5。`acp.capabilities` 新增 `roleRouting`（角色、模型 key、策略版本、预算模式，不含连接与凭据）与 `permissionRelay: true`。
 
 ## 10. `xworkmate.gateway.*`
 

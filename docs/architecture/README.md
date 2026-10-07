@@ -10,6 +10,7 @@ This directory contains architecture documentation for the **xworkmate-bridge** 
 | [ADR: Refocus Bridge as Control Plane](adr-refocus-bridge-as-control-plane.md) | Architecture Decision Record for re-focusing the bridge as the ACP control plane |
 | [ADR: Unified Bridge Entrypoints](adr-unified-bridge-entrypoints.md) | Architecture Decision Record for unifying APP traffic entry points |
 | [Bridge Runtime Design](bridge-runtime-design.md) | Converged runtime model for xworkmate-bridge |
+| [Role Routing: Engineer Loop](role-routing-engineer-loop.md) | Role policy, model selection, ACP executors (DeepSeek Harness / OpenCode), permission relay, cancel and task events; per-repo work items with inputs, change locations and acceptance |
 
 ## Related Repos
 
