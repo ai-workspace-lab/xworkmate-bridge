@@ -19,7 +19,7 @@
   },
   "connections": {
     "ai-internal": {
-      "base_url": "https://ai-internal.onwalk.net/v1",
+      "base_url_env": "XWORKMATE_AI_INTERNAL_BASE_URL",
       "token_env": "XWORKMATE_AI_INTERNAL_TOKEN",
       "allowed_data_classes": [
         "unclassified"

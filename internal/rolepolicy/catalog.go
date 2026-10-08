@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// FetchCatalog reads GET {base_url}/models (base_url already ends in /v1)
+// FetchCatalog reads GET {base URL}/models (the base URL already ends in /v1)
 // with the connection's token and keeps every data[].id byte-for-byte.
 // The result only says what the token can see; it proves nothing about
 // tools, context, search or quality.
@@ -23,7 +23,12 @@ func FetchCatalog(ctx context.Context, client *http.Client, connectionID string,
 		snapshot.Err = "token env " + conn.TokenEnv + " is not set"
 		return snapshot
 	}
-	endpoint := strings.TrimRight(strings.TrimSpace(conn.BaseURL), "/") + "/models"
+	baseURL := conn.ResolvedBaseURL()
+	if baseURL == "" {
+		snapshot.Err = "base url env " + conn.BaseURLEnv + " is not set"
+		return snapshot
+	}
+	endpoint := strings.TrimRight(baseURL, "/") + "/models"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		snapshot.Err = err.Error()
