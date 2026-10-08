@@ -1,6 +1,6 @@
 # 角色模式、自动强度与 AutoBot 中心
 
-设计稿 · 2026-10-08 · 状态：待评审，评审通过后按 §9 的步骤编码
+设计稿 · 2026-10-08（修订：执行器分工、审批默认值、§8.5） · 状态：待评审，评审通过后按 §9 的步骤编码
 
 承接 [role-routing-engineer-loop.md](role-routing-engineer-loop.md)（已合入 bridge #30）。本文只写这次新增与改变的部分。
 
@@ -16,6 +16,9 @@
 | 强度起点与范围 | Engineer high（medium–max）、Architect max（high–max）、Researcher high（medium–max）、Specialist high（high–max） |
 | AutoBot 入口 | 侧边栏 🤖 按钮打开 AutoBot 中心；Gateway chip 的 AutoBot 改为「把当前草稿变成委派任务」 |
 | 后台任务授权 | 创建时预授权范围；越权时暂停，进入审批队列 |
+| 执行器分工 | 在线轮次（用户在 App 里等待）走 bridge #30 的 acp-agent 执行器（授权实时回传、可取消）；离线委派（AutoBot）走 OpenClaw Gateway 与插件 #9 的 worker |
+| Gateway 命令审批默认值 | 部署时 `security = allowlist`、`ask = on-miss`、`askFallback = deny`（playbooks #637） |
+| 连接地址 | 策略与文档不写真实主机名；连接用 `base_url_env` 由部署注入（bridge #31） |
 | 顺序 | 先写本文档，评审后编码 |
 
 ## 2. 现状与依赖（2026-10-08）
@@ -23,13 +26,15 @@
 | 仓库 / PR | 状态 | 与本设计的关系 |
 |---|---|---|
 | bridge `main`（含 #30） | 已合并 | 角色策略、选择器、acp-agent 适配器（opencode-acp / deepseek-harness）、授权回传、取消、任务事件。角色路由目前只走 agent 执行器 |
-| bridge #29（`codex/four-capabilities-20261003`） | draft，未合并；与 `main` 在 `internal/acp/types.go` 冲突 | `internal/acp/product_capability.go` 校验 `metadata.xworkmateProductCapability` v1；`chat.send` 前对映射后的 OpenClaw session 调 `sessions.patch` 切换 `xworkmate/<id>` 模型，被拒则不发送。**Gateway 路径的角色选模型必须复用这一步** |
+| bridge #29（`codex/four-capabilities-20261003`） | 已合并（`bc96e01`） | `internal/acp/product_capability.go` 校验 `metadata.xworkmateProductCapability` v1；`chat.send` 前对映射后的 OpenClaw session 调 `sessions.patch` 切换 `xworkmate/<id>` 模型，被拒则不发送。**Gateway 路径的角色选模型必须复用这一步** |
 | app `main`（含 #275） | 已合并 | 角色路由状态、授权面板、状态条、断流恢复。#275 的手动选模型 UI 依赖 agent 目标 |
 | app 本地执行现状 | 已有 | 线程有 `workspaceBinding`（`WorkspaceKind.localFs` + `workspacePath`）；远端执行结果按「APP 工作区优先」写回线程本地目录（见 [remote-agent-local-workspace-test-matrix.md](../testing/remote-agent-local-workspace-test-matrix.md)）；`ExternalCodeAgentProvider` 已有 `subprocess` / `websocketJsonRpc` 两种传输定义；App Store 构建按 `shouldBlockEmbeddedAgentLaunch` 禁止本地拉起进程；app 不内置 `xworkmate-go-core` |
 | app #273（`feature/four-capabilities-20261003`） | 未合并；已并入 `main`（`f33f0d4`） | 四个产品模式；去掉 Gateway/Agent 与 Provider 菜单；AutoBot 用 `GatewayBotService`（`cron.add / update / runs / remove`）。合并后角色路由在 app 里**没有入口** |
-| OpenClaw（`haitaopanhq/openclaw.svc.plus`，2026-10-08 只读核对） | 已有 | shell 命令审批：`exec.approval.*`，见 §8.4 |
-| 插件 #9（`openclaw-multi-session-plugins`，未合并） | draft | Gateway 侧 `xworkmate_worker` 工具：Work → DSH ACP worker，Code → OpenCode v2 worker。DSH 的 ACP 授权请求一律拒绝（「直到实现审批回调」）；OpenCode v2 用静态权限规则，shell / git / 构建 / 测试默认拒绝。**与 bridge #30 的 agent 执行器功能重叠**，见 §11 |
+| OpenClaw | 部署固定 `2026.6.1`（playbooks `gateway_openclaw_required_version`）；最新稳定版 `2026.9.9`（2026-10-08 发布） | shell 命令审批见 §8.4；按委派任务限定工具见 §8.5 |
+| 插件 #9（`openclaw-multi-session-plugins`，未合并） | draft | Gateway 侧 `xworkmate_worker` 工具：Work → DSH ACP worker，Code → OpenCode v2 worker。DSH 的 ACP 授权请求一律拒绝（「直到实现审批回调」）；OpenCode v2 用静态权限规则，shell / git / 构建 / 测试默认拒绝。按 §1 的分工只用于离线委派；接入审批前不扩大其权限 |
 | playbooks #556 | 未检查 | `roles/vhosts/xworkmate_workers` 的 worker 部署 |
+| playbooks #637 | 待合并 | `gateway_openclaw` 角色写入命令审批默认值（`openclaw.json` 的 `tools.exec` 与主机 `exec-approvals.json` 的 `defaults`，保留运行时允许名单） |
+| gitops | 无需改动 | 目前没有 OpenClaw 的声明面（只有 compose 注释提及）；审批默认值属于主机服务配置，按仓库边界归 playbooks |
 
 ## 3. 两个 chip，各管一件事
 
@@ -82,6 +87,7 @@ app 仍只发一个请求到 bridge（#273 的固定路由），选了角色时�
 | Engineer，**有本地工作区** | 远端 `opencode-acp` → 远端 `deepseek-harness` → OpenClaw。前两个任一通过全部硬条件即选中，在 §5.4 的远端工作副本里执行；都不通过才选 OpenClaw |
 | Engineer，没有本地工作区 | 只用 OpenClaw，本地目录只同步远端结果 |
 | Architect / Researcher / Specialist | 只用 OpenClaw |
+| 任何角色的离线委派（AutoBot） | 只用 OpenClaw（Gateway 上的定时 / 后台任务；Work / Code 由插件 #9 的 worker 执行），见 §8 |
 
 「本地工作区」= 线程的 `workspaceBinding` 为 `localFs`，且是用户选定的项目目录（不是 App 自动建立、只用来接收结果的线程目录；`workspaceBinding` 需要能区分这两种来源，见 A5）。agent 执行器另外要求自身的 `workspace_edit`、`test_runner`、`permission_relay` 能力证据为 verified（#30 已有）。所有执行器都在远端运行。
 
@@ -211,7 +217,7 @@ app 仍只发一个请求到 bridge（#273 的固定路由），选了角色时�
 | 任务 | 提示词、附件、目标线程或项目 |
 | 角色 | 默认 / Engineer / Architect / Researcher / Specialist（按 §4，以委派时选的产品模式过滤） |
 | 模型与强度 | 创建时由 bridge 按角色策略选定，记录精确模型 ID、强度与策略版本 |
-| 预授权范围 | 只读 / 指定工作区目录内可写 / 禁止外部副作用（发送、发布、删除）；越权 → 暂停进审批队列 |
+| 预授权范围 | 只读 / 指定工作区目录内可写 / 禁止外部副作用（发送、发布、删除）；越权 → 暂停进审批队列。如何映射到 OpenClaw 见 §8.5 |
 | 计划 | 一次 / 每 N 分钟 / 每天某时 |
 | 预算 | 创建时须通过角色策略的预算检查 |
 | 通知 | 无 / 已配置渠道（沿用 #273 的 delivery） |
@@ -243,30 +249,66 @@ app 仍只发一个请求到 bridge（#273 的固定路由），选了角色时�
 - 做不到（需要改 OpenClaw 或插件）：
   1. **长时间停放**：等待有超时上限，且运行一直占着资源；用户几小时后才回来时，运行可能已经按拒绝结束。
   2. **持久化**：Gateway 重启后待审批项丢失（按拒绝处理）。
-  3. **非 shell 副作用**：文件写入、发送、发布不在审批范围内；「禁止外部副作用」只能靠工具允许名单（如插件 README 中的 `tools.allow`）来限制，委派任务能否按任务单独设置工具名单**尚未核实**。
+  3. **非 shell 副作用**：文件写入、发送、发布不在命令审批范围内；按任务限定工具见 §8.5。
 - 插件 #9 的 worker：DSH ACP 授权请求目前一律拒绝；OpenCode v2 用静态权限规则。两者都没有接入上面的审批流程。
 
 **对 A4 的修订**：第一版按「越权 → 等待（超时可配，默认沿用 30 分钟）→ 审批队列 → 超时拒绝」实现；委派详情明确显示「超时未决定按拒绝处理」。真正的长时间停放与持久化，作为 OpenClaw / 插件仓库的后续工作单独立项。
+
+### 8.5 按委派任务限定工具范围：OpenClaw 最新版核对（2026-10-08）
+
+核对对象：npm `openclaw@2026.9.9`（`latest`，2026-10-08 发布）包内的 `docs/`、`CHANGELOG.md` 与协议 schema，并与 docs.openclaw.ai 对照；部署版本 `2026.6.1` 的情况用本地 `2026.6.2` 源码核对。
+
+| 机制 | 粒度 | 限制什么 | 越权时 |
+|---|---|---|---|
+| 定时任务 `payload.toolsAllow`（`cron.add / cron.update`，CLI `--tools`） | **每个定时任务**（每次运行都生效） | 工具名（MCP 工具可用通配）；只能在全局 / agent 策略之内收窄 | 直接拒绝（工具不提供给模型），不暂停 |
+| 定时任务的 `agentId`、`sessionTarget`、`model`、`thinking`、`timeoutSeconds` | 每个定时任务 | 选用哪个 agent 及其配置 | — |
+| agent 级 `tools.allow / deny / profile`、沙箱、`exec-approvals.json` 的 `agents.<id>` 命令允许名单 | 每个 agent | 工具名；shell 命令；沙箱的目录与网络 | 工具：拒绝；命令：`ask = on-miss` 时**暂停等审批** |
+| 自动化的长期授权（standing grants，`2026.9.x`） | 每个定时任务 + 精确命令 / 目录 / 环境 | 用户对某次审批选「总是允许」后生成，可设过期、可撤销 | — |
+| `sessions.create / patch` 的 `permissionMode`（`read-only / guarded / workspace / full`）、`toolOverrides`、`execSecurity / execAsk`（`2026.9.x`） | 每个会话 | 文件系统边界（`sessionRoot`）、谁来审命令、MCP / 技能 / 网页搜索开关 | `guarded`：命令不在名单时找人审批 |
+| 插件 `before_tool_call`（`block` / `requireApproval`） | **每次工具调用**（可读 `sessionKey`、`runId`） | 任何工具，包括文件写入、发送 | 可暂停审批；超时默认 2 分钟、最长 10 分钟，超时 / 无审批渠道即拒绝；「总是允许」需插件自己保存 |
+| `agent` / `chat.send` / `sessions_spawn` | 每次运行 | **没有**公开的工具允许名单字段 | — |
+| 网络 | 全局，或 agent 沙箱 | 出口代理、沙箱网络 | 拒绝；没有按任务的网络范围 |
+
+**结论**：OpenClaw 原生支持按委派任务限定**工具名**，但只在定时任务上（`payload.toolsAllow`，`2026.6.x` 已有），且越权是直接拒绝而不是暂停。命令、文件目录、网络没有按任务的字段，只能按 agent 或会话设置。
+
+**映射到 §8.3 的三种预授权范围**：
+
+| 预授权范围 | 做法 |
+|---|---|
+| 只读 | 定时任务 `toolsAllow` 只含读类工具；使用 `exec` 为 `deny` 的范围 agent |
+| 指定工作区目录内可写 | 使用该范围的 agent（沙箱 `workspaceRoot` 指向远端工作副本，命令 `allowlist + on-miss + deny`）；`2026.9.x` 可改用 `sessions.create` 的 `permissionMode = guarded` + `cwd`，再用 `sessionTarget = session:<id>` 让定时任务进入该会话（是否沿用会话的 `permissionMode` **未核实**） |
+| 禁止外部副作用 | `toolsAllow` 不含发送 / 发布类工具；需要「暂停而非拒绝」时，由插件 #9 增加 `before_tool_call` 检查，按 `sessionKey`（隔离运行为 `cron:<jobId>`）查委派范围，返回 `requireApproval` |
+
+一次性委派也走定时任务：`schedule.kind = at`、`deleteAfterRun = true`、`sessionTarget = isolated`，带 `toolsAllow` 与 `agentId`，再调 `cron.run`。这样所有委派共用一套范围字段。
+
+**仍然存在的缺口**：
+
+1. 只有 shell 命令有内建的暂停审批；其他工具的暂停只能靠插件，且最长 10 分钟。
+2. 定时任务触发的审批只发给已连接、具备审批能力的客户端（Control UI、App、API 客户端），**没有客户端连接时立即拒绝**。离线委派要想「暂停进审批队列」，bridge 需要作为常驻审批客户端连接 Gateway，接收并转存待审批项；等待仍受 30 分钟超时限制。
+3. 待审批项不跨重启保存。
+4. standing grants、`permissionMode`、`toolOverrides` 需要 `2026.9.x`；部署版本 `2026.6.1` 只有 `toolsAllow`、agent 级策略和 `execSecurity / execAsk`。升级 OpenClaw 需单独评估。
 
 ## 9. 实施步骤
 
 | # | 工作项 | 输入 | 改动位置 | 验收条件 | 依赖 |
 |---|---|---|---|---|---|
-| 0a | 合并 bridge #29 到当前 `main` | #29 分支 | 解决 `internal/acp/types.go` 冲突 | 冲突已在 `b4d2876` 解决，本地 `go build / vet / test ./...` 通过；待 CI 与合并 | — |
+| 0a | 合并 bridge #29 到当前 `main` | #29 分支 | 解决 `internal/acp/types.go` 冲突 | ✅ 已合并（`bc96e01`） | — |
 | 0b | 验证 Gateway 暂停待审批能力 | Gateway / 插件 #9 文档或代码 | 只读调研 | ✅ 已完成，结论见 §8.4 | — |
 | B1 | 策略与选择器 | §4–§6 | `internal/rolepolicy/`（`product_modes`、执行器 `kind: gateway`、`effort`、`limits.effort_rules`）、示例策略 | 模式表拒绝组合；Engineer 有 / 无工作区时的执行器顺序；强度三条规则与范围夹取；全部有单测 | 0a |
 | B2 | Gateway 执行器路径 | B1 的选择结果 | `internal/acp/role_routing.go`、复用 #29 的 `sessions.patch` 步骤、`chat.send` 的 `thinking` | 角色轮次在 `sessions.patch` 前覆盖模型；被拒不发送；结果含 `resolvedEffort` 等字段；有 fake Gateway 测试 | 0a、B1 |
 | B3 | agent 执行器强度 | B1 | `internal/acpagentadapter/`（`reasoning_effort` 设置与读回、OpenCode `mode`） | dsh 广告时设置并读回；未广告不设置并报告；OpenCode 按角色设 `build` / `plan`；有 fake agent 测试 | B1 |
 | B5 | 工作区同步接口 | §5.4 | 新增 `xworkmate.workspace.sync.push` / `.pull`（清单比对、增量上传、改动集与 diff 返回）、worker 上按 `syncId` 隔离的工作副本目录与回收、`limits.workspace_sync`；acp-agent 会话的 `cwd` 指向工作副本 | 增量只传变化文件；排除规则生效（`.env*`、私钥不出设备）；超限拒绝派发；改动集含基线哈希；路径不能逃出工作副本目录；有测试 | B1 |
-| B4 | 后台任务待审批 | 0b 的结论 | 视 0b 而定 | 越权暂停可查询、可在之后批准 / 拒绝 | 0b |
+| B4 | 后台任务待审批 | §8.4、§8.5 | bridge 作为常驻审批客户端连接 Gateway（订阅 `exec.approval.requested`、调用 `exec.approval.list / resolve`），待审批项转存并在同步时提供给 App；委派创建时写入 `toolsAllow` 与范围 agent | 越权命令进入队列；用户在超时前决定可让运行继续；超时 / 无人决定按拒绝；范围外工具不提供给模型；有 fake Gateway 测试 | 0b、P1 |
 | A1 | 模式 chip | B1、B2 的合同 | `assistant_page_task_dialog_controls.dart`、`ThreadContextState`、`app_controller_desktop_role_routing.dart`、移动端模式配置 | 按 §4 显示与过滤；按线程保存；只读的模型 / 强度 chip；删除手动选模型；widget 测试 | #273 合入 `main` |
 | A5 | 本地工作区同步与改动确认 | B5 | `workspaceBinding` 区分「用户选定的项目目录」与「线程结果目录」；清单计算与上传；diff 审阅与冲突处理界面；各平台目录授权（§5.4 表） | 设备上不启动任何进程；未确认的改动不写入；冲突文件不被覆盖；排除文件不上传；各平台目录授权可持续使用 | A1、B5 |
 | A2 | AutoBot 中心（定时） | #273 `GatewayBotService` | 侧边栏按钮、`WorkspaceDestination.autoBot` 页面、Gateway chip 的 AutoBot 改为打开新建委派 | 侧边栏入口与徽标；定时任务列表 / 新建 / 暂停 / 历史 / 删除；widget 测试 | #273 |
 | A3 | 后台一次性任务、离线队列、同步 | 现有后台任务关联 | AutoBot 页、本地队列与同步游标 | 离线新建在恢复后按序提交且不重复；结果写回线程；徽标正确 | A2 |
 | A4 | 委派合同与审批队列 | B4 | AutoBot 页 | 预授权范围随委派保存；越权项出现在审批队列并可决定 | A3、B4 |
-| P / G / K | 部署配置与文档 | — | playbooks、gitops、knowledge | 执行器固定版本、适配器服务、SecretRef；角色 / 模式文档 | 仓库访问 |
+| P1 | Gateway 命令审批默认值 | §1 | playbooks `roles/vhosts/gateway_openclaw`（#637） | `openclaw.json` 与主机 `exec-approvals.json` 均为 `allowlist / on-miss / deny`；保留运行时允许名单；重复执行不重启 | — |
+| P2 | 范围 agent 与 OpenClaw 版本 | §8.5 | playbooks `openclaw.json.j2`（范围 agent 的工具与命令名单）；是否升级到 `2026.9.x` 另行决定 | 每种预授权范围有对应 agent；委派绑定到它 | P1 |
+| P / G / K | 部署配置与文档 | — | playbooks、gitops、knowledge | 执行器固定版本、适配器服务、SecretRef（含 `XWORKMATE_AI_INTERNAL_BASE_URL`）；角色 / 模式文档 | 仓库访问 |
 
-合并顺序：bridge 0a → B1 → B2 → B3 → B5；app #273 → A1 → A5 → A2 → A3；B4 与 A4 一起，取决于 0b。
+合并顺序：bridge B1 → B2 → B3 → B5；app #273 → A1 → A5 → A2 → A3；P1 → P2 → B4 → A4。
 
 ## 10. 验收用例
 
@@ -288,8 +330,8 @@ app 仍只发一个请求到 bridge（#273 的固定路由），选了角色时�
 
 1. §5.4 的同步上限、排除规则默认值、远端工作副本保留期还没定初值；大型工作区的首次上传耗时与流量需要实测。
 2. 移动端对用户目录的持续访问（iOS security-scoped URL、Android SAF）需要逐平台验证；不稳定的平台只提供「没有本地工作区」路径。
-3. §8.4：OpenClaw 的审批只覆盖 shell 命令、只存在内存、有超时上限；长时间停放、持久化和非 shell 副作用审批需要改 OpenClaw 或插件。委派任务能否单独设置工具允许名单尚未核实。
-4. **执行器重复**：bridge #30 的 acp-agent 适配器（授权回传给 App）与插件 #9 的 Gateway worker（静态权限、拒绝 ACP 授权请求）做的是同一件事。需要决定 Engineer 的远端 agent 执行器用哪一套，另一套不再扩展。
+3. §8.4 / §8.5：内建暂停审批只覆盖 shell 命令、只存在内存、有超时上限，且定时任务的审批在无客户端连接时立即拒绝；按任务只能限定工具名（越权即拒绝）。长时间停放、持久化和非 shell 副作用的暂停需要插件或 OpenClaw 的后续工作。
+4. 执行器分工已定（§1）：在线走 bridge #30，离线委派走 Gateway 与插件 #9。插件 #9 的 DSH worker 仍一律拒绝 ACP 授权请求，接入 B4 的审批前，离线 Work 任务遇到授权请求会失败。
 5. bridge 的角色任务状态仍只在内存里；bridge 重启会丢失进行中的实时轮次（与 #30 相同）。
-6. 依赖的 bridge #29（与 `main` 的冲突已在 `b4d2876` 解决）与 app #273 尚未合并。
+6. 依赖的 app #273 尚未合并（bridge #29 已合并）。
 7. 定时任务触发不经过 bridge，模型和强度在创建时固定；只能在同步时提示重新确认。
