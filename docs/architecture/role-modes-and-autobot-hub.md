@@ -19,6 +19,7 @@
 | 执行器分工 | 在线轮次（用户在 App 里等待）走 bridge #30 的 acp-agent 执行器（授权实时回传、可取消）；离线委派（AutoBot）走 OpenClaw Gateway 与插件 #9 的 worker |
 | Gateway 命令审批默认值 | 部署时 `security = allowlist`、`ask = on-miss`、`askFallback = deny`（playbooks #637） |
 | 连接地址 | 策略与文档不写真实主机名；连接用 `base_url_env` 由部署注入（bridge #31，已合并） |
+| OpenClaw 版本 | 升级到 `2026.9.9`（playbooks #638、插件 #10），以使用会话级 `permissionMode`、自动化长期授权等 §8.5 中的能力 |
 | 顺序 | 先写本文档，评审后编码 |
 
 ## 2. 现状与依赖（2026-10-08）
@@ -30,7 +31,7 @@
 | app `main`（含 #275） | 已合并 | 角色路由状态、授权面板、状态条、断流恢复。#275 的手动选模型 UI 依赖 agent 目标 |
 | app 本地执行现状 | 已有 | 线程有 `workspaceBinding`（`WorkspaceKind.localFs` + `workspacePath`）；远端执行结果按「APP 工作区优先」写回线程本地目录（见 [remote-agent-local-workspace-test-matrix.md](../testing/remote-agent-local-workspace-test-matrix.md)）；`ExternalCodeAgentProvider` 已有 `subprocess` / `websocketJsonRpc` 两种传输定义；App Store 构建按 `shouldBlockEmbeddedAgentLaunch` 禁止本地拉起进程；app 不内置 `xworkmate-go-core` |
 | app #273（`feature/four-capabilities-20261003`） | 未合并；已并入 `main`（`f33f0d4`） | 四个产品模式；去掉 Gateway/Agent 与 Provider 菜单；AutoBot 用 `GatewayBotService`（`cron.add / update / runs / remove`）。合并后角色路由在 app 里**没有入口** |
-| OpenClaw | 部署固定 `2026.6.1`（playbooks `gateway_openclaw_required_version`）；最新稳定版 `2026.9.9`（2026-10-08 发布） | shell 命令审批见 §8.4；按委派任务限定工具见 §8.5 |
+| OpenClaw | 部署固定 `2026.6.1`；升级到 `2026.9.9` 的 playbooks #638（draft，等插件 #10 发布）已通过升级演练：bridge 协议 v4、`sessions.patch`、`chat.send`、插件方法均兼容 | shell 命令审批见 §8.4；按委派任务限定工具见 §8.5 |
 | 插件 #9（`openclaw-multi-session-plugins`，未合并） | draft | Gateway 侧 `xworkmate_worker` 工具：Work → DSH ACP worker，Code → OpenCode v2 worker。DSH 的 ACP 授权请求一律拒绝（「直到实现审批回调」）；OpenCode v2 用静态权限规则，shell / git / 构建 / 测试默认拒绝。按 §1 的分工只用于离线委派；接入审批前不扩大其权限 |
 | playbooks #556 | 未检查 | `roles/vhosts/xworkmate_workers` 的 worker 部署 |
 | playbooks #637 | 已合并 | `gateway_openclaw` 角色写入命令审批默认值（`openclaw.json` 的 `tools.exec` 与主机 `exec-approvals.json` 的 `defaults`，保留运行时允许名单） |
@@ -305,10 +306,11 @@ app 仍只发一个请求到 bridge（#273 的固定路由），选了角色时�
 | A3 | 后台一次性任务、离线队列、同步 | 现有后台任务关联 | AutoBot 页、本地队列与同步游标 | 离线新建在恢复后按序提交且不重复；结果写回线程；徽标正确 | A2 |
 | A4 | 委派合同与审批队列 | B4 | AutoBot 页 | 预授权范围随委派保存；越权项出现在审批队列并可决定 | A3、B4 |
 | P1 | Gateway 命令审批默认值 | §1 | playbooks `roles/vhosts/gateway_openclaw`（#637，✅ 已合并） | `openclaw.json` 与主机 `exec-approvals.json` 均为 `allowlist / on-miss / deny`；保留运行时允许名单；重复执行不重启 | — |
-| P2 | 范围 agent 与 OpenClaw 版本 | §8.5 | playbooks `openclaw.json.j2`（范围 agent 的工具与命令名单）；是否升级到 `2026.9.x` 另行决定 | 每种预授权范围有对应 agent；委派绑定到它 | P1 |
+| P2 | OpenClaw 升级到 2026.9.9 | §8.5 | 插件 #10（Tasks API 移除、`session_start` 改 `api.on`）；playbooks #638（Node ≥24.16、升级前停服务 + `doctor --repair` 迁移、规范配置、`plugins install` 安装插件、审批默认值改用 `exec-policy set`） | 演练：2026.6.1 状态升级后网关就绪、断言全过、第三次运行 `changed=0`、bridge 探测全部成功 | P1 |
+| P3 | 范围 agent | §8.5 | playbooks `openclaw.json.j2`（范围 agent 的工具与命令名单） | 每种预授权范围有对应 agent；委派绑定到它 | P2 |
 | P / G / K | 部署配置与文档 | — | playbooks、gitops、knowledge | 执行器固定版本、适配器服务、SecretRef（含 `XWORKMATE_AI_INTERNAL_BASE_URL`）；角色 / 模式文档 | 仓库访问 |
 
-合并顺序：bridge B1 → B2 → B3 → B5；app #273 → A1 → A5 → A2 → A3；P1 → P2 → B4 → A4。
+合并顺序：bridge B1 → B2 → B3 → B5；app #273 → A1 → A5 → A2 → A3；P1 → 插件 #10 → P2（#638）→ P3 → B4 → A4。
 
 ## 10. 验收用例
 
