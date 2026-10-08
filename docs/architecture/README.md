@@ -11,6 +11,7 @@ This directory contains architecture documentation for the **xworkmate-bridge** 
 | [ADR: Unified Bridge Entrypoints](adr-unified-bridge-entrypoints.md) | Architecture Decision Record for unifying APP traffic entry points |
 | [Bridge Runtime Design](bridge-runtime-design.md) | Converged runtime model for xworkmate-bridge |
 | [Role Routing: Engineer Loop](role-routing-engineer-loop.md) | Role policy, model selection, ACP executors (DeepSeek Harness / OpenCode), permission relay, cancel and task events; per-repo work items with inputs, change locations and acceptance |
+| [Role Modes and AutoBot Hub](role-modes-and-autobot-hub.md) | Design draft: role mode chip per product mode, automatic model routing and effort, OpenClaw gateway executor, AutoBot sidebar hub with delegation contract and approval queue; implementation steps with inputs, change locations and acceptance |
 
 ## Related Repos
 
