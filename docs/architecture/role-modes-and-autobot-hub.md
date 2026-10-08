@@ -27,7 +27,9 @@
 | app `main`（含 #275） | 已合并 | 角色路由状态、授权面板、状态条、断流恢复。#275 的手动选模型 UI 依赖 agent 目标 |
 | app 本地执行现状 | 已有 | 线程有 `workspaceBinding`（`WorkspaceKind.localFs` + `workspacePath`）；远端执行结果按「APP 工作区优先」写回线程本地目录（见 [remote-agent-local-workspace-test-matrix.md](../testing/remote-agent-local-workspace-test-matrix.md)）；`ExternalCodeAgentProvider` 已有 `subprocess` / `websocketJsonRpc` 两种传输定义；App Store 构建按 `shouldBlockEmbeddedAgentLaunch` 禁止本地拉起进程；app 不内置 `xworkmate-go-core` |
 | app #273（`feature/four-capabilities-20261003`） | 未合并；已并入 `main`（`f33f0d4`） | 四个产品模式；去掉 Gateway/Agent 与 Provider 菜单；AutoBot 用 `GatewayBotService`（`cron.add / update / runs / remove`）。合并后角色路由在 app 里**没有入口** |
-| Gateway 插件 #9、playbooks #556 | 未检查（不在本会话可访问范围） | 后台任务暂停待审批需要 Gateway 侧支持，见 §8.4 |
+| OpenClaw（`haitaopanhq/openclaw.svc.plus`，2026-10-08 只读核对） | 已有 | shell 命令审批：`exec.approval.*`，见 §8.4 |
+| 插件 #9（`openclaw-multi-session-plugins`，未合并） | draft | Gateway 侧 `xworkmate_worker` 工具：Work → DSH ACP worker，Code → OpenCode v2 worker。DSH 的 ACP 授权请求一律拒绝（「直到实现审批回调」）；OpenCode v2 用静态权限规则，shell / git / 构建 / 测试默认拒绝。**与 bridge #30 的 agent 执行器功能重叠**，见 §11 |
+| playbooks #556 | 未检查 | `roles/vhosts/xworkmate_workers` 的 worker 部署 |
 
 ## 3. 两个 chip，各管一件事
 
@@ -219,22 +221,39 @@ app 仍只发一个请求到 bridge（#273 的固定路由），选了角色时�
 - 离线：离线时新建或修改的委派先存本地队列（每项带幂等键），恢复连接后按顺序提交；服务端与本地冲突时以服务端为准并显示差异。设备上不执行任何任务。
 - 同步：Gateway（`cron.list` / `cron.runs`、后台任务状态）与 Accounts（跨端会话事件）是事实来源；app 只保存缓存和同步游标。启动、网络恢复、打开中心时拉取增量；结果写回对应线程。
 
-### 8.4 越权暂停的前提（未验证）
+### 8.4 越权暂停：第 0b 步核对结果（2026-10-08）
 
-后台运行没有人实时在线，#30 的实时授权回传（10 分钟超时）不适用。需要：
+后台运行没有人实时在线，#30 的实时授权回传（10 分钟超时）不适用。设计要求：越权时暂停、待审批项可在之后查询、之后的决定能让运行继续或结束。
 
-1. Gateway 在后台运行遇到越权动作时**暂停**该运行，并把待审批项**持久化**；
-2. 这些待审批项可以在之后被查询；
-3. 之后提交的决定能让运行继续（批准）或结束（拒绝）。
+**OpenClaw 已有的能力**（只读核对 `src/gateway/exec-approval-manager.ts`、`src/infra/exec-approvals.ts`、`src/agents/bash-tools.exec-host-*.ts`）：
 
-Bridge 的授权状态只在内存里，不能承担持久化。以上能力是否已在 OpenClaw Gateway / 插件 #9 中提供，本会话无法查看，**列为第 0 步验证**。如果不支持，需要在 Gateway 插件仓库补齐；在补齐之前，越权动作按「拒绝」处理，并在委派详情里显示被拒的动作。
+| 项 | 现状 |
+|---|---|
+| Gateway 方法 | `exec.approval.request / get / list / waitDecision / resolve`；广播事件 `exec.approval.requested / resolved` |
+| 策略 | 按 agent 配置（`~/.openclaw/exec-approvals.json`）：`security` = `deny` / `allowlist` / `full`；`ask` = `off` / `on-miss` / `always`；`askFallback`（无人决定时的结果）；命令允许名单 |
+| 超时 | 默认 30 分钟（`DEFAULT_EXEC_APPROVAL_TIMEOUT_MS`）；超时后按 `askFallback` 处理 |
+| 默认值 | `security = full`、`ask = off`、`askFallback = full`：**默认不审批，超时也放行** |
+| 覆盖范围 | 只覆盖 shell 命令（bash / exec 工具）；文件编辑、发送消息、发布等不经过这套审批 |
+| 持久化 | 待审批项存在内存 `Map` 里；Gateway 重启即丢失；等待期间运行一直阻塞 |
+| 定时任务 | `src/cron` 里没有审批相关代码；定时触发的 agent 轮次用同样的工具，所以只要配置了策略就同样生效，但不会和 AutoBot 中心自动关联 |
+
+**结论**：设计要求部分满足。
+
+- 可以做到：预授权 = 为委派任务使用的 agent 配置 `security = allowlist`、`ask = on-miss`、`askFallback = deny` 加命令允许名单；越权 shell 命令 → 运行等待 → bridge 订阅 `exec.approval.requested` 并在同步时调用 `exec.approval.list`，放进审批队列 → 用户决定后调用 `exec.approval.resolve`；超时则拒绝。
+- 做不到（需要改 OpenClaw 或插件）：
+  1. **长时间停放**：等待有超时上限，且运行一直占着资源；用户几小时后才回来时，运行可能已经按拒绝结束。
+  2. **持久化**：Gateway 重启后待审批项丢失（按拒绝处理）。
+  3. **非 shell 副作用**：文件写入、发送、发布不在审批范围内；「禁止外部副作用」只能靠工具允许名单（如插件 README 中的 `tools.allow`）来限制，委派任务能否按任务单独设置工具名单**尚未核实**。
+- 插件 #9 的 worker：DSH ACP 授权请求目前一律拒绝；OpenCode v2 用静态权限规则。两者都没有接入上面的审批流程。
+
+**对 A4 的修订**：第一版按「越权 → 等待（超时可配，默认沿用 30 分钟）→ 审批队列 → 超时拒绝」实现；委派详情明确显示「超时未决定按拒绝处理」。真正的长时间停放与持久化，作为 OpenClaw / 插件仓库的后续工作单独立项。
 
 ## 9. 实施步骤
 
 | # | 工作项 | 输入 | 改动位置 | 验收条件 | 依赖 |
 |---|---|---|---|---|---|
-| 0a | 合并 bridge #29 到当前 `main` | #29 分支 | 解决 `internal/acp/types.go` 冲突 | `go test ./...` 通过；#29 的产品能力测试与 #30 的角色测试同时通过 | — |
-| 0b | 验证 Gateway 暂停待审批能力 | Gateway / 插件 #9 文档或代码 | 只读调研 | 写明支持与否、接口名；不支持则开插件仓库任务 | 需要访问对应仓库 |
+| 0a | 合并 bridge #29 到当前 `main` | #29 分支 | 解决 `internal/acp/types.go` 冲突 | 冲突已在 `b4d2876` 解决，本地 `go build / vet / test ./...` 通过；待 CI 与合并 | — |
+| 0b | 验证 Gateway 暂停待审批能力 | Gateway / 插件 #9 文档或代码 | 只读调研 | ✅ 已完成，结论见 §8.4 | — |
 | B1 | 策略与选择器 | §4–§6 | `internal/rolepolicy/`（`product_modes`、执行器 `kind: gateway`、`effort`、`limits.effort_rules`）、示例策略 | 模式表拒绝组合；Engineer 有 / 无工作区时的执行器顺序；强度三条规则与范围夹取；全部有单测 | 0a |
 | B2 | Gateway 执行器路径 | B1 的选择结果 | `internal/acp/role_routing.go`、复用 #29 的 `sessions.patch` 步骤、`chat.send` 的 `thinking` | 角色轮次在 `sessions.patch` 前覆盖模型；被拒不发送；结果含 `resolvedEffort` 等字段；有 fake Gateway 测试 | 0a、B1 |
 | B3 | agent 执行器强度 | B1 | `internal/acpagentadapter/`（`reasoning_effort` 设置与读回、OpenCode `mode`） | dsh 广告时设置并读回；未广告不设置并报告；OpenCode 按角色设 `build` / `plan`；有 fake agent 测试 | B1 |
@@ -269,7 +288,8 @@ Bridge 的授权状态只在内存里，不能承担持久化。以上能力是�
 
 1. §5.4 的同步上限、排除规则默认值、远端工作副本保留期还没定初值；大型工作区的首次上传耗时与流量需要实测。
 2. 移动端对用户目录的持续访问（iOS security-scoped URL、Android SAF）需要逐平台验证；不稳定的平台只提供「没有本地工作区」路径。
-3. §8.4 的 Gateway 暂停待审批能力未验证；不支持时 A4 只能「越权即拒绝」。
-4. bridge 的角色任务状态仍只在内存里；bridge 重启会丢失进行中的实时轮次（与 #30 相同）。
-5. 依赖的 bridge #29 与 app #273 尚未合并；#29 与 `main` 有冲突。
-6. 定时任务触发不经过 bridge，模型和强度在创建时固定；只能在同步时提示重新确认。
+3. §8.4：OpenClaw 的审批只覆盖 shell 命令、只存在内存、有超时上限；长时间停放、持久化和非 shell 副作用审批需要改 OpenClaw 或插件。委派任务能否单独设置工具允许名单尚未核实。
+4. **执行器重复**：bridge #30 的 acp-agent 适配器（授权回传给 App）与插件 #9 的 Gateway worker（静态权限、拒绝 ACP 授权请求）做的是同一件事。需要决定 Engineer 的远端 agent 执行器用哪一套，另一套不再扩展。
+5. bridge 的角色任务状态仍只在内存里；bridge 重启会丢失进行中的实时轮次（与 #30 相同）。
+6. 依赖的 bridge #29（与 `main` 的冲突已在 `b4d2876` 解决）与 app #273 尚未合并。
+7. 定时任务触发不经过 bridge，模型和强度在创建时固定；只能在同步时提示重新确认。
