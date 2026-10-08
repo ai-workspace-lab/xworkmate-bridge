@@ -77,12 +77,25 @@ type Executor struct {
 }
 
 type Connection struct {
-	BaseURL string `json:"base_url"`
+	// Exactly one of BaseURL (a literal endpoint) or BaseURLEnv (the
+	// environment variable that holds it, so deployments keep hostnames out
+	// of the policy file) is set.
+	BaseURL    string `json:"base_url,omitempty"`
+	BaseURLEnv string `json:"base_url_env,omitempty"`
 	// TokenEnv names the environment variable materialised from a SecretRef.
 	TokenEnv string `json:"token_env"`
 	// AllowedDataClasses lists data classes that may be sent to this
 	// connection and its upstream providers.
 	AllowedDataClasses []string `json:"allowed_data_classes"`
+}
+
+// ResolvedBaseURL returns the configured endpoint. It is empty when
+// BaseURLEnv names an unset variable.
+func (c Connection) ResolvedBaseURL() string {
+	if env := strings.TrimSpace(c.BaseURLEnv); env != "" {
+		return strings.TrimSpace(os.Getenv(env))
+	}
+	return strings.TrimSpace(c.BaseURL)
 }
 
 type ModelEntry struct {
@@ -198,8 +211,8 @@ func (p *Policy) Validate() error {
 		return fmt.Errorf("role policy: limits.catalog_max_age_seconds must be positive")
 	}
 	for id, conn := range p.Connections {
-		if strings.TrimSpace(conn.BaseURL) == "" {
-			return fmt.Errorf("role policy: connection %q has no base_url", id)
+		if (strings.TrimSpace(conn.BaseURL) == "") == (strings.TrimSpace(conn.BaseURLEnv) == "") {
+			return fmt.Errorf("role policy: connection %q needs exactly one of base_url or base_url_env", id)
 		}
 		if strings.TrimSpace(conn.TokenEnv) == "" {
 			return fmt.Errorf("role policy: connection %q has no token_env", id)

@@ -63,7 +63,7 @@ App(Chat 入口)                Bridge                         acp-agent adapter
 | # | 工作项 | 输入 | 改动位置 | 验收条件 | 状态 |
 |---|---|---|---|---|---|
 | B1 | 角色策略与纯选择器 | 策略 JSON（`BRIDGE_ROLE_POLICY_PATH`）、任务契约（role、roleMode、roleModel、specialty、dataClass、workingDirectory、prompt 长度）、已连接 provider、live catalog | `internal/rolepolicy/policy.go`、`selector.go` | 按“连接 → 目录 → 能力 → 上下文 → 外发 → 预算”硬条件排除；首个通过者按用户顺序选中；拒绝时返回 code、排除理由与下一步；不改标点、大小写；过期证据回到 unknown；`candidate_only` 不可选。`go test ./internal/rolepolicy` | ✅ |
-| B2 | Live 模型目录 | 连接 `base_url` + `token_env`（由 SecretRef 注入） | `internal/rolepolicy/catalog.go`、`internal/acp/role_routing.go`（缓存，`catalog_max_age_seconds/2` 刷新，失败 30s 后重试） | 保留 `data[].id` 原值；401 / 缺 token / 超时都成为 `catalog_unavailable` 而非放行；能力接口不暴露 token | ✅ |
+| B2 | Live 模型目录 | 连接 `base_url` 或 `base_url_env`（二选一）+ `token_env`（由 SecretRef 注入） | `internal/rolepolicy/catalog.go`、`internal/acp/role_routing.go`（缓存，`catalog_max_age_seconds/2` 刷新，失败 30s 后重试） | 保留 `data[].id` 原值；401 / 缺 token / 超时都成为 `catalog_unavailable` 而非放行；能力接口不暴露 token | ✅ |
 | B3 | 路由接入 | `session.start` / `session.message` / `xworkmate.routing.resolve` 的 `routing.role` / `routing.roleMode` | `internal/acp/routing.go`、`orchestrator.go`、`contract.go` | 有 role 字段才走角色路由，其余请求行为不变；拒绝时不派发并发 `task.rejected`；选中时只把 `model=<executor 选项值>` 交给选中的 provider | ✅ |
 | B4 | ACP 执行器适配（DeepSeek Harness / OpenCode） | `dsh --profile acp`、`opencode acp` | `internal/acpagentadapter/`、`main.go`（`adapter acp-agent`）、`internal/acp/config.go`（`deepseek_harness_url` / `opencode_acp_url`）、`provider_compat.go` | 只用 ACP v1 标准方法；模型必须在执行器广告的 `model` 选项中（否则 `MODEL_NOT_ADVERTISED`），设置后读回校验（否则 `MODEL_BINDING_UNVERIFIED`）；工作区必须是绝对路径；无 token 拒绝启动。已对真实 dsh 0.2.0-rc.2 与 opencode 1.18.35 完成 initialize + session/new + 模型广告校验（未发送 prompt、未调用模型） | ✅ |
 | B5 | 授权回传 | 执行器 `session/request_permission` | `internal/acp/permission_broker.go`、`provider_compat.go`、`rpc_handler.go`（`xworkmate.permissions.respond` / `.list`） | 角色任务的授权全部等用户决定；只接受执行器给出的 optionId，且 sessionId 必须匹配；超时、取消、断线、未知回复一律按 ACP `cancelled`（拒绝）；适配器不认旧的 `approved:true` 形状 | ✅ |
@@ -98,7 +98,7 @@ App(Chat 入口)                Bridge                         acp-agent adapter
 |---|---|---|---|---|---|
 | G1 | 执行器版本声明 | P1 版本 | `topology/prod/selfhost/` 下 xworkmate workers 清单 | 版本与 playbooks 一致；变更走 PR | ⏳ |
 | G2 | 角色策略引用 | 本仓库 `example/role-router-policy.example.json` 审核后的副本 | 策略文件 + bridge `BRIDGE_ROLE_POLICY_PATH` | 默认 `enabled: false`、`budget.mode: disabled`；启用需单独 PR 并附证据 | ⏳ |
-| G3 | 可选 gateway 连接器 | `ai-internal` base URL | 连接声明 + `XWORKMATE_AI_INTERNAL_TOKEN` 的 SecretRef | 仓库中无明文 token | ⏳ |
+| G3 | 可选 gateway 连接器 | `ai-internal` base URL | 连接声明 + `XWORKMATE_AI_INTERNAL_BASE_URL` 与 `XWORKMATE_AI_INTERNAL_TOKEN`（后者为 SecretRef） | 仓库中无明文 token | ⏳ |
 
 ### 4.5 knowledge
 
@@ -182,7 +182,7 @@ App(Chat 入口)                Bridge                         acp-agent adapter
    ```
 
    bridge 端：`upstream.deepseek_harness_url` / `upstream.opencode_acp_url`（或 `DEEPSEEK_HARNESS_RPC_URL` / `OPENCODE_ACP_RPC_URL`），`UPSTREAM_AUTHORIZATION_HEADER` 与适配器 token 一致。
-2. 执行器的模型连接：OpenCode 使用 provider `ai-internal`（`https://ai-internal.onwalk.net/v1`，凭据存 OpenCode 凭据库，不写明文）；执行器广告的选项值形如 `ai-internal/<网关精确 ID>`，因此 `model_option_template` 为 `ai-internal/{model_id}`。DeepSeek Harness 选项值是 JSON 对 `["<provider>","<model>"]`，需要在 dsh profile 中配置同名 provider 后才能使用模板 `["ai-internal","{model_id}"]`。
+2. 执行器的模型连接：OpenCode 使用 provider `ai-internal`（base URL 由部署注入，例如 `https://<ai-gateway-host>/v1`；凭据存 OpenCode 凭据库，不写明文）；执行器广告的选项值形如 `ai-internal/<网关精确 ID>`，因此 `model_option_template` 为 `ai-internal/{model_id}`。DeepSeek Harness 选项值是 JSON 对 `["<provider>","<model>"]`，需要在 dsh profile 中配置同名 provider 后才能使用模板 `["ai-internal","{model_id}"]`。
 3. 证据：用 bridge 所用 token 获取 live `/v1/models`，把观察到的精确 ID 写入 `gateway_model_id`；为执行器能力（`workspace_edit`、`test_runner`、`permission_relay`）和模型能力（`tool_calling`、`context_window`）补 `verified` 证据，填写 `source`、`checked_at`、`valid_until`。
 4. 预算：`budget.mode` 只有两种：`disabled`（默认，拒绝所有付费派发）和 `gateway_quota`（以 new-api token 配额的预扣作为硬上限）。只有在该 token 已设置配额上限后才切到 `gateway_quota`。本轮不实现 bridge 内部的金额账本，因为 bridge 不持久化状态，重启会丢失预留。
 5. 最后把策略 `enabled` 设为 `true`，用 `xworkmate.routing.resolve` 查看 `roleSelection` 确认排除理由为空，再在 App 中选择“角色：自动”。

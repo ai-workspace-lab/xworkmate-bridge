@@ -295,6 +295,8 @@ func TestParseRejectsBrokenReferences(t *testing.T) {
 		"unknown model":    `{"version":"v","budget":{"mode":"disabled"},"limits":{"context_reserve_tokens":1,"catalog_max_age_seconds":1},"roles":{"engineer":{"preferences":["missing"]}}}`,
 		"bad budget":       `{"version":"v","budget":{"mode":"hard"},"limits":{"context_reserve_tokens":1,"catalog_max_age_seconds":1}}`,
 		"unknown role":     `{"version":"v","budget":{"mode":"disabled"},"limits":{"context_reserve_tokens":1,"catalog_max_age_seconds":1},"roles":{"boss":{}}}`,
+		"no base url":      `{"version":"v","budget":{"mode":"disabled"},"limits":{"context_reserve_tokens":1,"catalog_max_age_seconds":1},"connections":{"c":{"token_env":"T"}}}`,
+		"two base urls":    `{"version":"v","budget":{"mode":"disabled"},"limits":{"context_reserve_tokens":1,"catalog_max_age_seconds":1},"connections":{"c":{"base_url":"https://gateway.example/v1","base_url_env":"U","token_env":"T"}}}`,
 	}
 	for name, raw := range cases {
 		if _, err := Parse([]byte(raw)); err == nil {
@@ -328,6 +330,23 @@ func TestFetchCatalogKeepsExactIDs(t *testing.T) {
 	}
 	if snapshot := FetchCatalog(context.Background(), server.Client(), "ai-internal", conn, testNow); !strings.Contains(snapshot.Err, "TEST_GATEWAY_TOKEN") {
 		t.Fatalf("expected missing token error, got %+v", snapshot)
+	}
+}
+
+func TestFetchCatalogReadsBaseURLFromEnv(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"id":"gpt-6.1-sol"}]}`))
+	}))
+	defer server.Close()
+	t.Setenv("TEST_GATEWAY_TOKEN", "secret-token")
+	conn := Connection{BaseURLEnv: "TEST_GATEWAY_BASE_URL", TokenEnv: "TEST_GATEWAY_TOKEN"}
+	if snapshot := FetchCatalog(context.Background(), server.Client(), "ai-internal", conn, testNow); !strings.Contains(snapshot.Err, "TEST_GATEWAY_BASE_URL") {
+		t.Fatalf("expected missing base url error, got %+v", snapshot)
+	}
+	t.Setenv("TEST_GATEWAY_BASE_URL", server.URL+"/v1")
+	snapshot := FetchCatalog(context.Background(), server.Client(), "ai-internal", conn, testNow)
+	if snapshot.Err != "" || strings.Join(snapshot.ModelIDs, ",") != "gpt-6.1-sol" {
+		t.Fatalf("unexpected snapshot: %+v", snapshot)
 	}
 }
 
