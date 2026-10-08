@@ -198,6 +198,17 @@ func (r *distributedTaskRouter) forwardDecision(req *http.Request, request share
 	}
 
 	method := strings.TrimSpace(request.Method)
+	if distributedStickyFollowUp(request) {
+		// Follow-ups for a session that was already forwarded must reach the
+		// node holding its run, pending permission prompts and task events.
+		// They never create a route of their own.
+		if sessionKey := distributedSessionRouteKey(request); sessionKey != "" {
+			if routed, ok := r.routeStore.get(sessionKey); ok && !strings.EqualFold(routed, r.localNodeID) {
+				return r.decisionForTarget(routed, req)
+			}
+		}
+		return distributedForwardDecision{}, false, nil
+	}
 	if !distributedForwardableMethod(method) {
 		return distributedForwardDecision{}, false, nil
 	}
@@ -219,6 +230,26 @@ func (r *distributedTaskRouter) forwardDecision(req *http.Request, request share
 
 func distributedForwardableMethod(method string) bool {
 	return method == "session.start" || method == "session.message"
+}
+
+// distributedStickyFollowUp lists session-scoped control calls that follow an
+// existing session route. xworkmate.tasks.get follows only when it carries no
+// OpenClaw run identifiers; OpenClaw lookups keep their local run store path.
+func distributedStickyFollowUp(request shared.RPCRequest) bool {
+	switch strings.TrimSpace(request.Method) {
+	case "session.cancel", "xworkmate.permissions.respond", "xworkmate.permissions.list":
+		return true
+	case "xworkmate.tasks.get":
+		params := shared.AsMap(request.Params)
+		for _, key := range []string{"runId", "taskId", "openclawSessionKey", "appThreadKey"} {
+			if strings.TrimSpace(shared.StringArg(params, key, "")) != "" {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
 }
 
 func distributedSessionRouteKey(request shared.RPCRequest) string {

@@ -150,5 +150,8 @@ Optional workflow input:
 ## Environment
 
 - `ACP_LISTEN_ADDR`: listen address for `serve` mode, default `127.0.0.1:8787`
+- `BRIDGE_ROLE_POLICY_PATH`: optional role policy JSON (see `example/role-router-policy.example.json` and [docs/architecture/role-routing-engineer-loop.md](docs/architecture/role-routing-engineer-loop.md)); unset means role routing returns `ROLE_POLICY_UNCONFIGURED`
+- `BRIDGE_PERMISSION_TIMEOUT_SECONDS`: how long a role-routed task waits for the user's permission decision, default `600`; no decision denies
+- `DEEPSEEK_HARNESS_RPC_URL` / `OPENCODE_ACP_RPC_URL`: WebSocket URLs of `xworkmate-go-core adapter acp-agent` in front of `dsh --profile acp` and `opencode acp`
 - `OUTPUT_DIR`: optional output directory for `make build`
 - `OUTPUT_PATH`: optional explicit build path for `make build`

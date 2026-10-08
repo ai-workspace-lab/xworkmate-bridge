@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 	"xworkmate-bridge/internal/desktop"
@@ -28,7 +29,10 @@ func (s *Server) handleRequest(request shared.RPCRequest, notify func(map[string
 		}, nil
 
 	case "acp.capabilities":
-		return s.catalog.Get(), nil
+		capabilities := s.catalog.Get()
+		capabilities["roleRouting"] = s.roleRoutingCapabilities()
+		capabilities["permissionRelay"] = true
+		return capabilities, nil
 
 	case "session.start", "session.message":
 		return s.orchestrator.Process(ctx, method, request.Params, notify)
@@ -36,7 +40,13 @@ func (s *Server) handleRequest(request shared.RPCRequest, notify func(map[string
 	case "session.cancel":
 		sessionID := shared.StringArg(request.Params, "sessionId", "")
 		s.cancelSession(ctx, sessionID)
-		return map[string]any{"accepted": true}, nil
+		return map[string]any{"accepted": true, "runCancelled": s.cancelRoleRun(sessionID)}, nil
+
+	case "xworkmate.permissions.respond":
+		return s.handlePermissionRespond(request.Params)
+
+	case "xworkmate.permissions.list":
+		return map[string]any{"items": s.permissions.list(strings.TrimSpace(shared.StringArg(request.Params, "sessionId", "")))}, nil
 
 	case "session.close":
 		sessionID := shared.StringArg(request.Params, "sessionId", "")
@@ -61,6 +71,7 @@ func (s *Server) handleRequest(request shared.RPCRequest, notify func(map[string
 			"skillResolutionSource":     res.SkillResolutionSource,
 			"needsSkillInstall":         res.NeedsSkillInstall,
 			"skillInstallRequestId":     res.SkillInstallRequestID,
+			"roleSelection":             roleSelectionOrNil(res),
 		}, nil
 
 	case "xworkmate.gateway.connect", "xworkmate.gateway.request", "xworkmate.gateway.disconnect":
@@ -124,6 +135,9 @@ func (s *Server) handleSessionPrepare(ctx context.Context, params map[string]any
 }
 
 func (s *Server) handleTaskGet(ctx context.Context, params map[string]any, notify func(map[string]any)) map[string]any {
+	if snapshot, ok := s.roleTaskSnapshot(params); ok {
+		return snapshot
+	}
 	params = s.taskGetParamsWithSessionScope(params)
 	gatewayProvider := strings.TrimSpace(shared.StringArg(params, "gatewayProviderId", ""))
 	if gatewayProvider == "" {
@@ -877,9 +891,33 @@ func (s *Server) cancelSession(ctx context.Context, sessionID string) {
 		sess.mu.Lock()
 		sess.task.State = TaskStateCancelled
 		sess.task.UpdatedAt = time.Now()
+		roleRouted := sess.role != nil
 		sess.mu.Unlock()
-		_ = sess.compat.CancelSession(ctx, sessionID)
+		if err := sess.compat.CancelSession(ctx, sessionID); err != nil && roleRouted {
+			log.Printf("level=warn component=role_routing event=upstream_cancel_failed sessionId=%q error=%q", sessionID, err)
+		}
 	}
+}
+
+func (s *Server) handlePermissionRespond(params map[string]any) (map[string]any, *shared.RPCError) {
+	requestID := strings.TrimSpace(shared.StringArg(params, "requestId", ""))
+	sessionID := strings.TrimSpace(shared.StringArg(params, "sessionId", ""))
+	optionID := strings.TrimSpace(shared.StringArg(params, "optionId", ""))
+	cancel := strings.EqualFold(strings.TrimSpace(shared.StringArg(params, "decision", "")), "cancel")
+	if requestID == "" || sessionID == "" || (optionID == "" && !cancel) {
+		return nil, &shared.RPCError{Code: -32602, Message: "requestId, sessionId and optionId (or decision=cancel) are required"}
+	}
+	if err := s.permissions.respond(sessionID, requestID, optionID, cancel); err != nil {
+		return nil, &shared.RPCError{Code: -32602, Message: err.Error()}
+	}
+	return map[string]any{"accepted": true, "requestId": requestID}, nil
+}
+
+func roleSelectionOrNil(res RoutingResult) any {
+	if res.RoleDecision == nil {
+		return nil
+	}
+	return decisionSummary(*res.RoleDecision)
 }
 
 func (s *Server) closeSession(ctx context.Context, sessionID string) bool {

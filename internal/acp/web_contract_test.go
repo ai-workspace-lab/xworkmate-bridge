@@ -1178,11 +1178,11 @@ func TestHandleRPCCapabilitiesReturnsCanonicalProviderContract(t *testing.T) {
 	}
 
 	providerCatalog := mustObjectList(t, result["providerCatalog"])
-	if len(providerCatalog) != 4 {
-		t.Fatalf("expected 4 providers, got %#v", providerCatalog)
+	if len(providerCatalog) != 6 {
+		t.Fatalf("expected 6 providers, got %#v", providerCatalog)
 	}
-	wantAgentIDs := []string{"codex", "opencode", "gemini", "hermes"}
-	wantAgentLabels := []string{"Codex", "OpenCode", "Gemini", "Hermes"}
+	wantAgentIDs := []string{"codex", "opencode", "gemini", "hermes", "deepseek-harness", "opencode-acp"}
+	wantAgentLabels := []string{"Codex", "OpenCode", "Gemini", "Hermes", "DeepSeek Harness", "OpenCode (ACP)"}
 	for index, wantID := range wantAgentIDs {
 		if got := providerCatalog[index]["providerId"]; got != wantID {
 			t.Fatalf("expected provider %q at index %d, got %#v", wantID, index, providerCatalog)
