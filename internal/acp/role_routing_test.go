@@ -112,7 +112,7 @@ func writeEngineerPolicy(t *testing.T, gatewayURL string) string {
 		},
 		"executors": map[string]any{
 			"deepseek-harness": map[string]any{
-				"provider_id": "deepseek-harness", "connection": "ai-internal", "model_option_template": "ai-internal/{model_id}",
+				"kind": "agent", "provider_id": "deepseek-harness", "connection": "ai-internal", "model_option_template": "ai-internal/{model_id}",
 				"capabilities": map[string]any{"workspace_edit": fact(true), "test_runner": fact(true), "permission_relay": fact(true)},
 			},
 		},
@@ -127,6 +127,7 @@ func writeEngineerPolicy(t *testing.T, gatewayURL string) string {
 				"required_model_capabilities":    []string{"tool_calling"},
 				"required_executor_capabilities": []string{"workspace_edit", "test_runner", "permission_relay"},
 				"requires_workspace":             true,
+				"product_modes":                  []string{"code"},
 			},
 		},
 	}
@@ -431,4 +432,26 @@ func findEvent(recorder *eventRecorder, name string) map[string]any {
 		}
 	}
 	return nil
+}
+
+func TestEngineerLoopRejectsRoleOutsideProductMode(t *testing.T) {
+	upstream := newFakeACPAgentUpstream(t, false)
+	server := newRoleRoutingTestServer(t, upstream, "gpt-6.1-sol")
+	request := engineerStartRequest(t.TempDir())
+	request.Params["metadata"] = map[string]any{
+		"xworkmateProductCapability": map[string]any{"schemaVersion": 1, "mode": "work"},
+	}
+	result, rpcErr := server.handleRequest(request, nil)
+	if rpcErr != nil {
+		t.Fatalf("unexpected rpc error: %#v", rpcErr)
+	}
+	if shared.AsMap(result["roleSelection"])["code"] != "role_not_allowed_for_mode" {
+		t.Fatalf("expected role_not_allowed_for_mode, got %#v", result)
+	}
+	upstream.mu.Lock()
+	dispatched := upstream.startParams != nil
+	upstream.mu.Unlock()
+	if dispatched {
+		t.Fatalf("a rejected role turn must not reach the executor")
+	}
 }

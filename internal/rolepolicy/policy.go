@@ -29,6 +29,22 @@ const (
 	StateUnknown  = "unknown"
 )
 
+// Product modes as sent in metadata.xworkmateProductCapability.mode. Chat is
+// never routed by role, so a role can only list work and code.
+const (
+	ProductModeChat = "chat"
+	ProductModeWork = "work"
+	ProductModeCode = "code"
+)
+
+// Executor kinds. An agent executor runs an ACP agent against a remote
+// working copy of the user's workspace; a gateway executor runs the turn on
+// the OpenClaw Gateway and needs no workspace.
+const (
+	ExecutorKindAgent   = "agent"
+	ExecutorKindGateway = "gateway"
+)
+
 // Budget modes.
 const (
 	// BudgetModeDisabled refuses every paid dispatch. It is the default.
@@ -57,15 +73,30 @@ type RoleProfile struct {
 	Executors []string `json:"executors"`
 	// RequiredModelCapabilities must be verified on the model binding.
 	RequiredModelCapabilities []string `json:"required_model_capabilities"`
-	// RequiredExecutorCapabilities must be verified on the executor.
+	// RequiredExecutorCapabilities must be verified on agent executors,
+	// which edit and test a working copy of the user's workspace. Gateway
+	// executors run under OpenClaw's own tool policy and exec approvals.
 	RequiredExecutorCapabilities []string `json:"required_executor_capabilities"`
 	RequiresWorkspace            bool     `json:"requires_workspace"`
 	RequiresSpecialty            bool     `json:"requires_specialty"`
 	// Tools is the executor tool whitelist for this role.
 	Tools []string `json:"tools"`
+	// ProductModes lists the product modes this role may be used in.
+	ProductModes []string `json:"product_modes"`
+	// Effort is the role's starting effort and the range rules may move it in.
+	Effort *EffortRange `json:"effort,omitempty"`
+}
+
+// EffortRange bounds the automatic effort for a role. Levels are EffortLevels.
+type EffortRange struct {
+	Start string `json:"start"`
+	Min   string `json:"min"`
+	Max   string `json:"max"`
 }
 
 type Executor struct {
+	// Kind is ExecutorKindAgent or ExecutorKindGateway.
+	Kind string `json:"kind"`
 	// ProviderID is the bridge provider that runs this executor.
 	ProviderID string `json:"provider_id"`
 	// Connection is the model connection the executor is configured against.
@@ -133,6 +164,19 @@ type Limits struct {
 	ContextReserveTokens int `json:"context_reserve_tokens"`
 	// CatalogMaxAge bounds how old a live catalog snapshot may be.
 	CatalogMaxAgeSeconds int `json:"catalog_max_age_seconds"`
+	// EffortRules holds the thresholds for automatic effort; required when
+	// any role declares an effort range.
+	EffortRules *EffortRules `json:"effort_rules,omitempty"`
+}
+
+// EffortRules are the thresholds of the deterministic effort adjustments.
+type EffortRules struct {
+	// LargeContextTokens raises effort when the prompt estimate exceeds it.
+	LargeContextTokens int `json:"large_context_tokens"`
+	// LargeContextAttachments raises effort at this many attachments.
+	LargeContextAttachments int `json:"large_context_attachments"`
+	// ShortFollowUpChars lowers effort for a follow-up shorter than this.
+	ShortFollowUpChars int `json:"short_follow_up_chars"`
 }
 
 // Verified reports whether the fact is verified and still valid at now.
@@ -219,6 +263,9 @@ func (p *Policy) Validate() error {
 		}
 	}
 	for id, exec := range p.Executors {
+		if exec.Kind != ExecutorKindAgent && exec.Kind != ExecutorKindGateway {
+			return fmt.Errorf("role policy: executor %q kind must be %q or %q", id, ExecutorKindAgent, ExecutorKindGateway)
+		}
 		if strings.TrimSpace(exec.ProviderID) == "" {
 			return fmt.Errorf("role policy: executor %q has no provider_id", id)
 		}
@@ -252,6 +299,19 @@ func (p *Policy) Validate() error {
 		for _, execID := range role.Executors {
 			if _, ok := p.Executors[execID]; !ok {
 				return fmt.Errorf("role policy: role %q references unknown executor %q", roleID, execID)
+			}
+		}
+		for _, mode := range role.ProductModes {
+			if mode != ProductModeWork && mode != ProductModeCode {
+				return fmt.Errorf("role policy: role %q lists product mode %q; only %q and %q route by role", roleID, mode, ProductModeWork, ProductModeCode)
+			}
+		}
+		if role.Effort != nil {
+			if err := role.Effort.validate(); err != nil {
+				return fmt.Errorf("role policy: role %q effort: %w", roleID, err)
+			}
+			if err := p.Limits.EffortRules.validate(); err != nil {
+				return fmt.Errorf("role policy: role %q has an effort range but %w", roleID, err)
 			}
 		}
 	}

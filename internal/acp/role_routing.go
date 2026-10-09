@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"xworkmate-bridge/internal/rolepolicy"
 	"xworkmate-bridge/internal/shared"
@@ -116,16 +117,24 @@ func (s *Server) resolveRoleRouting(ctx context.Context, params map[string]any, 
 	if policy.Enabled {
 		catalogs = s.roles.liveCatalogs(ctx, policy, now)
 	}
+	prompt := shared.StringArg(params, "taskPrompt", "")
+	productCapability := shared.AsMap(shared.AsMap(params["metadata"])["xworkmateProductCapability"])
 	decision := rolepolicy.Select(policy, catalogs, rolepolicy.Request{
 		Role:               shared.StringArg(routingParams, "role", ""),
 		RoleMode:           shared.StringArg(routingParams, "roleMode", ""),
 		ManualModel:        shared.StringArg(routingParams, "roleModel", ""),
+		ProductMode:        strings.TrimSpace(shared.StringArg(productCapability, "mode", "")),
 		Specialty:          shared.StringArg(routingParams, "specialty", ""),
 		DataClass:          shared.StringArg(routingParams, "dataClass", ""),
 		WorkingDirectory:   strings.TrimSpace(shared.StringArg(params, "workingDirectory", "")),
-		PromptBytes:        len(shared.StringArg(params, "taskPrompt", "")),
+		PromptBytes:        len(prompt),
+		PromptChars:        utf8.RuneCountInString(prompt),
+		Attachments:        len(shared.ListArg(params, "attachments")) + len(shared.ListArg(params, "inlineAttachments")),
 		AvailableProviders: s.getAvailableProviderIDs(),
-		Now:                now,
+		// Gateway executors are selected only once the role turn can run
+		// through the OpenClaw Gateway path (design step B2).
+		ExecutorKinds: []string{rolepolicy.ExecutorKindAgent},
+		Now:           now,
 	})
 	if !decision.Selected {
 		result := unavailable(unavailableRoleSelectionRejected, decision.Code+": "+decision.Message)
@@ -169,6 +178,8 @@ func (s *Server) roleRoutingCapabilities() map[string]any {
 			"executors":         append([]string(nil), profile.Executors...),
 			"requiresWorkspace": profile.RequiresWorkspace,
 			"requiresSpecialty": profile.RequiresSpecialty,
+			"productModes":      append([]string(nil), profile.ProductModes...),
+			"effort":            profile.Effort,
 		})
 	}
 	return map[string]any{
@@ -192,6 +203,7 @@ func decisionSummary(decision rolepolicy.Decision) map[string]any {
 		"role":            decision.Role,
 		"roleMode":        decision.RoleMode,
 		"executor":        decision.Executor,
+		"executorKind":    decision.ExecutorKind,
 		"providerId":      decision.ProviderID,
 		"connection":      decision.Connection,
 		"modelKey":        decision.ModelKey,
@@ -199,6 +211,7 @@ func decisionSummary(decision rolepolicy.Decision) map[string]any {
 		"modelOption":     decision.ModelOption,
 		"tools":           append([]string(nil), decision.Tools...),
 		"estimatedTokens": decision.EstimatedTokens,
+		"effort":          decision.Effort,
 		"reasons":         append([]string(nil), decision.Reasons...),
 		"excluded":        decision.Excluded,
 		"enabledRoles":    append([]string(nil), decision.EnabledRoles...),
