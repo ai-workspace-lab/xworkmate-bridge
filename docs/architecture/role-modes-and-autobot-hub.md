@@ -295,7 +295,7 @@ app 仍只发一个请求到 bridge（#273 的固定路由），选了角色时�
 |---|---|---|---|---|---|
 | 0a | 合并 bridge #29 到当前 `main` | #29 分支 | 解决 `internal/acp/types.go` 冲突 | ✅ 已合并（`bc96e01`） | — |
 | 0b | 验证 Gateway 暂停待审批能力 | Gateway / 插件 #9 文档或代码 | 只读调研 | ✅ 已完成，结论见 §8.4 | — |
-| B1 | 策略与选择器 | §4–§6 | `internal/rolepolicy/`（`product_modes`、执行器 `kind: gateway`、`effort`、`limits.effort_rules`）、示例策略 | 模式表拒绝组合；Engineer 有 / 无工作区时的执行器顺序；强度三条规则与范围夹取；全部有单测 | 0a |
+| B1 ✅（#32） | 策略与选择器 | §4–§6 | `internal/rolepolicy/`（`product_modes`、执行器 `kind: gateway`、`effort`、`limits.effort_rules`）、示例策略 | 模式表拒绝组合；Engineer 有 / 无工作区时的执行器顺序；强度三条规则与范围夹取；全部有单测 | 0a |
 | B2 | Gateway 执行器路径 | B1 的选择结果 | `internal/acp/role_routing.go`、复用 #29 的 `sessions.patch` 步骤、`chat.send` 的 `thinking` | 角色轮次在 `sessions.patch` 前覆盖模型；被拒不发送；结果含 `resolvedEffort` 等字段；有 fake Gateway 测试 | 0a、B1 |
 | B3 | agent 执行器强度 | B1 | `internal/acpagentadapter/`（`reasoning_effort` 设置与读回、OpenCode `mode`） | dsh 广告时设置并读回；未广告不设置并报告；OpenCode 按角色设 `build` / `plan`；有 fake agent 测试 | B1 |
 | B5 | 工作区同步接口 | §5.4 | 新增 `xworkmate.workspace.sync.push` / `.pull`（清单比对、增量上传、改动集与 diff 返回）、worker 上按 `syncId` 隔离的工作副本目录与回收、`limits.workspace_sync`；acp-agent 会话的 `cwd` 指向工作副本 | 增量只传变化文件；排除规则生效（`.env*`、私钥不出设备）；超限拒绝派发；改动集含基线哈希；路径不能逃出工作副本目录；有测试 | B1 |
