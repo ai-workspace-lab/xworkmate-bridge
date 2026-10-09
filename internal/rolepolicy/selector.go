@@ -18,6 +18,7 @@ const (
 	CodeRoleRequired          = "role_required"
 	CodeRoleUnknown           = "role_unknown"
 	CodeRoleNotEnabled        = "role_not_enabled"
+	CodeRoleNotAllowedForMode = "role_not_allowed_for_mode"
 	CodeSpecialtyRequired     = "specialty_required"
 	CodeWorkspaceUnauthorized = "workspace_unauthorized"
 	CodeBudgetUnconfigured    = "budget_unconfigured"
@@ -27,6 +28,8 @@ const (
 
 // Exclusion codes recorded per candidate.
 const (
+	ExclusionExecutorKind         = "executor_kind_unsupported"
+	ExclusionWorkspaceRequired    = "workspace_required"
 	ExclusionPendingMapping       = "pending_mapping"
 	ExclusionExecutorUnavailable  = "executor_unavailable"
 	ExclusionExecutorCapability   = "executor_capability_unverified"
@@ -61,13 +64,24 @@ type Request struct {
 	Role     string
 	RoleMode string
 	// ManualModel is a model key from Policy.Models chosen by the user.
-	ManualModel        string
-	Specialty          string
-	DataClass          string
+	ManualModel string
+	// ProductMode is metadata.xworkmateProductCapability.mode. Empty means
+	// the client sent no product mode (pre-#273 clients), so no mode gate.
+	ProductMode string
+	Specialty   string
+	DataClass   string
+	// WorkingDirectory is the authorized workspace an agent executor works
+	// in; without it only gateway executors are eligible.
 	WorkingDirectory   string
 	PromptBytes        int
+	PromptChars        int
+	Attachments        int
+	FollowUp           bool
+	PreviousTurnFailed bool
 	AvailableProviders []string
-	Now                time.Time
+	// ExecutorKinds are the executor kinds the caller can dispatch.
+	ExecutorKinds []string
+	Now           time.Time
 }
 
 type Exclusion struct {
@@ -79,24 +93,27 @@ type Exclusion struct {
 
 // Decision is either a selection (Selected) or a rejection with Code.
 type Decision struct {
-	Selected        bool        `json:"selected"`
-	Code            string      `json:"code,omitempty"`
-	Message         string      `json:"message,omitempty"`
-	PolicyVersion   string      `json:"policyVersion"`
-	Role            string      `json:"role,omitempty"`
-	RoleMode        string      `json:"roleMode"`
-	Executor        string      `json:"executor,omitempty"`
-	ProviderID      string      `json:"providerId,omitempty"`
-	Connection      string      `json:"connection,omitempty"`
-	ModelKey        string      `json:"modelKey,omitempty"`
-	ModelID         string      `json:"modelId,omitempty"`
-	ModelOption     string      `json:"modelOption,omitempty"`
-	Tools           []string    `json:"tools,omitempty"`
-	EstimatedTokens int         `json:"estimatedTokens,omitempty"`
-	Reasons         []string    `json:"reasons,omitempty"`
-	Excluded        []Exclusion `json:"excluded,omitempty"`
-	EnabledRoles    []string    `json:"enabledRoles,omitempty"`
-	NextSteps       []string    `json:"nextSteps,omitempty"`
+	Selected        bool     `json:"selected"`
+	Code            string   `json:"code,omitempty"`
+	Message         string   `json:"message,omitempty"`
+	PolicyVersion   string   `json:"policyVersion"`
+	Role            string   `json:"role,omitempty"`
+	RoleMode        string   `json:"roleMode"`
+	Executor        string   `json:"executor,omitempty"`
+	ExecutorKind    string   `json:"executorKind,omitempty"`
+	ProviderID      string   `json:"providerId,omitempty"`
+	Connection      string   `json:"connection,omitempty"`
+	ModelKey        string   `json:"modelKey,omitempty"`
+	ModelID         string   `json:"modelId,omitempty"`
+	ModelOption     string   `json:"modelOption,omitempty"`
+	Tools           []string `json:"tools,omitempty"`
+	EstimatedTokens int      `json:"estimatedTokens,omitempty"`
+	// Effort is set on a selection when the role declares an effort range.
+	Effort       *EffortDecision `json:"effort,omitempty"`
+	Reasons      []string        `json:"reasons,omitempty"`
+	Excluded     []Exclusion     `json:"excluded,omitempty"`
+	EnabledRoles []string        `json:"enabledRoles,omitempty"`
+	NextSteps    []string        `json:"nextSteps,omitempty"`
 }
 
 // Select evaluates hard gates in order and picks the first passing
@@ -136,6 +153,10 @@ func Select(policy *Policy, catalogs map[string]CatalogSnapshot, req Request) De
 	if !ok || !role.Enabled {
 		return reject(decision, CodeRoleNotEnabled, "role "+roleID+" is not enabled in this policy", "pick one of the enabled roles")
 	}
+	if mode := strings.TrimSpace(req.ProductMode); mode != "" && !containsString(role.ProductModes, mode) {
+		return reject(decision, CodeRoleNotAllowedForMode, "role "+roleID+" is not available in product mode "+mode,
+			"pick a role allowed in "+mode+" or the default mode")
+	}
 	if role.RequiresSpecialty && strings.TrimSpace(req.Specialty) == "" {
 		return reject(decision, CodeSpecialtyRequired, "specialist tasks need a specialty", "state the specialty")
 	}
@@ -158,7 +179,8 @@ func Select(policy *Policy, catalogs map[string]CatalogSnapshot, req Request) De
 		candidates = []string{key}
 	}
 
-	estimate := req.PromptBytes/2 + policy.Limits.ContextReserveTokens
+	promptTokens := req.PromptBytes / 2
+	estimate := promptTokens + policy.Limits.ContextReserveTokens
 	decision.EstimatedTokens = estimate
 	available := make(map[string]bool, len(req.AvailableProviders))
 	for _, id := range req.AvailableProviders {
@@ -166,10 +188,12 @@ func Select(policy *Policy, catalogs map[string]CatalogSnapshot, req Request) De
 	}
 	maxAge := time.Duration(policy.Limits.CatalogMaxAgeSeconds) * time.Second
 
-	for _, key := range candidates {
-		model := policy.Models[key]
-		for _, execID := range role.Executors {
-			exec := policy.Executors[execID]
+	// Executor order outranks model order: an agent executor that passes
+	// every gate wins over the gateway even with a later-preferred model.
+	for _, execID := range role.Executors {
+		exec := policy.Executors[execID]
+		for _, key := range candidates {
+			model := policy.Models[key]
 			exclusion := evaluate(policy, role, key, model, execID, exec, catalogs, available, req, estimate, maxAge, now)
 			if exclusion != nil {
 				decision.Excluded = append(decision.Excluded, *exclusion)
@@ -178,6 +202,7 @@ func Select(policy *Policy, catalogs map[string]CatalogSnapshot, req Request) De
 			modelID := *model.Bindings[exec.Connection].GatewayModelID
 			decision.Selected = true
 			decision.Executor = execID
+			decision.ExecutorKind = exec.Kind
 			decision.ProviderID = exec.ProviderID
 			decision.Connection = exec.Connection
 			decision.ModelKey = key
@@ -185,7 +210,17 @@ func Select(policy *Policy, catalogs map[string]CatalogSnapshot, req Request) De
 			decision.ModelOption = strings.ReplaceAll(exec.ModelOptionTemplate, "{model_id}", modelID)
 			decision.Tools = append([]string(nil), role.Tools...)
 			decision.Reasons = append(decision.Reasons,
-				mode+": "+key+" is the first candidate in "+roleID+" order that passed every hard gate on "+execID)
+				mode+": "+key+" on "+execID+" is the first executor and model in "+roleID+" order that passed every hard gate")
+			if role.Effort != nil {
+				effort := ResolveEffort(*role.Effort, *policy.Limits.EffortRules, EffortSignals{
+					PromptTokens:       promptTokens,
+					Attachments:        req.Attachments,
+					PromptChars:        req.PromptChars,
+					FollowUp:           req.FollowUp,
+					PreviousTurnFailed: req.PreviousTurnFailed,
+				})
+				decision.Effort = &effort
+			}
 			return decision
 		}
 	}
@@ -210,12 +245,20 @@ func evaluate(
 	exclude := func(code, detail string) *Exclusion {
 		return &Exclusion{Model: key, Executor: execID, Code: code, Detail: detail}
 	}
+	if !containsString(req.ExecutorKinds, exec.Kind) {
+		return exclude(ExclusionExecutorKind, "this bridge cannot dispatch "+exec.Kind+" executors yet")
+	}
+	if exec.Kind == ExecutorKindAgent && !filepath.IsAbs(strings.TrimSpace(req.WorkingDirectory)) {
+		return exclude(ExclusionWorkspaceRequired, "agent executors need an authorized absolute workspace")
+	}
 	if !available[exec.ProviderID] {
 		return exclude(ExclusionExecutorUnavailable, "provider "+exec.ProviderID+" is not connected")
 	}
-	for _, capability := range role.RequiredExecutorCapabilities {
-		if !exec.Capabilities[capability].Verified(now) {
-			return exclude(ExclusionExecutorCapability, capability+" is "+exec.Capabilities[capability].EffectiveState(now))
+	if exec.Kind == ExecutorKindAgent {
+		for _, capability := range role.RequiredExecutorCapabilities {
+			if !exec.Capabilities[capability].Verified(now) {
+				return exclude(ExclusionExecutorCapability, capability+" is "+exec.Capabilities[capability].EffectiveState(now))
+			}
 		}
 	}
 	binding, ok := model.Bindings[exec.Connection]
@@ -269,6 +312,15 @@ func dataClassAllowed(conn Connection, dataClass string) bool {
 	want := dataClassOrDefault(dataClass)
 	for _, allowed := range conn.AllowedDataClasses {
 		if allowed == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
 			return true
 		}
 	}

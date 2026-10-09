@@ -524,7 +524,7 @@ OpenClaw gateway 任务的 HTTP task submit 路径是 `/acp/rpc`。请求必须�
 
 ## 9.1 角色路由（Engineer 闭环）
 
-`session.start` / `session.message` / `xworkmate.routing.resolve` 的 `routing` 中带 `role` 或 `roleMode` 时走角色策略（`BRIDGE_ROLE_POLICY_PATH`）。完整契约、任务事件 schema、`xworkmate.permissions.respond` / `xworkmate.permissions.list` 与 `xworkmate.tasks.get` 角色快照见 [role-routing-engineer-loop.md](architecture/role-routing-engineer-loop.md) §5。`acp.capabilities` 新增 `roleRouting`（角色、模型 key、策略版本、预算模式，不含连接与凭据）与 `permissionRelay: true`。
+`session.start` / `session.message` / `xworkmate.routing.resolve` 的 `routing` 中带 `role` 或 `roleMode` 时走角色策略（`BRIDGE_ROLE_POLICY_PATH`）。完整契约、任务事件 schema、`xworkmate.permissions.respond` / `xworkmate.permissions.list` 与 `xworkmate.tasks.get` 角色快照见 [role-routing-engineer-loop.md](architecture/role-routing-engineer-loop.md) §5。`acp.capabilities` 新增 `roleRouting`（角色、模型 key、各角色允许的产品模式 `productModes` 与强度范围 `effort`、策略版本、预算模式，不含连接与凭据）与 `permissionRelay: true`。角色与产品模式不匹配时返回 `role_not_allowed_for_mode`。
 
 ## 10. `xworkmate.gateway.*`
 

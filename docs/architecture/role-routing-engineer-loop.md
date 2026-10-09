@@ -136,10 +136,13 @@ App(Chat 入口)                Bridge                         acp-agent adapter
 
 - `roleMode=auto` 且未给 `role`：只有一个启用角色时自动取它，否则 `role_required`（先澄清，不猜）。
 - `roleMode=manual` 必须给 `role`；给了 `roleModel`（策略模型 key）时只评估该模型，仍过全部硬条件。
+- 带 `metadata.xworkmateProductCapability.mode` 时按策略 `roles.<role>.product_modes` 检查：不在表内返回 `role_not_allowed_for_mode`，不派发（模式表见 [role-modes-and-autobot-hub.md](role-modes-and-autobot-hub.md) §4）。不带产品模式的旧客户端不做此检查。
+- 执行器有类型 `kind`：`agent`（ACP 执行器，需要绝对路径的工作区，否则排除为 `workspace_required`；`required_executor_capabilities` 只约束这一类）与 `gateway`（OpenClaw Gateway，不需要工作区）。按角色的 `executors` 顺序优先，其次才是模型顺序。当前 bridge 只派发 `agent`，`gateway` 候选会被排除为 `executor_kind_unsupported`，直到 Gateway 路径接入（角色设计 B2）。
+- 角色声明 `effort`（`start` / `min` / `max`）时，选中结果带 `roleSelection.effort`：从起点按 `limits.effort_rules` 的三条规则调整（大上下文 +1、短跟进 −1、失败后重试 +1）后夹到范围内。
 
 ### 5.2 结果附加字段
 
-`resolvedRole`、`resolvedModelId`（网关精确 ID）、`resolvedModel`（执行器选项值，例如 `ai-internal/gpt-6.1-sol`）、`resolvedProviderId`、`modelBindingVerified`、`roleSelection`（策略版本、理由、排除列表、下一步）。拒绝时 `status=unavailable`，`unavailableCode=ROLE_SELECTION_REJECTED`；未配置策略为 `ROLE_POLICY_UNCONFIGURED`，策略无效为 `ROLE_POLICY_INVALID`。
+`resolvedRole`、`resolvedModelId`（网关精确 ID）、`resolvedModel`（执行器选项值，例如 `ai-internal/gpt-6.1-sol`）、`resolvedProviderId`、`modelBindingVerified`、`roleSelection`（策略版本、执行器与其类型 `executorKind`、强度 `effort`、理由、排除列表、下一步）。拒绝时 `status=unavailable`，`unavailableCode=ROLE_SELECTION_REJECTED`；未配置策略为 `ROLE_POLICY_UNCONFIGURED`，策略无效为 `ROLE_POLICY_INVALID`。
 
 ### 5.3 任务事件（`session.update`）
 

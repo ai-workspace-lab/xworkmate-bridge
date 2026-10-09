@@ -15,7 +15,12 @@
     "max_tool_calls_per_task": 8,
     "max_model_switches_per_task": 1,
     "max_role_changes_per_task": 1,
-    "max_transport_retries_per_call": 1
+    "max_transport_retries_per_call": 1,
+    "effort_rules": {
+      "large_context_tokens": 32000,
+      "large_context_attachments": 3,
+      "short_follow_up_chars": 200
+    }
   },
   "connections": {
     "ai-internal": {
@@ -24,10 +29,18 @@
       "allowed_data_classes": [
         "unclassified"
       ]
+    },
+    "xworkmate-central": {
+      "base_url_env": "XWORKMATE_CENTRAL_BASE_URL",
+      "token_env": "XWORKMATE_CENTRAL_TOKEN",
+      "allowed_data_classes": [
+        "unclassified"
+      ]
     }
   },
   "executors": {
     "opencode": {
+      "kind": "agent",
       "provider_id": "opencode",
       "connection": "ai-internal",
       "model_option_template": "ai-internal/{model_id}",
@@ -58,6 +71,7 @@
       }
     },
     "deepseek-harness": {
+      "kind": "agent",
       "provider_id": "deepseek-harness",
       "connection": "ai-internal",
       "model_option_template": "[\"ai-internal\",\"{model_id}\"]",
@@ -86,6 +100,15 @@
           "valid_until": "0001-01-01T00:00:00Z"
         }
       }
+    },
+    "openclaw": {
+      "kind": "gateway",
+      "provider_id": "openclaw",
+      "connection": "xworkmate-central",
+      "model_option_template": "xworkmate/{model_id}",
+      "pinned_version": "openclaw@2026.9.9",
+      "entry": "OpenClaw Gateway chat.send",
+      "capabilities": {}
     }
   },
   "models": {
@@ -114,6 +137,25 @@
             "checked_at": "0001-01-01T00:00:00Z",
             "valid_until": "0001-01-01T00:00:00Z"
           }
+        },
+        "xworkmate-central": {
+          "gateway_model_id": null,
+          "capabilities": {
+            "tool_calling": {
+              "value": null,
+              "state": "unknown",
+              "source": "",
+              "checked_at": "0001-01-01T00:00:00Z",
+              "valid_until": "0001-01-01T00:00:00Z"
+            }
+          },
+          "context_window": {
+            "value": null,
+            "state": "unknown",
+            "source": "",
+            "checked_at": "0001-01-01T00:00:00Z",
+            "valid_until": "0001-01-01T00:00:00Z"
+          }
         }
       }
     },
@@ -125,6 +167,25 @@
       "note": "Declared match in the GitOps list only; needs live catalog and capability checks.",
       "bindings": {
         "ai-internal": {
+          "gateway_model_id": null,
+          "capabilities": {
+            "tool_calling": {
+              "value": null,
+              "state": "unknown",
+              "source": "",
+              "checked_at": "0001-01-01T00:00:00Z",
+              "valid_until": "0001-01-01T00:00:00Z"
+            }
+          },
+          "context_window": {
+            "value": null,
+            "state": "unknown",
+            "source": "",
+            "checked_at": "0001-01-01T00:00:00Z",
+            "valid_until": "0001-01-01T00:00:00Z"
+          }
+        },
+        "xworkmate-central": {
           "gateway_model_id": null,
           "capabilities": {
             "tool_calling": {
@@ -198,6 +259,25 @@
             "checked_at": "0001-01-01T00:00:00Z",
             "valid_until": "0001-01-01T00:00:00Z"
           }
+        },
+        "xworkmate-central": {
+          "gateway_model_id": null,
+          "capabilities": {
+            "tool_calling": {
+              "value": null,
+              "state": "unknown",
+              "source": "",
+              "checked_at": "0001-01-01T00:00:00Z",
+              "valid_until": "0001-01-01T00:00:00Z"
+            }
+          },
+          "context_window": {
+            "value": null,
+            "state": "unknown",
+            "source": "",
+            "checked_at": "0001-01-01T00:00:00Z",
+            "valid_until": "0001-01-01T00:00:00Z"
+          }
         }
       }
     },
@@ -254,6 +334,25 @@
             "checked_at": "0001-01-01T00:00:00Z",
             "valid_until": "0001-01-01T00:00:00Z"
           }
+        },
+        "xworkmate-central": {
+          "gateway_model_id": null,
+          "capabilities": {
+            "tool_calling": {
+              "value": null,
+              "state": "unknown",
+              "source": "",
+              "checked_at": "0001-01-01T00:00:00Z",
+              "valid_until": "0001-01-01T00:00:00Z"
+            }
+          },
+          "context_window": {
+            "value": null,
+            "state": "unknown",
+            "source": "",
+            "checked_at": "0001-01-01T00:00:00Z",
+            "valid_until": "0001-01-01T00:00:00Z"
+          }
         }
       }
     },
@@ -282,6 +381,25 @@
             "checked_at": "0001-01-01T00:00:00Z",
             "valid_until": "0001-01-01T00:00:00Z"
           }
+        },
+        "xworkmate-central": {
+          "gateway_model_id": null,
+          "capabilities": {
+            "tool_calling": {
+              "value": null,
+              "state": "unknown",
+              "source": "",
+              "checked_at": "0001-01-01T00:00:00Z",
+              "valid_until": "0001-01-01T00:00:00Z"
+            }
+          },
+          "context_window": {
+            "value": null,
+            "state": "unknown",
+            "source": "",
+            "checked_at": "0001-01-01T00:00:00Z",
+            "valid_until": "0001-01-01T00:00:00Z"
+          }
         }
       }
     },
@@ -293,6 +411,25 @@
       "note": "Requires verified organization access; missing access returns access_unverified.",
       "bindings": {
         "ai-internal": {
+          "gateway_model_id": null,
+          "capabilities": {
+            "tool_calling": {
+              "value": null,
+              "state": "unknown",
+              "source": "",
+              "checked_at": "0001-01-01T00:00:00Z",
+              "valid_until": "0001-01-01T00:00:00Z"
+            }
+          },
+          "context_window": {
+            "value": null,
+            "state": "unknown",
+            "source": "",
+            "checked_at": "0001-01-01T00:00:00Z",
+            "valid_until": "0001-01-01T00:00:00Z"
+          }
+        },
+        "xworkmate-central": {
           "gateway_model_id": null,
           "capabilities": {
             "tool_calling": {
@@ -538,7 +675,8 @@
       ],
       "executors": [
         "opencode",
-        "deepseek-harness"
+        "deepseek-harness",
+        "openclaw"
       ],
       "required_model_capabilities": [
         "tool_calling"
@@ -548,14 +686,22 @@
         "test_runner",
         "permission_relay"
       ],
-      "requires_workspace": true,
+      "requires_workspace": false,
       "requires_specialty": false,
       "tools": [
         "read",
         "edit",
         "bash",
         "test"
-      ]
+      ],
+      "product_modes": [
+        "code"
+      ],
+      "effort": {
+        "start": "high",
+        "min": "medium",
+        "max": "max"
+      }
     },
     "architect": {
       "enabled": false,
@@ -564,12 +710,23 @@
         "Grok4.7",
         "Fable5.1"
       ],
-      "executors": [],
+      "executors": [
+        "openclaw"
+      ],
       "required_model_capabilities": [],
       "required_executor_capabilities": [],
       "requires_workspace": false,
       "requires_specialty": false,
-      "tools": []
+      "tools": [],
+      "product_modes": [
+        "work",
+        "code"
+      ],
+      "effort": {
+        "start": "max",
+        "min": "high",
+        "max": "max"
+      }
     },
     "researcher": {
       "enabled": false,
@@ -578,24 +735,46 @@
         "Fable5.1",
         "Grok4.7"
       ],
-      "executors": [],
+      "executors": [
+        "openclaw"
+      ],
       "required_model_capabilities": [],
       "required_executor_capabilities": [],
       "requires_workspace": false,
       "requires_specialty": false,
-      "tools": []
+      "tools": [],
+      "product_modes": [
+        "work",
+        "code"
+      ],
+      "effort": {
+        "start": "high",
+        "min": "medium",
+        "max": "max"
+      }
     },
     "specialist": {
       "enabled": false,
       "preferences": [
         "Mythos5.1"
       ],
-      "executors": [],
+      "executors": [
+        "openclaw"
+      ],
       "required_model_capabilities": [],
       "required_executor_capabilities": [],
       "requires_workspace": false,
       "requires_specialty": true,
-      "tools": []
+      "tools": [],
+      "product_modes": [
+        "work",
+        "code"
+      ],
+      "effort": {
+        "start": "high",
+        "min": "high",
+        "max": "max"
+      }
     }
   }
 }

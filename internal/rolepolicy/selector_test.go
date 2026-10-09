@@ -31,6 +31,7 @@ func engineerPolicy() *Policy {
 		},
 		Executors: map[string]Executor{
 			"opencode": {
+				Kind:                ExecutorKindAgent,
 				ProviderID:          "opencode",
 				Connection:          "ai-internal",
 				ModelOptionTemplate: "ai-internal/{model_id}",
@@ -41,6 +42,7 @@ func engineerPolicy() *Policy {
 				},
 			},
 			"deepseek-harness": {
+				Kind:                ExecutorKindAgent,
 				ProviderID:          "deepseek-harness",
 				Connection:          "ai-internal",
 				ModelOptionTemplate: `["ai-internal","{model_id}"]`,
@@ -84,6 +86,7 @@ func engineerRequest() Request {
 		WorkingDirectory:   "/srv/workspace/demo",
 		PromptBytes:        2000,
 		AvailableProviders: []string{"opencode", "deepseek-harness"},
+		ExecutorKinds:      []string{ExecutorKindAgent, ExecutorKindGateway},
 		Now:                testNow,
 	}
 }
@@ -286,6 +289,39 @@ func TestExamplePolicyLoadsAndStaysDisabled(t *testing.T) {
 	decision := Select(policy, nil, engineerRequest())
 	if decision.Code != CodePolicyDisabled {
 		t.Fatalf("expected policy_disabled for example, got %+v", decision)
+	}
+}
+
+func TestExamplePolicyMatchesRoleModesDesign(t *testing.T) {
+	_, file, _, _ := runtime.Caller(0)
+	policy, err := Load(filepath.Join(filepath.Dir(file), "..", "..", "example", "role-router-policy.example.json"))
+	if err != nil {
+		t.Fatalf("load example policy: %v", err)
+	}
+	want := map[string]struct {
+		modes     string
+		effort    EffortRange
+		executors string
+	}{
+		RoleEngineer:   {"code", EffortRange{Start: "high", Min: "medium", Max: "max"}, "opencode,deepseek-harness,openclaw"},
+		RoleArchitect:  {"work,code", EffortRange{Start: "max", Min: "high", Max: "max"}, "openclaw"},
+		RoleResearcher: {"work,code", EffortRange{Start: "high", Min: "medium", Max: "max"}, "openclaw"},
+		RoleSpecialist: {"work,code", EffortRange{Start: "high", Min: "high", Max: "max"}, "openclaw"},
+	}
+	for roleID, w := range want {
+		role := policy.Roles[roleID]
+		if got := strings.Join(role.ProductModes, ","); got != w.modes {
+			t.Fatalf("%s product modes: want %s, got %s", roleID, w.modes, got)
+		}
+		if role.Effort == nil || *role.Effort != w.effort {
+			t.Fatalf("%s effort: want %+v, got %+v", roleID, w.effort, role.Effort)
+		}
+		if got := strings.Join(role.Executors, ","); got != w.executors {
+			t.Fatalf("%s executors: want %s, got %s", roleID, w.executors, got)
+		}
+	}
+	if policy.Executors["openclaw"].Kind != ExecutorKindGateway || policy.Executors["opencode"].Kind != ExecutorKindAgent {
+		t.Fatalf("unexpected executor kinds: %+v", policy.Executors)
 	}
 }
 
