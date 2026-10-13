@@ -20,7 +20,8 @@ Accounts session API without storing or interpreting session state.
 - `POST /api/v1/namespaces/{namespaceId}/sessions` accepts `{ "title": "optional" }` and returns a snapshot (`201`).
 - `GET /api/v1/sessions/{sessionId}` returns the snapshot.
 - `GET /api/v1/sessions/{sessionId}/events?after_seq=0&limit=100` returns `{ "events": [...], "lastEventSeq": n }`.
-- `POST /api/v1/sessions/{sessionId}/messages` accepts `clientRequestId`, `text`, and optional `run.priority`/`run.notBefore`.
+- `POST /api/v1/sessions/{sessionId}/messages` accepts `clientRequestId`, `text`, optional `routing` hints for the DSH orchestrator (`role`, `roleMode`, `roleModel`, `productMode`, `specialty`, `dataClass`, `projectId`, `workspace`, `attachments`, `followUp`, `previousTurnFailed`; `workspace` is a key, never a path), and optional `run.priority`/`run.notBefore`.
+- `POST /api/v1/sessions/{sessionId}/runs/{runId}/cancel` accepts `clientRequestId`; a queued run is cancelled outright, a running run records `run.cancel_requested` for its worker.
 
 Snapshots contain `sessionId`, `namespaceId`, `snapshotVersion`,
 `lastEventSeq`, `lifecycleState`, allowlisted `context`, optional `taskRun`, and
@@ -336,8 +337,6 @@ bridge 对 app 的稳定 method family 只有：
 - `xworkmate.jobs.list`
 - `xworkmate.jobs.stats`
 - `xworkmate.tools.invoke`
-- `xworkmate.permissions.respond`
-- `xworkmate.permissions.list`
 
 路径约束：
 
@@ -519,12 +518,12 @@ OpenClaw gateway 任务的 HTTP task submit 路径是 `/acp/rpc`。请求必须�
 
 语义：
 
-- `session.cancel` 调用当前 compat 的 cancel；角色路由任务还会拒绝挂起授权并中断进行中的 run，返回值附带 `runCancelled`
+- `session.cancel` 调用当前 compat 的 cancel
 - `session.close` 调用当前 compat 的 close，并移除 bridge 内部 session state
 
-## 9.1 角色路由（Engineer 闭环）
+## 9.1 角色任务（v2.1：由 DSH 编排）
 
-`session.start` / `session.message` / `xworkmate.routing.resolve` 的 `routing` 中带 `role` 或 `roleMode` 时走角色策略（`BRIDGE_ROLE_POLICY_PATH`）。完整契约、任务事件 schema、`xworkmate.permissions.respond` / `xworkmate.permissions.list` 与 `xworkmate.tasks.get` 角色快照见 [role-routing-engineer-loop.md](architecture/role-routing-engineer-loop.md) §5。`acp.capabilities` 新增 `roleRouting`（角色、模型 key、各角色允许的产品模式 `productModes` 与强度范围 `effort`、策略版本、预算模式，不含连接与凭据）与 `permissionRelay: true`。角色与产品模式不匹配时返回 `role_not_allowed_for_mode`。
+Bridge 不再做角色选择。`session.start` / `session.message` / `xworkmate.routing.resolve` 的 `routing` 中带 `role` 或 `roleMode` 时，返回 `unavailableCode: ROLE_ROUTING_MOVED`。角色任务通过 `/api/v1` 写入 Accounts（`POST /api/v1/sessions/{sessionId}/messages` 带 `routing`），由 DSH 编排器领取执行；取消使用 `POST /api/v1/sessions/{sessionId}/runs/{runId}/cancel`。见 [adr-v2.1-role-selection-in-dsh.md](architecture/adr-v2.1-role-selection-in-dsh.md)。
 
 ## 10. `xworkmate.gateway.*`
 

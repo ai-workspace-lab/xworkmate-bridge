@@ -140,6 +140,8 @@ func taskSessionProxyRouteAllowed(method, path string) bool {
 		return method == http.MethodGet
 	case len(segments) == 3 && segments[0] == "sessions" && segments[2] == "messages":
 		return method == http.MethodPost
+	case len(segments) == 5 && segments[0] == "sessions" && segments[2] == "runs" && segments[4] == "cancel":
+		return method == http.MethodPost
 	default:
 		return false
 	}

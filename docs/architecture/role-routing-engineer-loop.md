@@ -1,5 +1,7 @@
 # 角色路由：先打通 Engineer 闭环
 
+> **已废止（2026-10-13）**：Bridge 侧的角色选择、授权回传和角色任务快照已经迁出，见 [adr-v2.1-role-selection-in-dsh.md](adr-v2.1-role-selection-in-dsh.md)。策略格式与选择规则移至 `ai-workspace-lab/DeepSeek-Bot` 的 `aiw-orchestrator/`。本文保留为历史记录。
+
 版本 0.3 实施稿 · 2026-10-07 · 对应草案《Chat 角色与模型自动选型草案 v0.3》
 
 ## 1. 范围

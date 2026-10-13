@@ -28,8 +28,6 @@ func (s *Server) Bootstrap() {
 	s.memoryService = memory.NewService(homeDir)
 
 	s.routingEngine = &DefaultRoutingEngine{server: s}
-	s.roles = loadRoleRouting()
-	s.permissions = newPermissionBroker(permissionTimeoutFromEnv())
 	s.orchestrator = NewSessionOrchestrator(s)
 	s.jobs = newJobManager(s)
 	s.providers = make(map[string]ProviderCompat)
