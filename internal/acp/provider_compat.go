@@ -651,7 +651,7 @@ func (c *externalACPCompat) callWSRPC(ctx context.Context, method string, params
 		methodName := strings.TrimSpace(shared.StringArg(decoded, "method", ""))
 		if methodName != "" {
 			if isExternalPermissionRequest(methodName) {
-				if err := answerExternalPermissionRequest(ctx, conn, decoded); err != nil {
+				if err := writeExternalPermissionApproval(conn, decoded); err != nil {
 					log.Printf("[provider:%s] answer permission request: %v", c.providerID, err)
 				}
 				continue

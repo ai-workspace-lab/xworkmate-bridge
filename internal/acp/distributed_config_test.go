@@ -204,7 +204,7 @@ func sessionMessage(sessionID string) shared.RPCRequest {
 	}
 }
 
-func TestDistributedTaskRouterRoutesRoleFollowUpsToSessionOwner(t *testing.T) {
+func TestDistributedTaskRouterRoutesSessionFollowUpsToSessionOwner(t *testing.T) {
 	config := &BridgeConfig{}
 	config.Distributed.Topology = "dual-node"
 	config.Distributed.LocalNodeID = "cn-xworkmate-bridge"
@@ -214,7 +214,7 @@ func TestDistributedTaskRouterRoutesRoleFollowUpsToSessionOwner(t *testing.T) {
 		return shared.RPCRequest{ID: method, Method: method, Params: params}
 	}
 
-	for _, method := range []string{"session.cancel", "xworkmate.permissions.respond", "xworkmate.tasks.get"} {
+	for _, method := range []string{"session.cancel", "xworkmate.tasks.get"} {
 		if _, ok, err := router.forwardDecision(httptest.NewRequest("POST", "/acp/rpc", nil), request(method, map[string]any{"sessionId": "eng"})); err != nil || ok {
 			t.Fatalf("%s without an existing route must stay local: ok=%v err=%v", method, ok, err)
 		}
@@ -222,8 +222,8 @@ func TestDistributedTaskRouterRoutesRoleFollowUpsToSessionOwner(t *testing.T) {
 	if _, ok, err := router.forwardDecision(httptest.NewRequest("POST", "/acp/rpc", nil), request("session.start", map[string]any{"sessionId": "eng"})); err != nil || !ok {
 		t.Fatalf("session.start should be forwarded: ok=%v err=%v", ok, err)
 	}
-	for _, method := range []string{"session.cancel", "xworkmate.permissions.respond", "xworkmate.permissions.list", "xworkmate.tasks.get"} {
-		decision, ok, err := router.forwardDecision(httptest.NewRequest("POST", "/acp/rpc", nil), request(method, map[string]any{"sessionId": "eng", "requestId": "perm-1"}))
+	for _, method := range []string{"session.cancel", "xworkmate.tasks.get"} {
+		decision, ok, err := router.forwardDecision(httptest.NewRequest("POST", "/acp/rpc", nil), request(method, map[string]any{"sessionId": "eng"}))
 		if err != nil || !ok || decision.targetNodeID != "xworkmate-bridge" {
 			t.Fatalf("%s must follow the session route: decision=%#v ok=%v err=%v", method, decision, ok, err)
 		}

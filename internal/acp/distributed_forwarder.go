@@ -237,7 +237,7 @@ func distributedForwardableMethod(method string) bool {
 // OpenClaw run identifiers; OpenClaw lookups keep their local run store path.
 func distributedStickyFollowUp(request shared.RPCRequest) bool {
 	switch strings.TrimSpace(request.Method) {
-	case "session.cancel", "xworkmate.permissions.respond", "xworkmate.permissions.list":
+	case "session.cancel":
 		return true
 	case "xworkmate.tasks.get":
 		params := shared.AsMap(request.Params)

@@ -88,8 +88,6 @@ type session struct {
 	artifactWaitTerminalRunID      string
 	artifactWaitTerminalSessionKey string
 	openClaw                       *OpenClawTaskRecord
-	// role is set when the current turn was routed by the role policy.
-	role *roleTaskState
 }
 
 type Server struct {
@@ -111,8 +109,6 @@ type Server struct {
 	taskRouter         *distributedTaskRouter
 	taskRunDispatcher  *TaskRunDispatcher
 	taskRunAuthService authorizationHeaderValidator
-	roles              *roleRouting
-	permissions        *permissionBroker
 
 	// Legacy / Common
 	authService           interface{} // Minimal auth dependency

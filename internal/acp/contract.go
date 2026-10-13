@@ -2,8 +2,6 @@ package acp
 
 import (
 	"context"
-
-	"xworkmate-bridge/internal/rolepolicy"
 )
 
 type SessionNotificationSink func(map[string]any)
@@ -44,7 +42,4 @@ type RoutingResult struct {
 	SkillResolutionSource string `json:"skillResolutionSource,omitempty"`
 	NeedsSkillInstall     bool   `json:"needsSkillInstall,omitempty"`
 	SkillInstallRequestID string `json:"skillInstallRequestId,omitempty"`
-
-	// RoleDecision is set when the request asked for role routing.
-	RoleDecision *rolepolicy.Decision `json:"roleSelection,omitempty"`
 }
