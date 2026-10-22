@@ -91,11 +91,12 @@ func (s *Server) Bootstrap() {
 			continue
 		}
 		category := "native"
-		if id == "gemini" || id == "hermes" {
+		switch id {
+		case "gemini", "hermes", "deepseek-harness", "opencode-acp":
 			category = "protocol-adapter"
-		} else if id == "dsh" {
+		case "dsh":
 			category = "harness"
-		} else if id == "dsbot" {
+		case "dsbot":
 			category = "bot-team"
 		}
 		s.catalog.ProviderCatalog = append(s.catalog.ProviderCatalog, map[string]any{

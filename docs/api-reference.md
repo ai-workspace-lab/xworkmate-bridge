@@ -20,7 +20,8 @@ Accounts session API without storing or interpreting session state.
 - `POST /api/v1/namespaces/{namespaceId}/sessions` accepts `{ "title": "optional" }` and returns a snapshot (`201`).
 - `GET /api/v1/sessions/{sessionId}` returns the snapshot.
 - `GET /api/v1/sessions/{sessionId}/events?after_seq=0&limit=100` returns `{ "events": [...], "lastEventSeq": n }`.
-- `POST /api/v1/sessions/{sessionId}/messages` accepts `clientRequestId`, `text`, and optional `run.priority`/`run.notBefore`.
+- `POST /api/v1/sessions/{sessionId}/messages` accepts `clientRequestId`, `text`, optional `routing` hints for the DSH orchestrator (`role`, `roleMode`, `roleModel`, `productMode`, `specialty`, `dataClass`, `projectId`, `workspace`, `attachments`, `followUp`, `previousTurnFailed`; `workspace` is a key, never a path), and optional `run.priority`/`run.notBefore`.
+- `POST /api/v1/sessions/{sessionId}/runs/{runId}/cancel` accepts `clientRequestId`; a queued run is cancelled outright, a running run records `run.cancel_requested` for its worker.
 
 Snapshots contain `sessionId`, `namespaceId`, `snapshotVersion`,
 `lastEventSeq`, `lifecycleState`, allowlisted `context`, optional `taskRun`, and
@@ -447,14 +448,26 @@ unavailable 示例：
 - `workingDirectory`
 - `routing`
 
-multi-agent 输入仍使用同一个 `session.start` / `session.message` method，不新增 HTTP path：
+本次融合默认通过 `routing.explicitExecutionTarget=gateway` 与
+`routing.preferredGatewayProviderId=openclaw` 转发。Bridge 不编排多个 Agent；
+`multiAgent`、`orchestrationMode` 不是融合合同，不能用于启动第二条调度链。
 
-- `multiAgent: true` 或 `mode: "multi-agent"`
-- `routing.orchestrationMode`: `sequence`、`parallel`、`race`、`conversation`
-- `routing.steps`: `{ "providerId": "codex", "prompt": "...", "outputAs": "...", "timeoutMs": 300000 }[]`
-- `routing.participants`、`routing.maxTurns`、`routing.stopConditions` 用于 `conversation`
+可选的产品语义只通过 `metadata.xworkmateProductCapability` 提交：
 
-multi-agent 只允许通过 `/acp` 或 `/acp/rpc` 进入；OpenClaw gateway 单任务同样使用 `/acp/rpc`，但不能与 `multiAgent=true` 混用。
+```json
+{"schemaVersion": 1, "mode": "work", "model": "xworkmate/operator-declared-model-id"}
+```
+
+`schemaVersion` 必须为数字 1；`mode` 只接受 `chat`、`work`、`code`；
+可选 `model` 必须是集中模型服务的 `xworkmate/<id>`，额外字段返回 -32602。
+Bot 通过 Gateway 原生 cron 合同控制，不能当作第四个聊天 mode 提交。
+
+Bridge 将能力传给 `xworkmate.session.prepare`，不向原生 `chat.send` 注入未知字段。
+指定模型时先对映射后的 Gateway session 调用 `sessions.patch`；校验失败即终止，
+不发送 prompt。Work/Code 的系统执行提示分别要求 run-scoped `xworkmate_worker`
+使用 DSH ACP/OpenCode v2；这仍是模型选择工具的路径，真实执行应以工具结果为证。
+worker 未配置、权限拒绝或失败时应呈现错误，不绕过到旧直接 provider。
+Bridge 不启动 worker 进程；worker 的主任务身份、超时、取消与产物由 Gateway 插件维护。
 
 统一结果字段：
 
@@ -507,6 +520,10 @@ OpenClaw gateway 任务的 HTTP task submit 路径是 `/acp/rpc`。请求必须�
 
 - `session.cancel` 调用当前 compat 的 cancel
 - `session.close` 调用当前 compat 的 close，并移除 bridge 内部 session state
+
+## 9.1 角色任务（v2.1：由 DSH 编排）
+
+Bridge 不再做角色选择。`session.start` / `session.message` / `xworkmate.routing.resolve` 的 `routing` 中带 `role` 或 `roleMode` 时，返回 `unavailableCode: ROLE_ROUTING_MOVED`。角色任务通过 `/api/v1` 写入 Accounts（`POST /api/v1/sessions/{sessionId}/messages` 带 `routing`），由 DSH 编排器领取执行；取消使用 `POST /api/v1/sessions/{sessionId}/runs/{runId}/cancel`。见 [adr-v2.1-role-selection-in-dsh.md](architecture/adr-v2.1-role-selection-in-dsh.md)。
 
 ## 10. `xworkmate.gateway.*`
 

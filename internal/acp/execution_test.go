@@ -25,6 +25,9 @@ func TestResolveSingleAgentForwardEndpointFromExampleConfig(t *testing.T) {
 		"opencode": "http://127.0.0.1:38992/acp/rpc",
 		"gemini":   "http://127.0.0.1:8791/acp/rpc",
 		"hermes":   "ws://127.0.0.1:3920/acp",
+		// acp-agent adapters stay on WebSocket for streaming, permission relay and cancel.
+		"deepseek-harness": "ws://127.0.0.1:8795/acp",
+		"opencode-acp":     "ws://127.0.0.1:8796/acp",
 	}
 
 	for _, id := range order {

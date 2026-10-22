@@ -15,14 +15,22 @@
 
 ## ACP Forwarding Topology
 
-This repository exposes one APP-facing bridge entrypoint and proxies traffic
-to four independent upstream production services. The APP-facing canonical ACP
-path is WebSocket `/acp`; HTTP `/acp/rpc` remains available for CI, scripts,
-debugging, and compatibility fallback under
-`https://xworkmate-bridge.svc.plus`.
-OpenClaw task submission is the only dedicated HTTP task route:
-`POST /gateway/openclaw` for `session.start` and follow-up `session.message`.
-It is not a global ACP base endpoint.
+The default integration route is App → Bridge → OpenClaw Gateway. The APP-facing
+canonical ACP path is WebSocket `/acp`; HTTP `/acp/rpc` supports task submission.
+Bridge forwards product capability metadata and native Gateway requests; it does
+not own worker execution, cron scheduling or multi-agent orchestration.
+
+Chat / Work / Code retain one protocol and layout. Optional
+`metadata.xworkmateProductCapability` v1 conveys mode and an explicit central
+`xworkmate/<model-id>` reference. Work uses the Gateway's DSH ACP worker and Code
+uses OpenCode v2. Both require the separately deployed opt-in Gateway plugin and
+OS worker role. Bot uses OpenClaw's native cron API. See the
+[session contract](./docs/api-reference.md#8-sessionstart--sessionmessage).
+
+The new path has Go unit/fixture validation; real-model execution, runtime
+isolation and mobile end-to-end acceptance require a configured Gateway and
+separate deployment verification. Existing compatibility adapters are not proof
+that these workers are installed or operational.
 
 ## Shared task sessions
 
@@ -142,5 +150,6 @@ Optional workflow input:
 ## Environment
 
 - `ACP_LISTEN_ADDR`: listen address for `serve` mode, default `127.0.0.1:8787`
+- `DEEPSEEK_HARNESS_RPC_URL` / `OPENCODE_ACP_RPC_URL`: WebSocket URLs of `xworkmate-go-core adapter acp-agent` in front of `dsh --profile acp` and `opencode acp`
 - `OUTPUT_DIR`: optional output directory for `make build`
 - `OUTPUT_PATH`: optional explicit build path for `make build`

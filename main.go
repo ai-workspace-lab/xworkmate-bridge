@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"xworkmate-bridge/internal/acp"
+	"xworkmate-bridge/internal/acpagentadapter"
 	"xworkmate-bridge/internal/geminiadapter"
 	"xworkmate-bridge/internal/hermesadapter"
 	"xworkmate-bridge/internal/opencodeadapter"
@@ -63,7 +64,7 @@ func main() {
 func handleAdapterCommand(args []string) {
 	if len(args) < 1 {
 		fmt.Fprintf(os.Stderr, "Usage: xworkmate-bridge adapter <type> [options]\n")
-		fmt.Fprintf(os.Stderr, "Supported types: gemini, hermes, opencode\n")
+		fmt.Fprintf(os.Stderr, "Supported types: gemini, hermes, opencode, acp-agent\n")
 		os.Exit(1)
 	}
 
@@ -78,6 +79,8 @@ func handleAdapterCommand(args []string) {
 		err = hermesadapter.Serve(adapterArgs)
 	case "opencode":
 		err = opencodeadapter.Serve(adapterArgs)
+	case "acp-agent":
+		err = acpagentadapter.Serve(adapterArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown adapter type: %s\n", adapterType)
 		os.Exit(1)
@@ -93,7 +96,7 @@ func printUsage() {
 	fmt.Printf("xworkmate-bridge %s\n\n", buildVersion)
 	fmt.Println("Usage:")
 	fmt.Println("  xworkmate-bridge serve [options]          Start the main ACP bridge server")
-	fmt.Println("  xworkmate-bridge adapter <type> [options] Start a specific adapter (gemini, hermes, opencode)")
+	fmt.Println("  xworkmate-bridge adapter <type> [options] Start a specific adapter (gemini, hermes, opencode, acp-agent)")
 	fmt.Println("  xworkmate-bridge stdio                     Run the bridge over stdio")
 	fmt.Println("  xworkmate-bridge version                   Print version info")
 }

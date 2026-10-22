@@ -9,6 +9,16 @@ import (
 	"xworkmate-bridge/internal/skills"
 )
 
+// unavailableRoleRoutingMoved answers ACP turns that still ask for role routing.
+// AI Workspace v2.1 moved role selection and dispatch to the DSH orchestrator,
+// with Accounts as the task state; Bridge only forwards.
+const unavailableRoleRoutingMoved = "ROLE_ROUTING_MOVED"
+
+func roleRoutingRequested(routingParams map[string]any) bool {
+	return strings.TrimSpace(shared.StringArg(routingParams, "role", "")) != "" ||
+		strings.TrimSpace(shared.StringArg(routingParams, "roleMode", "")) != ""
+}
+
 type DefaultRoutingEngine struct {
 	server *Server
 }
@@ -17,6 +27,14 @@ func (e *DefaultRoutingEngine) Resolve(ctx context.Context, params map[string]an
 	routingParams := shared.AsMap(params["routing"])
 	if len(routingParams) == 0 {
 		routingParams = map[string]any{}
+	}
+	if roleRoutingRequested(routingParams) {
+		return RoutingResult{
+			Status:                "unavailable",
+			UnavailableCode:       unavailableRoleRoutingMoved,
+			UnavailableMsg:        "role tasks are created through the Accounts session API (POST /api/v1/sessions/{sessionId}/messages with routing) and run by the DSH orchestrator",
+			SkillResolutionSource: "none",
+		}, nil
 	}
 	routingMode := strings.TrimSpace(shared.StringArg(routingParams, "routingMode", "implicit"))
 	explicitExecutionTarget := strings.TrimSpace(shared.StringArg(routingParams, "explicitExecutionTarget", ""))

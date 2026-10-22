@@ -11,6 +11,10 @@ upstream:
   hermes_url: "ws://127.0.0.1:3920"
   gateway_url: "ws://127.0.0.1:18789/"
   opencode_url: "ws://127.0.0.1:38992"
+  # acp-agent adapters (WebSocket only): `adapter acp-agent` in front of
+  # `dsh --profile acp` and `opencode acp`.
+  deepseek_harness_url: "ws://127.0.0.1:8795"
+  opencode_acp_url: "ws://127.0.0.1:8796"
 
 openclaw_gateway:
   max_active: 5

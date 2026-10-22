@@ -23,8 +23,14 @@ type BridgeConfig struct {
 		OpenCodeURL string `yaml:"opencode_url"`
 		GeminiURL   string `yaml:"gemini_url"`
 		HermesURL   string `yaml:"hermes_url"`
-		DSHURL      string `yaml:"dsh_url"`
-		DSBotURL    string `yaml:"dsbot_url"`
+		// DeepSeekHarnessURL and OpenCodeACPURL point at
+		// `xworkmate-go-core adapter acp-agent` fronting `dsh --profile acp`
+		// and `opencode acp`. Both are WebSocket-only so streaming, permission
+		// relay and cancel reach the agent.
+		DeepSeekHarnessURL string `yaml:"deepseek_harness_url"`
+		OpenCodeACPURL     string `yaml:"opencode_acp_url"`
+		DSHURL             string `yaml:"dsh_url"`
+		DSBotURL           string `yaml:"dsbot_url"`
 	} `yaml:"upstream"`
 	Distributed     DistributedConfig     `yaml:"distributed"`
 	OpenClawGateway OpenClawGatewayConfig `yaml:"openclaw_gateway"`
@@ -212,6 +218,18 @@ func newProductionProviderCatalogFromConfig(config *BridgeConfig) (*BridgeConfig
 			label:   "Hermes",
 			yaml:    config.Upstream.HermesURL,
 			envKeys: []string{"HERMES_RPC_URL"},
+		},
+		{
+			id:      "deepseek-harness",
+			label:   "DeepSeek Harness",
+			yaml:    config.Upstream.DeepSeekHarnessURL,
+			envKeys: []string{"DEEPSEEK_HARNESS_RPC_URL"},
+		},
+		{
+			id:      "opencode-acp",
+			label:   "OpenCode (ACP)",
+			yaml:    config.Upstream.OpenCodeACPURL,
+			envKeys: []string{"OPENCODE_ACP_RPC_URL"},
 		},
 	}
 

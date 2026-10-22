@@ -265,7 +265,6 @@ func TestDSHRoutingAndSessionExecution(t *testing.T) {
 	// 5. Test tasks.cancel accepts cancellation without OpenClaw
 	taskCancelRes := server.handleTaskCancel(context.Background(), map[string]any{
 		"sessionId":         "sess-dsh-run-1",
-		"runId":             "run-123",
 		"gatewayProviderId": "dsh",
 	}, nil)
 	if !parseBool(taskCancelRes["accepted"]) {
