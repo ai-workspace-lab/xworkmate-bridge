@@ -29,6 +29,8 @@ type BridgeConfig struct {
 		// relay and cancel reach the agent.
 		DeepSeekHarnessURL string `yaml:"deepseek_harness_url"`
 		OpenCodeACPURL     string `yaml:"opencode_acp_url"`
+		DSHURL             string `yaml:"dsh_url"`
+		DSBotURL           string `yaml:"dsbot_url"`
 	} `yaml:"upstream"`
 	Distributed     DistributedConfig     `yaml:"distributed"`
 	OpenClawGateway OpenClawGatewayConfig `yaml:"openclaw_gateway"`
@@ -231,6 +233,33 @@ func newProductionProviderCatalogFromConfig(config *BridgeConfig) (*BridgeConfig
 		},
 	}
 
+	if isDSHRouterEnabled() || config.Upstream.DSHURL != "" || os.Getenv("BRIDGE_DSH_HARNESS_URL") != "" || os.Getenv("DSH_HARNESS_URL") != "" {
+		providers = append(providers,
+			struct {
+				id      string
+				label   string
+				yaml    string
+				envKeys []string
+			}{
+				id:      "dsh",
+				label:   "DeepSeek Harness",
+				yaml:    config.Upstream.DSHURL,
+				envKeys: []string{"BRIDGE_DSH_HARNESS_URL", "DSH_HARNESS_URL", "DSH_RPC_URL"},
+			},
+			struct {
+				id      string
+				label   string
+				yaml    string
+				envKeys []string
+			}{
+				id:      "dsbot",
+				label:   "DeepSeek Bot",
+				yaml:    config.Upstream.DSBotURL,
+				envKeys: []string{"BRIDGE_DS_BOT_URL", "DS_BOT_URL", "DSBOT_RPC_URL"},
+			},
+		)
+	}
+
 	catalog := make(map[string]syncedProvider)
 	var order []string
 
@@ -247,4 +276,12 @@ func newProductionProviderCatalogFromConfig(config *BridgeConfig) (*BridgeConfig
 	}
 
 	return config, catalog, order
+}
+
+func isDSHRouterEnabled() bool {
+	rt := strings.ToLower(strings.TrimSpace(os.Getenv("BRIDGE_ROUTER_TYPE")))
+	if rt == "" {
+		rt = strings.ToLower(strings.TrimSpace(os.Getenv("ROUTER_TYPE")))
+	}
+	return rt == "dsh"
 }
