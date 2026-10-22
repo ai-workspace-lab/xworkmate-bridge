@@ -87,6 +87,10 @@ func newProviderCompat(provider syncedProvider) ProviderCompat {
 		return &opencodeCompat{externalACPCompat: base}
 	case "hermes":
 		return &hermesCompat{externalACPCompat: base}
+	case "dsh":
+		return newDSHAdapter(provider)
+	case "dsbot":
+		return newDSBotAdapter(provider)
 	default:
 		return &codexCompat{
 			externalACPCompat: base,
@@ -99,6 +103,10 @@ func providerCategory(providerID string) string {
 	switch providerID {
 	case "gemini", "hermes", "opencode":
 		return "protocol-adapter"
+	case "dsh":
+		return "harness"
+	case "dsbot":
+		return "bot-team"
 	default:
 		return "native"
 	}

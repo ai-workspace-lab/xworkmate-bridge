@@ -219,6 +219,31 @@ func (o *SessionOrchestrator) runGateway(
 		return nil, &shared.RPCError{Code: -32602, Message: "GATEWAY_PROVIDER_REQUIRED"}
 	}
 	params = withResolvedGatewayProvider(params, gatewayProvider)
+	if (gatewayProvider == "dsh" || gatewayProvider == "dsbot") && isSessionTaskMethod(method) {
+		compat, ok := o.server.providers[gatewayProvider]
+		if !ok {
+			return nil, &shared.RPCError{Code: -32001, Message: "GATEWAY_PROVIDER_NOT_FOUND: " + gatewayProvider}
+		}
+		sessionID := strings.TrimSpace(shared.StringArg(params, "sessionId", ""))
+		threadID := strings.TrimSpace(shared.StringArg(params, "threadId", sessionID))
+		sink := func(update map[string]any) {
+			o.server.emitSessionUpdate(notify, turnID, update)
+		}
+		var result map[string]any
+		var err error
+		switch method {
+		case "session.start":
+			result, err = compat.StartSession(ctx, sessionID, threadID, params, sink)
+		case "session.message":
+			result, err = compat.SendMessage(ctx, sessionID, threadID, params, sink)
+		default:
+			err = fmt.Errorf("unsupported session method: %s", method)
+		}
+		if err != nil {
+			return nil, &shared.RPCError{Code: -32002, Message: "EXECUTION_FAILED: " + err.Error()}
+		}
+		return result, nil
+	}
 	if isOpenClawMode(gatewayProvider) && isSessionTaskMethod(method) {
 		sessionID := strings.TrimSpace(shared.StringArg(params, "sessionId", ""))
 		threadID := strings.TrimSpace(shared.StringArg(params, "threadId", sessionID))

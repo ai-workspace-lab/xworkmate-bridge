@@ -39,17 +39,48 @@ func (s *Server) Bootstrap() {
 		}
 	}
 
-	// Build Initial Catalog
-	s.catalog = &CapabilityCatalog{
-		ProviderCatalog: make([]any, 0),
-		GatewayProviders: []any{
+	if _, ok := s.providers["dsh"]; !ok {
+		s.providers["dsh"] = newDSHAdapter(syncedProvider{ProviderID: "dsh", Label: "DeepSeek Harness", Endpoint: resolveDSHHarnessEndpoint(), Enabled: true})
+	}
+	if _, ok := s.providers["dsbot"]; !ok {
+		s.providers["dsbot"] = newDSBotAdapter(syncedProvider{ProviderID: "dsbot", Label: "DeepSeek Bot", Endpoint: resolveDSBotEndpoint(), Enabled: true})
+	}
+
+	gatewayProviders := []any{
+		map[string]any{
+			"providerId":      "openclaw",
+			"label":           "OpenClaw",
+			"targets":         []string{"gateway"},
+			"providerDisplay": map[string]any{"logoEmoji": "🦞"},
+		},
+	}
+	if isDSHRouterEnabled() || os.Getenv("BRIDGE_DSH_HARNESS_URL") != "" {
+		gatewayProviders = []any{
+			map[string]any{
+				"providerId":      "dsh",
+				"label":           "DeepSeek Harness",
+				"targets":         []string{"gateway", "agent"},
+				"providerDisplay": map[string]any{"logoEmoji": "⚡"},
+			},
+			map[string]any{
+				"providerId":      "dsbot",
+				"label":           "DeepSeek Bot",
+				"targets":         []string{"gateway", "agent"},
+				"providerDisplay": map[string]any{"logoEmoji": "🤖"},
+			},
 			map[string]any{
 				"providerId":      "openclaw",
 				"label":           "OpenClaw",
 				"targets":         []string{"gateway"},
 				"providerDisplay": map[string]any{"logoEmoji": "🦞"},
 			},
-		},
+		}
+	}
+
+	// Build Initial Catalog
+	s.catalog = &CapabilityCatalog{
+		ProviderCatalog:           make([]any, 0),
+		GatewayProviders:          gatewayProviders,
 		AvailableExecutionTargets: []any{"agent", "gateway"},
 		ProviderProbeSummary:      make([]any, 0),
 	}
@@ -62,6 +93,10 @@ func (s *Server) Bootstrap() {
 		category := "native"
 		if id == "gemini" || id == "hermes" {
 			category = "protocol-adapter"
+		} else if id == "dsh" {
+			category = "harness"
+		} else if id == "dsbot" {
+			category = "bot-team"
 		}
 		s.catalog.ProviderCatalog = append(s.catalog.ProviderCatalog, map[string]any{
 			"providerId": id,

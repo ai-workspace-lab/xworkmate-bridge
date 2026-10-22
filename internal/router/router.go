@@ -17,6 +17,8 @@ const (
 	ExecutionTargetGatewayChat = "gateway-chat"
 
 	GatewayProviderOpenClaw = "openclaw"
+	GatewayProviderDSH      = "dsh"
+	GatewayProviderDSBot    = "dsbot"
 )
 
 type Request struct {
@@ -207,16 +209,27 @@ func mapExplicitTarget(
 
 func resolveGatewayProvider(preferredGatewayProviderID string) string {
 	providerID := normalizeGatewayProvider(preferredGatewayProviderID)
-	if providerID == "" {
-		providerID = GatewayProviderOpenClaw
+	if providerID != "" {
+		return providerID
 	}
-	return providerID
+	routerType := strings.ToLower(strings.TrimSpace(os.Getenv("BRIDGE_ROUTER_TYPE")))
+	if routerType == "" {
+		routerType = strings.ToLower(strings.TrimSpace(os.Getenv("ROUTER_TYPE")))
+	}
+	if routerType == "dsh" {
+		return GatewayProviderDSH
+	}
+	return GatewayProviderOpenClaw
 }
 
 func normalizeGatewayProvider(value string) string {
 	switch normalize(value) {
 	case GatewayProviderOpenClaw:
 		return GatewayProviderOpenClaw
+	case GatewayProviderDSH:
+		return GatewayProviderDSH
+	case GatewayProviderDSBot:
+		return GatewayProviderDSBot
 	default:
 		return ""
 	}

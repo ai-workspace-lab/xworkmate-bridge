@@ -99,7 +99,20 @@ func (s *Server) handleSessionPrepare(ctx context.Context, params map[string]any
 		gatewayProvider = strings.TrimSpace(shared.StringArg(params, "resolvedGatewayProviderId", ""))
 	}
 	if gatewayProvider == "" {
-		gatewayProvider = "openclaw"
+		if isDSHRouterEnabled() {
+			gatewayProvider = "dsh"
+		} else {
+			gatewayProvider = "openclaw"
+		}
+	}
+	if gatewayProvider == "dsh" || gatewayProvider == "dsbot" {
+		return map[string]any{
+			"ok":                true,
+			"gatewayProviderId": gatewayProvider,
+			"artifactScope":     strings.TrimSpace(shared.StringArg(params, "artifactScope", "")),
+			"status":            "ready",
+			"ready":             true,
+		}, nil
 	}
 	if rpcErr := ensureProductionGatewayConnected(s, gatewayProvider, notify); rpcErr != nil {
 		return openClawFallbackSessionPreparePayload(params), nil
@@ -130,7 +143,52 @@ func (s *Server) handleTaskGet(ctx context.Context, params map[string]any, notif
 		gatewayProvider = strings.TrimSpace(shared.StringArg(params, "resolvedGatewayProviderId", ""))
 	}
 	if gatewayProvider == "" {
-		gatewayProvider = "openclaw"
+		if isDSHRouterEnabled() {
+			gatewayProvider = "dsh"
+		} else {
+			gatewayProvider = "openclaw"
+		}
+	}
+	if gatewayProvider == "dsh" || gatewayProvider == "dsbot" {
+		if sess := s.findTaskSession(params); sess != nil {
+			sess.mu.Lock()
+			taskState := sess.task.State
+			output := sess.task.ProgressMessage
+			runID := sess.task.RunID
+			sessionID := sess.task.SessionID
+			sess.mu.Unlock()
+
+			status := "running"
+			if taskState == TaskStateCompleted {
+				status = "completed"
+			} else if taskState == TaskStateFailed {
+				status = "failed"
+			} else if taskState == TaskStateCancelled {
+				status = "cancelled"
+			}
+			return map[string]any{
+				"status":            status,
+				"state":             string(taskState),
+				"runId":             runID,
+				"taskId":            runID,
+				"sessionId":         sessionID,
+				"gatewayProviderId": gatewayProvider,
+				"output":            output,
+				"summary":           output,
+			}
+		}
+		runID := strings.TrimSpace(shared.StringArg(params, "runId", ""))
+		if runID == "" {
+			runID = strings.TrimSpace(shared.StringArg(params, "taskId", ""))
+		}
+		return map[string]any{
+			"status":            "completed",
+			"state":             "completed",
+			"runId":             runID,
+			"taskId":            runID,
+			"gatewayProviderId": gatewayProvider,
+			"output":            "Task completed",
+		}
 	}
 	// T7/T8: 一旦观察到终态就从持久 run 仓返回，避免之后 gateway 查不到导致结果丢失。
 	if cached, ok := s.cachedTerminalOpenClawResult(params); ok {
@@ -763,7 +821,17 @@ func (s *Server) handleTaskCancel(ctx context.Context, params map[string]any, no
 		sess.mu.Unlock()
 	}
 	if gatewayProvider == "" {
-		gatewayProvider = "openclaw"
+		if isDSHRouterEnabled() {
+			gatewayProvider = "dsh"
+		} else {
+			gatewayProvider = "openclaw"
+		}
+	}
+	if gatewayProvider == "dsh" || gatewayProvider == "dsbot" {
+		if compat, ok := s.providers[gatewayProvider]; ok {
+			_ = compat.CancelSession(ctx, runID)
+		}
+		return map[string]any{"accepted": strings.TrimSpace(runID) != "", "runId": runID}
 	}
 	if strings.TrimSpace(runID) != "" && s.gateway != nil {
 		_ = s.gateway.RequestByMode(

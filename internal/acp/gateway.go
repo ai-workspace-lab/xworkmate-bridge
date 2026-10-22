@@ -256,7 +256,14 @@ func ensureProductionGatewayConnected(
 ) *shared.RPCError {
 	normalizedMode := strings.TrimSpace(strings.ToLower(mode))
 	if normalizedMode == "" {
-		normalizedMode = "openclaw"
+		if isDSHRouterEnabled() {
+			normalizedMode = "dsh"
+		} else {
+			normalizedMode = "openclaw"
+		}
+	}
+	if normalizedMode == "dsh" || normalizedMode == "dsbot" {
+		return nil
 	}
 	if normalizedMode != "openclaw" {
 		return nil
