@@ -78,12 +78,26 @@ Bridge execution-context cancellation, not proof that an independent remote
 executor process has stopped. Duplicate cancel requests do not duplicate events;
 reusing a cancellation request ID for another run returns 409.
 
-Only one Bridge instance may own the local database, enforced by a PostgreSQL
-session advisory lock. After restart, all persisted queued/running/cancel-requested
-runs receive `run.failed` with `BRIDGE_RESTART_INTERRUPTED`; they are never
-automatically reexecuted. Retrying their original message returns its original
-receipt. A new explicit message starts a new run and attempts continuation through
-the existing executor; missing executor-side state surfaces as failure.
+Only one Bridge instance may admit local execution, enforced by a PostgreSQL
+session advisory lock plus durable execution-hazard records. A background probe
+cancels local contexts when the ownership connection is lost. That cancellation
+cannot prove a remote executor has stopped, so takeover does not permit new
+dispatch while hazards from a prior instance remain. After restart, persisted
+queued/running/cancel-requested runs receive `run.failed` with
+`BRIDGE_RESTART_INTERRUPTED`; they are never automatically reexecuted. Retrying
+their original message returns its original receipt, not another execution.
+
+A successful synchronous completion on the original ownership connection clears
+its hazard. Failed, cancelled or interrupted dispatched work conservatively
+retains it: that session cannot immediately start another run, and a successor
+instance refuses dispatch until administrative recovery. Recovery requires stopping
+all prior Bridge processes, independently checking/stopping their remote executor
+work, and only then removing the specifically verified run IDs from
+`bridge_local_execution_hazards` using privileged database access. Never clear all
+records blindly. There is no bearer API or environment bypass. Reads remain
+available; context cancellation or an HTTP success alone does not justify clearing
+the gate. This deliberate availability tradeoff avoids claiming remote fencing
+that the execution protocol does not provide.
 
 The existing DSH adapter propagates transport/protocol errors instead of
 manufacturing successful responses. No successful chat is manufactured when a

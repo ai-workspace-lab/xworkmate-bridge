@@ -21,13 +21,17 @@ import (
 )
 
 type localSessionStore struct {
-	db     *sql.DB
-	dir    string
-	lock   *sql.Conn
-	mu     sync.Mutex
-	active map[string]*localExecution
-	wg     sync.WaitGroup
-	closed bool
+	db            *sql.DB
+	dir           string
+	lock          *sql.Conn
+	mu            sync.Mutex
+	active        map[string]*localExecution
+	wg            sync.WaitGroup
+	closed        bool
+	ownerID       string
+	ownershipLost bool
+	watchCancel   context.CancelFunc
+	watchDone     chan struct{}
 }
 
 func openLocalSessionStore(ctx context.Context, dsn, dir string) (*localSessionStore, error) {
@@ -80,13 +84,17 @@ func openLocalSessionStore(ctx context.Context, dsn, dir string) (*localSessionS
 		}
 		return nil, err
 	}
-	store := &localSessionStore{db: db, dir: dir, lock: lock, active: make(map[string]*localExecution)}
+	store := &localSessionStore{db: db, dir: dir, lock: lock, active: make(map[string]*localExecution), ownerID: uuid.NewString()}
 	if err := store.initializeRuns(ctx); err != nil {
 		if closeErr := store.Close(); closeErr != nil {
 			log.Printf("component=local_session event=store_close_failed")
 		}
 		return nil, err
 	}
+	watchCtx, watchCancel := context.WithCancel(context.Background())
+	store.watchCancel = watchCancel
+	store.watchDone = make(chan struct{})
+	go store.watchOwnership(watchCtx)
 	return store, nil
 }
 

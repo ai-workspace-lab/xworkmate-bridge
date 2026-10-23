@@ -30,8 +30,15 @@ type localExecution struct {
 
 var errLocalEventQuery = errors.New("invalid event query")
 
-// One Bridge owns a local database at a time. The dedicated PostgreSQL lock
-// connection prevents a second process from interrupting live work on startup.
+// The advisory lock is admission control, NOT remote-executor fencing. Durable
+// hazards survive lock loss, cancellation, and restart. A successor can serve
+// reads/reconcile interrupted runs, but cannot dispatch while foreign hazards
+// remain. Only a synchronous successful completion observed on the original lock
+// connection clears a hazard automatically; context cancellation proves nothing
+// about a remote process. Administrative recovery requires stopping ALL old
+// Bridge processes, independently verifying/stopping their remote executions,
+// then deleting the verified run IDs from bridge_local_execution_hazards through
+// privileged database access. There is deliberately no bearer API/env bypass.
 func (s *localSessionStore) initializeRuns(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `ALTER TABLE bridge_local_sessions ADD COLUMN IF NOT EXISTS event_seq bigint NOT NULL DEFAULT 0;
  ALTER TABLE bridge_local_sessions ADD COLUMN IF NOT EXISTS run_state text NOT NULL DEFAULT 'idle';
@@ -51,7 +58,12 @@ func (s *localSessionStore) initializeRuns(ctx context.Context) error {
  CREATE INDEX IF NOT EXISTS bridge_local_sessions_owner_idx ON bridge_local_sessions(owner_hash,namespace_id,created_at,id);
  CREATE INDEX IF NOT EXISTS bridge_local_runs_session_idx ON bridge_local_runs(session_id,created_at DESC,id DESC);
  CREATE UNIQUE INDEX IF NOT EXISTS bridge_local_runs_one_active_idx ON bridge_local_runs(session_id)
- WHERE state IN ('queued','running','cancel_requested');`)
+ WHERE state IN ('queued','running','cancel_requested');
+ CREATE TABLE IF NOT EXISTS bridge_local_execution_hazards (
+ run_id text PRIMARY KEY REFERENCES bridge_local_runs(id), owner_id text NOT NULL);
+ INSERT INTO bridge_local_execution_hazards(run_id,owner_id)
+ SELECT id,'legacy-unfenced' FROM bridge_local_runs WHERE state IN ('queued','running','cancel_requested')
+ ON CONFLICT DO NOTHING;`)
 	if err != nil {
 		return err
 	}
@@ -94,6 +106,10 @@ func (s *localSessionStore) Close() error {
 		run.cancel()
 	}
 	s.mu.Unlock()
+	if s.watchCancel != nil {
+		s.watchCancel()
+		<-s.watchDone
+	}
 	s.wg.Wait()
 	if s.lock != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -102,11 +118,44 @@ func (s *localSessionStore) Close() error {
 		if err != nil {
 			log.Printf("component=local_session event=unlock_failed")
 		}
-		if err := s.lock.Close(); err != nil {
+		if err := s.lock.Close(); err != nil && !errors.Is(err, sql.ErrConnDone) {
 			return err
 		}
 	}
 	return s.db.Close()
+}
+
+func (s *localSessionStore) watchOwnership(ctx context.Context) {
+	defer close(s.watchDone)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			probeCtx, cancel := context.WithTimeout(ctx, time.Second)
+			var one int
+			err := s.lock.QueryRowContext(probeCtx, `SELECT 1`).Scan(&one)
+			cancel()
+			if err != nil {
+				if ctx.Err() == nil {
+					s.mu.Lock()
+					s.loseOwnershipLocked()
+					s.mu.Unlock()
+				}
+				return
+			}
+		}
+	}
+}
+
+// Caller holds mu. Loss is sticky; this instance must never reacquire ownership.
+func (s *localSessionStore) loseOwnershipLocked() {
+	s.ownershipLost = true
+	for _, execution := range s.active {
+		execution.cancel()
+	}
 }
 
 func rollbackLocal(tx *sql.Tx) {
@@ -363,6 +412,9 @@ func (s *Server) acceptLocalMessage(ctx context.Context, owner, session string, 
 	store := s.localSessionStore
 	store.mu.Lock()
 	defer store.mu.Unlock()
+	if store.ownershipLost {
+		return nil, 503, errors.New("execution ownership lost; restart in administrative recovery mode")
+	}
 	if store.closed {
 		return nil, 503, errors.New("session store closed")
 	}
@@ -370,6 +422,7 @@ func (s *Server) acceptLocalMessage(ctx context.Context, owner, session string, 
 	// never allow a former owner to begin another external side effect.
 	var one int
 	if err := store.lock.QueryRowContext(ctx, `SELECT 1`).Scan(&one); err != nil {
+		store.loseOwnershipLocked()
 		return nil, 503, errors.New("session ownership connection lost")
 	}
 	tx, err := store.db.BeginTx(ctx, nil)
@@ -401,6 +454,14 @@ func (s *Server) acceptLocalMessage(ctx context.Context, owner, session string, 
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, 503, errors.New("session storage unavailable")
+	}
+	var recoveryRequired bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM bridge_local_execution_hazards h JOIN bridge_local_runs r ON r.id=h.run_id
+ WHERE h.owner_id<>$1 OR (r.session_id=$2 AND r.state NOT IN ('queued','running','cancel_requested')))`, store.ownerID, session).Scan(&recoveryRequired); err != nil {
+		return nil, 503, errors.New("execution safety state unavailable")
+	}
+	if recoveryRequired {
+		return nil, 503, errors.New("administrative execution recovery required: stop prior Bridge processes and independently verify remote executions have stopped before clearing verified execution hazards")
 	}
 	var busy bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM bridge_local_runs WHERE session_id=$1 AND state IN ('queued','running','cancel_requested'))`, session).Scan(&busy); err != nil {
@@ -495,7 +556,7 @@ func (s *Server) executeLocal(ctx context.Context, session, run, method string, 
 		}
 	}()
 	state := "failed"
-	payload := map[string]any{"code": "EXECUTION_FAILED", "error": "executor did not return a completed result"}
+	var payload map[string]any
 	if errors.Is(ctx.Err(), context.Canceled) {
 		state = "cancelled"
 		payload = map[string]any{"code": "CONTEXT_CANCELLED"}
@@ -542,6 +603,18 @@ func (s *Server) executeLocal(ctx context.Context, session, run, method string, 
 func (s *localSessionStore) transition(session, run, state, kind string, payload map[string]any) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	s.mu.Lock()
+	if s.closed || s.ownershipLost {
+		s.mu.Unlock()
+		return errors.New("execution ownership lost")
+	}
+	var one int
+	if err := s.lock.QueryRowContext(ctx, `SELECT 1`).Scan(&one); err != nil {
+		s.loseOwnershipLocked()
+		s.mu.Unlock()
+		return errors.New("execution ownership lost")
+	}
+	s.mu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -556,7 +629,10 @@ func (s *localSessionStore) transition(session, run, state, kind string, payload
 		return err
 	}
 	if old != "queued" {
-		return nil
+		return errors.New("run is no longer queued; dispatch forbidden")
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO bridge_local_execution_hazards(run_id,owner_id) VALUES($1,$2)`, run, s.ownerID); err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE bridge_local_runs SET state=$2 WHERE id=$1`, run, state); err != nil {
 		return err
@@ -574,6 +650,8 @@ func (s *localSessionStore) transition(session, run, state, kind string, payload
 }
 
 func (s *localSessionStore) finish(session, run, state string, payload map[string]any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -616,7 +694,17 @@ func (s *localSessionStore) finish(session, run, state string, payload map[strin
 	if _, err := tx.ExecContext(ctx, `UPDATE bridge_local_sessions SET run_state=$2 WHERE id=$1`, session, state); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	// A former owner cannot erase the safety gate using a reconnected pool.
+	if state == "completed" && !s.ownershipLost && !s.closed {
+		if _, err := s.lock.ExecContext(ctx, `DELETE FROM bridge_local_execution_hazards WHERE run_id=$1 AND owner_id=$2`, run, s.ownerID); err != nil {
+			s.loseOwnershipLocked()
+			return errors.New("execution ownership lost during completion")
+		}
+	}
+	return nil
 }
 
 func (s *localSessionStore) cancelRun(ctx context.Context, owner, session, run, key string) (map[string]any, int, error) {

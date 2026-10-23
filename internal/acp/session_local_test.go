@@ -253,6 +253,13 @@ func testLocalExecutionLifecycle(t *testing.T, server *Server, id string, call f
 	provider.methodsMu.Unlock()
 	failed := receiptRun(call(server, "POST", "/api/v1/sessions/"+id+"/messages", `{"clientRequestId":"failure","text":"failure"}`))
 	waitState(failed, "failed")
+	// A failed remote invocation cannot prove the remote process stopped. The
+	// fixture executor has returned and has no external work; simulate the
+	// privileged administrator verifying that fact before clearing this hazard.
+	server.localSessionStore.wg.Wait()
+	if _, err := server.localSessionStore.db.Exec(`DELETE FROM bridge_local_execution_hazards WHERE run_id=$1`, failed); err != nil {
+		t.Fatal(err)
+	}
 	cancelled := receiptRun(call(server, "POST", "/api/v1/sessions/"+id+"/messages", `{"clientRequestId":"cancel","text":"cancel"}`))
 	// Wait until the cancellation target is executing, not merely accepted.
 	deadline := time.Now().Add(5 * time.Second)
@@ -403,6 +410,14 @@ func testLocalExecutionLifecycle(t *testing.T, server *Server, id string, call f
 	if terminal["type"] != "run.failed" || terminal["payload"].(map[string]any)["code"] != "BRIDGE_RESTART_INTERRUPTED" {
 		t.Fatal("restart failure event missing")
 	}
+	if response := call(server, "POST", "/api/v1/sessions/"+id+"/messages", `{"clientRequestId":"unsafe-restart","text":"must block"}`); response.Code != 503 || !strings.Contains(response.Body.String(), "administrative execution recovery required") {
+		t.Fatal("restart accepted work without remote stop verification")
+	}
+	// All mock calls have returned; the seeded crash records never executed.
+	// This is explicit privileged recovery in the fixture, not a production bypass.
+	if _, err := recovered.db.Exec(`DELETE FROM bridge_local_execution_hazards WHERE run_id IN ($1,'interrupted','interrupted-queued','interrupted-cancel_requested')`, cancelled); err != nil {
+		t.Fatal(err)
+	}
 	// Verify the production resolver -> orchestrator -> DSH HTTP adapter chain,
 	// using a real HTTP executor fixture rather than replacing Process.
 	var dshMethodsMu sync.Mutex
@@ -457,6 +472,140 @@ func testLocalExecutionLifecycle(t *testing.T, server *Server, id string, call f
 			t.Fatal("DSH failure became successful chat")
 		}
 	}
+	server.localSessionStore.wg.Wait()
+	if _, err := server.localSessionStore.db.Exec(`DELETE FROM bridge_local_execution_hazards WHERE run_id=$1`, failureRun); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("LockBackendLossRequiresAdministrativeRecovery", func(t *testing.T) { testLocalSessionLockLossTakeover(t, server, call) })
+}
+
+func testLocalSessionLockLossTakeover(t *testing.T, old *Server, call func(*Server, string, string, string) *httptest.ResponseRecorder) {
+	t.Helper()
+	decode := func(w *httptest.ResponseRecorder) map[string]any {
+		t.Helper()
+		var v map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	sessionID := decode(call(old, "POST", "/api/v1/namespaces/personal/sessions", `{"title":"lock loss regression"}`))["sessionId"].(string)
+	entered := make(chan struct{})
+	cancelObserved := make(chan struct{})
+	remoteRelease := make(chan struct{})
+	remoteStopped := make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(remoteRelease) })
+	provider := &localTestProvider{execute: func(ctx context.Context, _ map[string]any) (map[string]any, error) {
+		close(entered)
+		<-ctx.Done()
+		close(cancelObserved)
+		<-remoteRelease
+		close(remoteStopped)
+		return map[string]any{"success": true, "status": "completed", "output": "late remote success"}, nil
+	}}
+	old.providers = map[string]ProviderCompat{"test-provider": provider}
+	old.routingEngine = fixedTaskRunRoutingEngine{}
+	response := call(old, "POST", "/api/v1/sessions/"+sessionID+"/messages", `{"clientRequestId":"old-blocked","text":"block externally"}`)
+	if response.Code != 202 {
+		t.Fatalf("admit blocked executor: %d %s", response.Code, response.Body.String())
+	}
+	run := decode(response)["taskRun"].(map[string]any)["id"].(string)
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("old executor did not enter")
+	}
+	var pid int
+	if err := old.localSessionStore.lock.QueryRowContext(context.Background(), `SELECT pg_backend_pid()`).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	var terminated bool
+	if err := old.localSessionStore.db.QueryRow(`SELECT pg_terminate_backend($1)`, pid).Scan(&terminated); err != nil || !terminated {
+		t.Fatal("failed to terminate ownership backend")
+	}
+	select {
+	case <-cancelObserved:
+	case <-time.After(5 * time.Second):
+		t.Fatal("ownership watcher did not cancel active context")
+	}
+	select {
+	case <-remoteStopped:
+		t.Fatal("context cancel unexpectedly stopped mock remote execution")
+	default:
+	}
+	nextStore, err := openLocalSessionStore(context.Background(), os.Getenv("BRIDGE_SESSION_PG_URL"), os.Getenv("BRIDGE_SESSION_DIR"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	successor := &Server{localSessionStore: nextStore, sessions: make(map[string]*session), routingEngine: fixedTaskRunRoutingEngine{}}
+	successor.localSessionOnce.Do(func() {})
+	replacement := &localTestProvider{execute: func(context.Context, map[string]any) (map[string]any, error) {
+		return map[string]any{"success": true, "status": "completed", "output": "verified replacement"}, nil
+	}}
+	successor.providers = map[string]ProviderCompat{"test-provider": replacement}
+	successor.orchestrator = NewSessionOrchestrator(successor)
+	defer func() {
+		if successor.localSessionStore != old.localSessionStore {
+			if err := successor.localSessionStore.Close(); err != nil {
+				t.Error(err)
+			}
+		}
+	}()
+	var state string
+	if err := nextStore.db.QueryRow(`SELECT state FROM bridge_local_runs WHERE id=$1`, run).Scan(&state); err != nil || state != "failed" {
+		t.Fatal("takeover failed to reconcile interrupted run")
+	}
+	assertBlocked := func(server *Server, id, key string) {
+		t.Helper()
+		response := call(server, "POST", "/api/v1/sessions/"+id+"/messages", fmt.Sprintf(`{"clientRequestId":%q,"text":"replacement"}`, key))
+		if response.Code != 503 {
+			t.Fatalf("unsafe replacement admitted: %d %s", response.Code, response.Body.String())
+		}
+	}
+	assertBlocked(successor, sessionID, "takeover-blocked")
+	another := decode(call(successor, "POST", "/api/v1/namespaces/personal/sessions", `{"title":"new session cannot bypass hazard"}`))["sessionId"].(string)
+	assertBlocked(successor, another, "cross-session-blocked")
+	assertBlocked(old, sessionID, "old-owner-blocked")
+	if replacement.calls.Load() != 0 {
+		t.Fatal("replacement overlapped unfenced remote executor")
+	}
+	releaseOnce.Do(func() { close(remoteRelease) })
+	old.localSessionStore.wg.Wait()
+	// Even late successful return from the old owner must not clear the hazard.
+	assertBlocked(successor, sessionID, "late-result-still-blocked")
+	if err := old.localSessionStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := nextStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := openLocalSessionStore(context.Background(), os.Getenv("BRIDGE_SESSION_PG_URL"), os.Getenv("BRIDGE_SESSION_DIR"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	successor.localSessionStore = reopened
+	assertBlocked(successor, sessionID, "second-takeover-blocked")
+	// Administrator stopped old Bridge and independently observed the mock remote
+	// stop. Only now may the exact verified hazard be removed via privileged SQL.
+	select {
+	case <-remoteStopped:
+	default:
+		t.Fatal("administrator cannot prove remote stop")
+	}
+	if _, err := reopened.db.Exec(`DELETE FROM bridge_local_execution_hazards WHERE run_id=$1`, run); err != nil {
+		t.Fatal(err)
+	}
+	accepted := call(successor, "POST", "/api/v1/sessions/"+sessionID+"/messages", `{"clientRequestId":"admin-verified-replacement","text":"replacement"}`)
+	if accepted.Code != 202 {
+		t.Fatalf("explicit verified recovery failed: %d %s", accepted.Code, accepted.Body.String())
+	}
+	reopened.wg.Wait()
+	if replacement.calls.Load() != 1 {
+		t.Fatal("verified replacement not executed exactly once")
+	}
+	// Transfer fixture cleanup ownership back to its original caller.
+	old.localSessionStore = reopened
 }
 
 func TestDSHFailuresNeverComplete(t *testing.T) {
