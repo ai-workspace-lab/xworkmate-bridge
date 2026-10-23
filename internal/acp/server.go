@@ -70,7 +70,7 @@ func NewServer() *Server {
 	s := &Server{
 		sessions:              make(map[string]*session),
 		config:                config,
-		accountsSessionAPIURL: strings.TrimRight(strings.TrimSpace(os.Getenv("BRIDGE_ACCOUNTS_SESSION_API_URL")), "/"),
+		accountsSessionAPIURL: strings.TrimSpace(os.Getenv("BRIDGE_ACCOUNTS_SESSION_API_URL")),
 		accountsSessionClient: newAccountsSessionProxyClient(),
 		qmdIngestAPIURL:       strings.TrimRight(strings.TrimSpace(os.Getenv("BRIDGE_QMD_INGEST_API_URL")), "/"),
 		qmdIngestToken:        strings.TrimSpace(os.Getenv("BRIDGE_QMD_INGEST_TOKEN")),

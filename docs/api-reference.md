@@ -11,7 +11,15 @@
 
 ## Shared task sessions (`/api/v1`)
 
-All routes use existing Bearer authentication. Bridge forwards the
+Provider selection: a configured Accounts URL selects the proxy below exclusively.
+With no Accounts URL, the standalone provider requires configured Bridge
+static bearer authentication. See [standalone scope and gaps](standalone-session-increment.md).
+It supports durable sessions/messages/runs/events through the existing executor,
+idempotent message acceptance and context cancellation. Local identity is the
+stable `BRIDGE_SESSION_OWNER_ID` (default `local-single-user`), independent of
+bearer rotation and separately optional Accounts identity integration.
+
+In Accounts mode, Bridge forwards the
 `Authorization` header, query string, and JSON body to the explicitly configured
 Accounts session API without storing or interpreting session state.
 
@@ -32,11 +40,12 @@ Accounts preserves response shapes, ordered replay, and message idempotency.
 Bridge permits only the methods and paths listed above, requires JSON for POST,
 caps requests at 128 KiB and responses at 4 MiB, suppresses response caching,
 and does not follow redirects. Configure `BRIDGE_ACCOUNTS_SESSION_API_URL`; if
-it is absent or invalid, these routes return `503` while ACP stays available.
+it is invalid, these routes return `503` while ACP stays available. An absent URL
+selects the explicitly documented local provider.
 Bridge-local proxy errors use `{ "error": { "code": "...", "message": "..." } }`.
 
 ACP run completion is persisted by Accounts/scheduler callbacks. The Bridge
-does not maintain a session database or write ACP results to local state.
+does not write ACP results to local state in Accounts mode.
 
 ## Agent task context (`/api/v1/agent/*`)
 
