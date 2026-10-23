@@ -95,7 +95,10 @@ func TestTaskSessionProxyRouteAllowlist(t *testing.T) {
 	}
 }
 
-func TestTaskSessionProxyRejectsUnconfiguredUpstream(t *testing.T) {
+func TestTaskSessionStandaloneRejectsUnconfiguredAuth(t *testing.T) {
+	t.Setenv("BRIDGE_AUTH_TOKEN", "")
+	t.Setenv("AI_WORKSPACE_AUTH_TOKEN", "")
+	t.Setenv("BRIDGE_REVIEW_AUTH_TOKEN", "")
 	server := newTaskSessionProxyTestServer("")
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/namespaces", nil)
 	request.Header.Set("Authorization", "Bearer bridge-token")
@@ -103,7 +106,7 @@ func TestTaskSessionProxyRejectsUnconfiguredUpstream(t *testing.T) {
 
 	server.Handler().ServeHTTP(response, request)
 
-	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), `"code":"accounts_session_api_unavailable"`) {
+	if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), `"code":"invalid_bridge_authorization"`) {
 		t.Fatalf("response = %d %s", response.Code, response.Body.String())
 	}
 }
@@ -202,5 +205,22 @@ func TestTaskSessionProxyDoesNotFollowRedirects(t *testing.T) {
 
 	if response.Code != http.StatusTemporaryRedirect || redirectedCalls.Load() != 0 {
 		t.Fatalf("status/redirect calls = %d/%d", response.Code, redirectedCalls.Load())
+	}
+}
+
+func TestConfiguredAccountsNeverFallsBackToLocalSessions(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusServiceUnavailable} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(status) }))
+			defer upstream.Close()
+			server := newTaskSessionProxyTestServer(upstream.URL)
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/namespaces", nil)
+			request.Header.Set("Authorization", "Bearer fixture-only")
+			response := httptest.NewRecorder()
+			server.handleTaskSessionAPI(response, request)
+			if response.Code != status || server.localSessionStore != nil {
+				t.Fatalf("Accounts %d selected local provider or changed status", status)
+			}
+		})
 	}
 }

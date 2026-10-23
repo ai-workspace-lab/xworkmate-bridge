@@ -48,6 +48,10 @@ func (s *Server) handleTaskSessionAPI(w http.ResponseWriter, r *http.Request) {
 		writeTaskSessionProxyError(w, http.StatusNotFound, "route_not_found", "task session route not found")
 		return
 	}
+	if strings.TrimSpace(s.accountsSessionAPIURL) == "" {
+		s.handleLocalSessionAPI(w, r)
+		return
+	}
 	target, err := accountsSessionProxyTarget(s.accountsSessionAPIURL, r.URL)
 	if err != nil || s.accountsSessionClient == nil {
 		writeTaskSessionProxyError(w, http.StatusServiceUnavailable, "accounts_session_api_unavailable", "Accounts task session API is not configured")

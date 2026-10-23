@@ -1,0 +1,27 @@
+name: Standalone session integration
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  postgres-session-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install PostgreSQL 17 fixture binaries
+        run: bash scripts/github-actions/install-session-postgres.sh
+      - name: Execute isolated PostgreSQL contract and race tests
+        env:
+          BRIDGE_TEST_PG_FIXTURE: '1'
+        run: go test -v -race ./internal/acp -run 'TestLocalSession|TestDSHFailures|TestConfiguredAccounts' -count=1

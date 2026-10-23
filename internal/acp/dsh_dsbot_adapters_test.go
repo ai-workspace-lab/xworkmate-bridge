@@ -193,6 +193,14 @@ func TestDSBotAdapterStartSessionAndSendMessage(t *testing.T) {
 }
 
 func TestDSHRoutingAndSessionExecution(t *testing.T) {
+	harness := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "result": map[string]any{"ok": true, "success": true, "status": "completed", "output": "fixture executor result"}}); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer harness.Close()
+	t.Setenv("BRIDGE_DSH_HARNESS_URL", harness.URL)
 	t.Setenv("BRIDGE_ROUTER_TYPE", "dsh")
 
 	server := NewServer()
@@ -204,7 +212,7 @@ func TestDSHRoutingAndSessionExecution(t *testing.T) {
 			"taskPrompt":       "Build backend service",
 			"workingDirectory": "/workspace",
 			"routing": map[string]any{
-				"routingMode": "explicit",
+				"routingMode":             "explicit",
 				"explicitExecutionTarget": "gateway",
 			},
 		},
@@ -240,8 +248,8 @@ func TestDSHRoutingAndSessionExecution(t *testing.T) {
 			"taskPrompt":       "Run unit tests via DSH harness",
 			"workingDirectory": "/workspace",
 			"routing": map[string]any{
-				"routingMode": "explicit",
-				"explicitExecutionTarget": "gateway",
+				"routingMode":                "explicit",
+				"explicitExecutionTarget":    "gateway",
 				"preferredGatewayProviderId": "dsh",
 			},
 		},

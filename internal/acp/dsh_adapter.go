@@ -146,18 +146,7 @@ func (a *dshAdapter) StartSession(
 
 	result, err := a.dispatchHTTP(ctx, payload, sink)
 	if err != nil {
-		// If remote endpoint is not yet connected (e.g. standalone test mode), fallback to local execution envelope
-		result = map[string]any{
-			"ok":        true,
-			"success":   true,
-			"sessionId": sessionID,
-			"threadId":  threadID,
-			"provider":  "dsh",
-			"target":    "harness",
-			"output":    fmt.Sprintf("Executed task via DeepSeek-Harness scheduler: %s", prompt),
-			"summary":   fmt.Sprintf("DeepSeek-Harness task completed for session %s", sessionID),
-			"status":    "completed",
-		}
+		return nil, err
 	}
 
 	a.mu.Lock()
@@ -224,16 +213,7 @@ func (a *dshAdapter) SendMessage(
 
 	result, err := a.dispatchHTTP(ctx, payload, sink)
 	if err != nil {
-		result = map[string]any{
-			"ok":        true,
-			"success":   true,
-			"sessionId": sessionID,
-			"threadId":  threadID,
-			"provider":  "dsh",
-			"output":    fmt.Sprintf("Follow-up executed via DeepSeek-Harness: %s", prompt),
-			"summary":   "Follow-up completed",
-			"status":    "completed",
-		}
+		return nil, err
 	}
 
 	a.mu.Lock()
@@ -276,8 +256,8 @@ func (a *dshAdapter) CancelSession(ctx context.Context, sessionID string) error 
 			"sessionId": sessionID,
 		},
 	}
-	_, _ = a.dispatchHTTP(ctx, payload, nil)
-	return nil
+	_, err := a.dispatchHTTP(ctx, payload, nil)
+	return err
 }
 
 func (a *dshAdapter) CloseSession(ctx context.Context, sessionID string) error {
@@ -293,8 +273,8 @@ func (a *dshAdapter) CloseSession(ctx context.Context, sessionID string) error {
 			"sessionId": sessionID,
 		},
 	}
-	_, _ = a.dispatchHTTP(ctx, payload, nil)
-	return nil
+	_, err := a.dispatchHTTP(ctx, payload, nil)
+	return err
 }
 
 func (a *dshAdapter) dispatchHTTP(
@@ -337,7 +317,10 @@ func (a *dshAdapter) dispatchHTTP(
 	}
 
 	if result, ok := parsed["result"].(map[string]any); ok {
+		if parsed["error"] != nil || result["error"] != nil || result["ok"] == false || result["success"] == false {
+			return nil, fmt.Errorf("dsh executor reported failure")
+		}
 		return result, nil
 	}
-	return parsed, nil
+	return nil, fmt.Errorf("dsh response missing successful result")
 }
