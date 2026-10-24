@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>AI Workspace</title><script src="/ui.js" defer></script></head>
+<body><h1>AI Workspace 本地管理</h1><p>仅供单用户本机使用。当前统一凭据的暴露风险尚未消除。</p>
+<form id="login"><label>Workspace Token <input id="token" type="password" autocomplete="off" required></label><button>连接</button></form>
+<section id="panel" hidden><button id="logout">退出</button>
+<h2>服务</h2><button data-path="/workspace/status">认证状态</button><button data-path="/bridge/api/v1/namespaces">Bridge 命名空间</button><button data-path="/dsh/health">DSH 就绪状态</button><button data-path="/newapi/v1/models">模型目录</button><button data-path="/newapi/api/channel/">New API 通道</button><button data-path="/newapi/api/user/self">New API 管理身份</button>
+<h2>账号授权</h2><p>订阅权限由各提供方确认；授权入口存在不代表模型可用。</p><button data-provider="codex">ChatGPT / Codex</button><button data-provider="xai">Grok Build</button><button data-provider="gemini-cli">Gemini CLI</button><button data-provider="antigravity">Antigravity</button><button data-provider="claude">Claude</button><p><a id="oauth-link" target="_blank" rel="noreferrer noopener" hidden>打开账号授权页</a></p><button id="oauth-status">检查本次授权状态</button>
+<form id="callback"><label>需要手动回传时填写完整回调地址（不存储） <input id="redirect" type="password" autocomplete="off"></label><button>提交本次授权回调</button></form>
+<h2>通道管理</h2><form id="channel"><label>通道 ID <input id="channel-id" type="number" min="1" required></label><select id="channel-status"><option value="1">启用</option><option value="2">禁用</option></select><button>更新通道状态</button></form>
+</section><pre id="output" role="status"></pre></body></html>
